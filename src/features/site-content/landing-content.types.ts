@@ -102,12 +102,36 @@ const callToAction = z.object({
   href: internalHref,
 });
 
+// The hero image is served from /public, so it is a same-origin path rather
+// than a URL. Allowing an arbitrary URL would let whoever holds admin point
+// the home page at a third-party host, which is both a privacy leak (the
+// visitor's IP goes to that host) and a way to swap the image later without
+// touching this system at all.
+// Note the `(?!\/)`: a value beginning with TWO slashes is a protocol-relative
+// URL, which a browser resolves against the current scheme - so "//example.com/x.jpg"
+// loads from example.com despite looking like a local path. Without that guard
+// the check reads as if it constrains the host and does not.
+//
+// `..` is excluded for the same reason: it lets a path escape /public.
+const publicImagePath = z
+  .string()
+  .trim()
+  .max(200)
+  .refine(
+    (value) => value === "" || (!value.includes("..") && /^\/(?!\/)[\w\-./]+\.(png|jpe?g|webp|avif|svg)$/i.test(value)),
+    { message: "Use a path to a file in /public, for example /hero.jpg" },
+  );
+
 export const landingHeroSchema = z.object({
   eyebrow: z.string().trim().max(60).default(""),
   heading: z.string().trim().min(1, "Heading is required").max(120),
   subheading: z.string().trim().max(300).default(""),
   primaryCta: callToAction,
   secondaryCta: callToAction.optional(),
+  /** Path to a file in /public. Blank hides the image and widens the text. */
+  imageUrl: publicImagePath.default(""),
+  /** Describe what the image shows. Leave blank if it is purely decorative. */
+  imageAlt: z.string().trim().max(160).default(""),
 });
 
 export const landingHighlightSchema = z.object({

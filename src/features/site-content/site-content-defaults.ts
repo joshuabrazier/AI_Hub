@@ -23,6 +23,14 @@ export const DEFAULT_LANDING_HERO: LandingHero = {
     "A secure portal for your teams: the schedule, the documents, and the messages that keep everyone moving in the same direction.",
   primaryCta: { label: "Get in touch", href: "/contact" },
   secondaryCta: { label: "Sign in", href: "/sign-in" },
+  // Points at a file this base actually ships, so a fresh clone renders a
+  // complete home page rather than a gap. Replace public/hero.png, change this
+  // path from Admin -> Home page, or blank it out - with no image the hero text
+  // widens to fill the row, which is a deliberate layout rather than a hole.
+  imageUrl: "/hero.png",
+  // Decorative: the heading beside it already says what the page is about, so
+  // a screen reader gains nothing from a description of an abstract image.
+  imageAlt: "",
 };
 
 export const DEFAULT_LANDING_HIGHLIGHTS: LandingHighlights = [

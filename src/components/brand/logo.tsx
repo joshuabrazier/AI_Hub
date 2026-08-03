@@ -22,8 +22,13 @@ const SIZES: Record<LogoSize, { badge: string; primary: string; secondary: strin
 // Renders as a link to the public home by default; pass asLink={false} for a
 // static mark (in a footer, or inside another link).
 //
-// Replace public/logo.png with your own square mark. It is decorative here -
-// the wordmark beside it carries the name, so the image has an empty alt.
+// Replace public/logo.png with your own mark. It is decorative here - the
+// wordmark beside it carries the name, so the image has an empty alt.
+//
+// Fitted with object-contain, not object-cover: a logo must never be cropped,
+// and a mark that is not exactly square would lose its outer edge under cover.
+// Nothing is rounded or backed either, so a transparent mark sits on the page
+// rather than inside a visible tile.
 // -------------------------------------------------------------------
 export default function Logo({
   size = "md",
@@ -44,7 +49,7 @@ export default function Logo({
         width={56}
         height={56}
         priority
-        className={cn("shrink-0 rounded-lg object-cover", sizes.badge)}
+        className={cn("shrink-0 object-contain", sizes.badge)}
       />
       <span className="flex flex-col gap-0.5 text-left leading-none">
         <span className={cn("font-heading font-bold tracking-tight text-foreground", sizes.primary)}>{BRAND.name}</span>

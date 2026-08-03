@@ -1,4 +1,4 @@
-import { BRAND, copyrightLine } from "@/lib/brand";
+import { BRAND, BRAND_COLORS, copyrightLine } from "@/lib/brand";
 
 // -------------------------------------------------------------------
 // Shared email layout
@@ -17,13 +17,12 @@ import { BRAND, copyrightLine } from "@/lib/brand";
 // Brand palette mirrors the hex values in globals.css (emails can't use the
 // oklch CSS variables, so the colours are duplicated here as hex).
 const PALETTE = {
-  primary: "#0b6b78",
-  signal: "#0e9aab",
-  surface: "#f6fafb",
-  line: "#dde7e9",
-  ink: "#0f1a1c",
-  muted: "#566a6e",
-  white: "#ffffff",
+  primary: BRAND_COLORS.primary,
+  surface: BRAND_COLORS.surface,
+  line: BRAND_COLORS.line,
+  ink: BRAND_COLORS.ink,
+  muted: BRAND_COLORS.muted,
+  white: BRAND_COLORS.white,
 };
 
 // The default header band and button colour. Templates may override it via

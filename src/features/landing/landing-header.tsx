@@ -32,13 +32,9 @@ export default function LandingHeader() {
             ))}
           </nav>
 
-          {/* Client Portal Login - always visible. Shortens to "Login" on small
-              screens so the logo wordmark keeps its size instead of squishing. */}
+          {/* Always visible, at every width. */}
           <Button asChild variant="primaryOutline" size="xl" className="h-10 shrink-0 px-5 md:ml-6">
-            <Link href={ROUTES.PUBLIC_AUTH_SIGN_IN}>
-              <span className="hidden sm:inline">Client Portal Login</span>
-              <span className="sm:hidden">Login</span>
-            </Link>
+            <Link href={ROUTES.PUBLIC_AUTH_SIGN_IN}>Login</Link>
           </Button>
 
           {/* Mobile burger */}

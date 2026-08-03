@@ -7,6 +7,7 @@ import { landingIcon } from "@/features/site-content/landing-content.types";
 import { getLandingContent } from "@/features/site-content/site-content.service";
 
 import LandingHeader from "./landing-header";
+import LandingHero from "./landing-hero";
 import SiteFooter from "./site-footer";
 
 // -------------------------------------------------------------------
@@ -27,40 +28,13 @@ export default async function LandingPage() {
       <LandingHeader />
 
       <main id="main-content">
-        {/* Hero. Typographic rather than image-led on purpose: the product is a
-            portal, and a stock photograph would say less than the sentence. */}
-        <section className="pb-16 pt-20 md:pb-24 md:pt-28">
-          <Container>
-            <div className="max-w-3xl">
-              {hero.eyebrow && (
-                <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">{hero.eyebrow}</p>
-              )}
-              <h1 className="mt-5 text-pretty font-heading text-4xl font-bold leading-[1.08] tracking-tight md:text-5xl lg:text-6xl">
-                {hero.heading}
-              </h1>
-              {hero.subheading && (
-                <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">{hero.subheading}</p>
-              )}
+        <LandingHero hero={hero} />
 
-              <div className="mt-9 flex flex-wrap items-center gap-3">
-                <Button asChild size="xl">
-                  <Link href={hero.primaryCta.href}>{hero.primaryCta.label}</Link>
-                </Button>
-                {hero.secondaryCta && (
-                  <Button asChild variant="primaryOutline" size="xl">
-                    <Link href={hero.secondaryCta.href}>{hero.secondaryCta.label}</Link>
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            <SectionDivider className="mt-16" />
-          </Container>
-        </section>
-
-        {/* Highlights: short claims, each carrying a mark rather than a card. */}
+        {/* Highlights: short claims, each carrying a mark rather than a card.
+            Carries its own top padding - the hero ends on the scrimmed image
+            band, so there is no divider above to open the gap. */}
         {highlights.length > 0 && (
-          <section className="pb-20">
+          <section className="py-20">
             <Container>
               <ul className="grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
                 {highlights.map((highlight) => {

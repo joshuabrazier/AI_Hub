@@ -338,6 +338,28 @@ function HeroSection({ hero, isIgnored }: { hero: LandingHero; isIgnored: boolea
       />
 
       <fieldset className="grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-2">
+        <legend className="px-1 font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">Image</legend>
+        <FormInputField
+          control={form.control}
+          name="imageUrl"
+          id="hero-image-url"
+          label="Image"
+          placeholder="/hero.jpg"
+          description="A file in the public folder. Leave it blank to drop the image and let the text run full width."
+          disabled={isPending}
+        />
+        <FormInputField
+          control={form.control}
+          name="imageAlt"
+          id="hero-image-alt"
+          label="Image description"
+          placeholder="Leave blank if the image is decorative"
+          description="What a screen reader announces. Blank is correct for an image that adds no information the heading does not already give."
+          disabled={isPending}
+        />
+      </fieldset>
+
+      <fieldset className="grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-2">
         <legend className="px-1 font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
           Primary button
         </legend>

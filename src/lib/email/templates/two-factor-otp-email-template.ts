@@ -1,4 +1,4 @@
-import { BRAND } from "@/lib/brand";
+import { BRAND, BRAND_COLORS } from "@/lib/brand";
 import { escapeHtml, renderEmailLayout, EMAIL_ACCENT } from "./email-layout";
 
 type TwoFactorOtpEmailParams = {
@@ -19,7 +19,7 @@ const FONT_STACK = "'Segoe UI', Roboto, Oxygen, Ubuntu, Helvetica, Arial, sans-s
 export function TwoFactorOtpEmailTemplate({ otp, validMinutes, recipientEmail }: TwoFactorOtpEmailParams) {
   const codeBlock = `
     <div style="text-align:center; padding: 8px 0 2px;">
-      <span style="display:inline-block; font-family:${FONT_STACK}; font-size:34px; font-weight:800; letter-spacing:10px; color:#0b6b78; background:#f6fafb; border-radius:12px; padding:16px 24px;">${escapeHtml(otp)}</span>
+      <span style="display:inline-block; font-family:${FONT_STACK}; font-size:34px; font-weight:800; letter-spacing:10px; color:${BRAND_COLORS.primary}; background:${BRAND_COLORS.surface}; border-radius:12px; padding:16px 24px;">${escapeHtml(otp)}</span>
     </div>`;
 
   return renderEmailLayout({

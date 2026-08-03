@@ -23,6 +23,13 @@ const buttonVariants = cva(
         // (e.g. "Sign in" in the marketing header), where `outline` reads too
         // quiet against a full-bleed section. Fills on hover.
         primaryOutline: "border-primary text-primary hover:bg-primary hover:text-primary-foreground",
+        // The same bordered secondary action, for use OVER a photographic
+        // background (the home page hero). Literal white rather than a token
+        // because it sits on a scrimmed image, which is dark in both themes -
+        // a token would flip to dark text in light mode and disappear.
+        // Hover fills with translucent white and keeps the label white, so this
+        // never needs a theme-independent "dark ink" colour to invert to.
+        onImageOutline: "border-white/70 text-white hover:border-white hover:bg-white/15 hover:text-white",
       },
       size: {
         default:

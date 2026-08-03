@@ -41,6 +41,32 @@ export const BRAND = {
 } as const;
 
 // -------------------------------------------------------------------
+// Brand colours for the places that CANNOT read the CSS tokens.
+//
+// The app itself styles entirely through the custom properties in
+// globals.css, and nothing in src/app or src/features should reference a
+// hex. But two consumers are outside the stylesheet's reach:
+//
+//   - the web manifest, which tints the browser chrome around an installed app
+//   - the email templates, since mail clients do not support CSS variables
+//
+// So there are exactly two places a brand colour is written down: the
+// `--primary` token in globals.css, and this object. THEY MUST MATCH -
+// there is no build step that checks it, and a mismatch shows up as a
+// browser chrome or an email header in the old colour, with nothing failing.
+// -------------------------------------------------------------------
+export const BRAND_COLORS = {
+  /** Must equal the light-theme `--primary` in src/app/globals.css. */
+  primary: "#1b7789",
+  /** Must equal the light-theme `--muted`. */
+  surface: "#f6fafb",
+  line: "#dde7e9",
+  ink: "#0f1a1c",
+  muted: "#566a6e",
+  white: "#ffffff",
+} as const;
+
+// -------------------------------------------------------------------
 // The copyright line shown in the public footer, the auth shell and the
 // email footer. Computed from the current year at render time so it never
 // goes stale, and centralised so all three agree.

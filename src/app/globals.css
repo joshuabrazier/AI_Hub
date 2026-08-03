@@ -91,7 +91,7 @@
   --popover-foreground: #0f1a1c;
   /* Deep teal. Carries white text at 6.2:1, so it is safe for filled
      buttons, the sidebar's active state and any teal that must be read. */
-  --primary: #0b6b78;
+  --primary: #1b7789;
   --primary-foreground: #ffffff;
   /* Brighter teal. Marks only - see the note in @theme above. */
   --signal: #0e9aab;
@@ -108,10 +108,10 @@
   --destructive: #a32020;
   --border: #dde7e9;
   --input: #dde7e9;
-  --ring: #0b6b78;
+  --ring: var(--primary);
   /* Sequential teals for continuous data, closing on a warm tone so
      categorical series stay distinguishable without relying on hue alone. */
-  --chart-1: #0b6b78;
+  --chart-1: var(--primary);
   --chart-2: #0e9aab;
   --chart-3: #56c2ce;
   --chart-4: #9adae2;
@@ -121,12 +121,12 @@
      fill, so the app chrome does not darken the page. */
   --sidebar: #fcfdfd;
   --sidebar-foreground: #0f1a1c;
-  --sidebar-primary: #0b6b78;
+  --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #eef4f5;
   --sidebar-accent-foreground: #16262a;
   --sidebar-border: #dde7e9;
-  --sidebar-ring: #0b6b78;
+  --sidebar-ring: var(--primary);
 }
 
 /* Dark theme: designed, not inverted. The teals lighten so they stay legible
@@ -154,20 +154,20 @@
   --destructive: #ef8080;
   --border: #243437;
   --input: #2b3d41;
-  --ring: #3fbece;
+  --ring: var(--primary);
   --chart-1: #9adae2;
   --chart-2: #56c2ce;
-  --chart-3: #3fbece;
+  --chart-3: var(--primary);
   --chart-4: #1c8b9c;
   --chart-5: #e0a34b;
   --sidebar: #0f1a1c;
   --sidebar-foreground: #e6eff0;
-  --sidebar-primary: #3fbece;
+  --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #05171a;
   --sidebar-accent: #1b2b2f;
   --sidebar-accent-foreground: #e6eff0;
   --sidebar-border: #243437;
-  --sidebar-ring: #3fbece;
+  --sidebar-ring: var(--primary);
 }
 
 @layer base {
