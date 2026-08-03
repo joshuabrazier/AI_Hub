@@ -1,0 +1,213 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  /* Inter carries running text. IBM Plex Sans sets headings - drawn for IBM,
+     so its engineering heritage suits a data product. Plex Mono is the utility
+     face for eyebrows, labels and every figure that lines up in a column. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-heading: var(--font-plex-sans), var(--font-inter), ui-sans-serif, sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* -----------------------------------------------------------------
+     Signal - the brighter teal that marks "here".
+
+     The system is two tones of one hue: `primary` is the deep teal that
+     carries fills and white text, `signal` is the brighter teal used
+     sparingly as a mark - the active nav item, the unread dot. Keeping the pop to one hue is what lets the light
+     theme stay predominantly white.
+
+     `signal` is for GRAPHICAL marks, not text: at 3.4:1 on white it
+     clears the 3:1 required for non-text contrast (WCAG 1.4.11) but not
+     the 4.5:1 for body copy. Use `primary` when a teal needs to be read.
+     ----------------------------------------------------------------- */
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-signal-muted: var(--signal-muted);
+}
+
+/* -------------------------------------------------------------------
+   Palette.
+
+   Rebranding a project built on this base means editing the values in
+   :root and .dark below, and nothing else. Every component styles through
+   these tokens; none reference a hex directly.
+
+   Neutrals carry a slight cool bias toward the primary rather than being
+   pure grey, so they read as chosen rather than inherited.
+   ------------------------------------------------------------------- */
+/* Light theme: predominantly white. Surfaces stay within a couple of steps
+   of the background so the page reads as white paper, and the teal appears
+   only where something needs to be acted on or noticed. */
+:root {
+  --background: #ffffff;
+  /* Neutrals carry a slight teal bias rather than being pure grey, so they
+     read as chosen rather than inherited. */
+  --foreground: #0f1a1c;
+  --card: #ffffff;
+  --card-foreground: #0f1a1c;
+  --popover: #ffffff;
+  --popover-foreground: #0f1a1c;
+  /* Deep teal. Carries white text at 6.2:1, so it is safe for filled
+     buttons, the sidebar's active state and any teal that must be read. */
+  --primary: #0b6b78;
+  --primary-foreground: #ffffff;
+  /* Brighter teal. Marks only - see the note in @theme above. */
+  --signal: #0e9aab;
+  --signal-foreground: #ffffff;
+  --signal-muted: #e8f6f8;
+  --secondary: #eef4f5;
+  --secondary-foreground: #16262a;
+  --muted: #f6fafb;
+  --muted-foreground: #566a6e;
+  /* shadcn's `accent` is a hover/active SURFACE, not the brand accent -
+     the brand accent is `signal` above. Kept distinct deliberately. */
+  --accent: #eef4f5;
+  --accent-foreground: #16262a;
+  --destructive: #a32020;
+  --border: #dde7e9;
+  --input: #dde7e9;
+  --ring: #0b6b78;
+  /* Sequential teals for continuous data, closing on a warm tone so
+     categorical series stay distinguishable without relying on hue alone. */
+  --chart-1: #0b6b78;
+  --chart-2: #0e9aab;
+  --chart-3: #56c2ce;
+  --chart-4: #9adae2;
+  --chart-5: #b5701c;
+  --radius: 0.875rem;
+  /* Near-white, separated from the content by its border rather than by a
+     fill, so the app chrome does not darken the page. */
+  --sidebar: #fcfdfd;
+  --sidebar-foreground: #0f1a1c;
+  --sidebar-primary: #0b6b78;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef4f5;
+  --sidebar-accent-foreground: #16262a;
+  --sidebar-border: #dde7e9;
+  --sidebar-ring: #0b6b78;
+}
+
+/* Dark theme: designed, not inverted. The teals lighten so they stay legible
+   as TEXT on a dark ground, and their foreground flips to near-black - white
+   on a mid teal would sit around 2.3:1, which is what the previous palette
+   got wrong on its footer and sidebar bands. */
+.dark {
+  --background: #0b1416;
+  --foreground: #e6eff0;
+  --card: #131f22;
+  --card-foreground: #e6eff0;
+  --popover: #131f22;
+  --popover-foreground: #e6eff0;
+  --primary: #3fbece;
+  --primary-foreground: #05171a;
+  --signal: #4fd6e6;
+  --signal-foreground: #05171a;
+  --signal-muted: #0d2b30;
+  --secondary: #1b2b2f;
+  --secondary-foreground: #e6eff0;
+  --muted: #131f22;
+  --muted-foreground: #93a7ab;
+  --accent: #1b2b2f;
+  --accent-foreground: #e6eff0;
+  --destructive: #ef8080;
+  --border: #243437;
+  --input: #2b3d41;
+  --ring: #3fbece;
+  --chart-1: #9adae2;
+  --chart-2: #56c2ce;
+  --chart-3: #3fbece;
+  --chart-4: #1c8b9c;
+  --chart-5: #e0a34b;
+  --sidebar: #0f1a1c;
+  --sidebar-foreground: #e6eff0;
+  --sidebar-primary: #3fbece;
+  --sidebar-primary-foreground: #05171a;
+  --sidebar-accent: #1b2b2f;
+  --sidebar-accent-foreground: #e6eff0;
+  --sidebar-border: #243437;
+  --sidebar-ring: #3fbece;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+    /* Always show the vertical scrollbar (disabled when the page is short
+       enough not to scroll) so the layout width stays constant between pages
+       - stops the horizontal "flutter" when navigating short <-> tall pages. */
+    overflow-y: scroll;
+  }
+
+  /* iOS Safari renders `type="date"` inputs taller than the app's text inputs:
+     it forces native styling (ignoring our height) and adds a margin to the
+     displayed value, so the date-of-birth field looked oversized next to
+     everything else. Strip the native appearance and that margin so date inputs
+     match the shared Input (h-8). */
+  input[type="date"] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input[type="date"]::-webkit-date-and-time-value {
+    margin: 0;
+    text-align: left;
+  }
+}
+
+/* Radix (Dialog / Select / DropdownMenu) locks scroll via react-remove-scroll,
+   which offsets the body by the scrollbar width on open to compensate for a
+   scrollbar it removes. But our scrollbar lives on <html> (overflow-y: scroll)
+   and is never removed, so that offset just shifts the whole page sideways.
+   Cancel it. Left unlayered with `html …` specificity so it always beats the
+   injected `body[data-scroll-locked]` rule regardless of source order. */
+html body[data-scroll-locked] {
+  margin-right: 0 !important;
+  padding-right: 0 !important;
+}
+

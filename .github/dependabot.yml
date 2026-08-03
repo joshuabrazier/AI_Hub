@@ -1,0 +1,22 @@
+# Dependabot keeps dependencies patched by opening PRs when updates or
+# security fixes are published. https://docs.github.com/code-security/dependabot
+# The "npm" ecosystem covers this repo's pnpm-lock.yaml.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      # Batch routine minor/patch bumps into a single PR to cut noise; security
+      # updates and majors still come through on their own.
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

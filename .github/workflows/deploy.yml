@@ -1,0 +1,123 @@
+name: Deploy to Azure App Service
+
+# -------------------------------------------------------------------
+# TEMPLATE - not wired to any environment.
+#
+# This is the deploy runbook carried over from the project this base was
+# built from, with every environment-specific value removed. It will not
+# run until you deliberately configure it:
+#
+#   1. Set the repo Variable AZURE_WEBAPP_NAME to your App Service name.
+#   2. Set the repo Secret AZURE_WEBAPP_PUBLISH_PROFILE.
+#   3. Set the repo Secret DATABASE_URL (needed at BUILD time, see below).
+#   4. Set the NEXT_PUBLIC_* repo Variables listed in the Build step.
+#
+# It is manual-only (workflow_dispatch) on purpose. Add an automatic
+# `push: branches: [main]` trigger yourself once you have confirmed the
+# target is correct - so a new project cannot deploy anywhere by accident
+# just by merging.
+# -------------------------------------------------------------------
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # Fail fast and loudly rather than half-deploying to a mistyped or
+      # unset target.
+      - name: Check the deploy target is configured
+        run: |
+          if [ -z "${{ vars.AZURE_WEBAPP_NAME }}" ]; then
+            echo "AZURE_WEBAPP_NAME is not set."
+            echo "This workflow ships as an unconfigured template - see the comment at the top of the file."
+            exit 1
+          fi
+          echo "Deploying to: ${{ vars.AZURE_WEBAPP_NAME }}"
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # pnpm 10 to match the repo's pnpm-workspace.yaml (see ci.yml for why).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # We build HERE on the fast CI runner instead of on the App Service (which
+      # was OOM-hanging on `next build`). Because the build runs off-box, the
+      # values it needs must be provided now:
+      #   - NEXT_PUBLIC_* are baked into the client bundle -> set as repo Variables.
+      #   - DATABASE_URL is read at build time to prerender the public pages that
+      #     show admin-editable site content -> set as a repo Secret.
+      #   - The other server vars (BETTER_AUTH_SECRET, FIELD_ENCRYPTION_KEY, the
+      #     EMAIL_* keys, MODE) are only VALIDATED here; the standalone server
+      #     re-reads them at RUNTIME from the App Service application settings.
+      #     So the REAL values must live in Azure (not just here), and safe
+      #     placeholders are enough to satisfy the env schema at build time.
+      - name: Build
+        run: pnpm build
+        env:
+          MODE: production
+          NEXT_PUBLIC_APP_TITLE: ${{ vars.NEXT_PUBLIC_APP_TITLE }}
+          NEXT_PUBLIC_APP_DESCRIPTION: ${{ vars.NEXT_PUBLIC_APP_DESCRIPTION }}
+          # The NEXT_PUBLIC_APP_URL Variable holds the bare hostname; env-client
+          # validates it with z.string().url(), which needs a scheme, so add it
+          # here. Keep the Variable itself scheme-less (no https://).
+          NEXT_PUBLIC_APP_URL: https://${{ vars.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX: ${{ vars.NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX }}
+          NEXT_PUBLIC_PASSWORD_MIN_LENGTH: ${{ vars.NEXT_PUBLIC_PASSWORD_MIN_LENGTH }}
+          NEXT_PUBLIC_PASSWORD_MAX_LENGTH: ${{ vars.NEXT_PUBLIC_PASSWORD_MAX_LENGTH }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          EMAIL_FROM_ADDRESS: ${{ vars.EMAIL_FROM_ADDRESS }}
+          # Never send email during a build; the host's setting controls the live app.
+          EMAIL_SEND_ENABLED: "false"
+          # Placeholders only, and deliberately not key-shaped - the REAL secret
+          # and key live in the App Service settings and MUST stay unchanged
+          # there, or existing encrypted fields and enrolled 2FA secrets can no
+          # longer be decrypted.
+          BETTER_AUTH_SECRET: build-only-placeholder-value-not-used-at-runtime
+          FIELD_ENCRYPTION_KEY: build-only-placeholder-value-not-used-at-runtime-000000
+
+      # `output: "standalone"` produces a self-contained server in .next/standalone
+      # but does NOT copy static assets or /public into it - do that here so the
+      # deployed package can serve them.
+      - name: Assemble standalone deploy package
+        run: |
+          cp -r .next/static .next/standalone/.next/static
+          if [ -d public ]; then cp -r public .next/standalone/public; fi
+
+      # Zip the CONTENTS of the standalone folder (note the `cd`) so that server.js
+      # sits at the ROOT of the archive. Deploying the folder itself nests the
+      # files under a subdirectory in wwwroot, so `node server.js` run from
+      # /home/site/wwwroot can't find them ("Cannot find module server.js").
+      - name: Zip standalone package
+        run: cd .next/standalone && zip -qr ../../deploy.zip .
+
+      # Deploy the zip via OneDeploy; it extracts to /home/site/wwwroot with
+      # server.js at the root, where the startup command expects it. The startup
+      # command can NOT be passed through this action with publish-profile auth, so
+      # it is set ONCE on the App Service (Configuration -> General settings ->
+      # Startup Command): HOSTNAME=0.0.0.0 node server.js
+      # (HOSTNAME=0.0.0.0 so it binds to all interfaces; Azure otherwise sets
+      # HOSTNAME to the container name and the app is unreachable.)
+      # App setting SCM_DO_BUILD_DURING_DEPLOYMENT must also be false.
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: deploy.zip
