@@ -4,7 +4,7 @@
 // Two jobs.
 //
 // 1. Refuse to run against anything that looks like a real environment. The
-//    suite creates and deletes users, teams and classes in whatever database
+//    suite creates and deletes users, teams and notifications in whatever database
 //    .env points at. Copying a production .env into this project to "get it
 //    running" is an easy mistake and one that writes to live data, so the run
 //    stops unless MODE is development or test AND the database host looks
@@ -63,7 +63,7 @@ if (!override) {
     console.error("\nRefusing to run the end-to-end suite.\n");
     for (const problem of problems) console.error(`  - ${problem}`);
     console.error(
-      "\nThese tests create and delete users, teams and classes in whatever database\n" +
+      "\nThese tests create and delete users, teams and notifications in whatever database\n" +
         ".env points at. Point DATABASE_URL at a local test database, or set\n" +
         "E2E_ALLOW_REMOTE_DB=true if you are certain this database is disposable.\n",
     );

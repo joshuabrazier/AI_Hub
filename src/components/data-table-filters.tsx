@@ -21,7 +21,7 @@ export type DataTableSort<TData> = {
   compare: (a: TData, b: TData) => number;
 };
 
-// A multi-select faceted filter (e.g. "Program", "Role"). `getValue`
+// A multi-select faceted filter (e.g. "Role", "Status"). `getValue`
 // returns the row's value; a row passes when the selected set is empty
 // or contains that value.
 export type DataTableFacet<TData> = {

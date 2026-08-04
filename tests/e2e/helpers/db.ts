@@ -128,21 +128,6 @@ export async function getTeamRoleForUser(teamId: string, userId: string): Promis
 }
 
 // -------------------------------------------------------------------
-// A member's stored status for one session. Cancelling a place is an UPDATE to
-// this column, never a delete, so the row is still here afterwards.
-// -------------------------------------------------------------------
-export async function getAttendanceStatus(attendeeId: string): Promise<string | null> {
-  return withClient(async (client) => {
-    const result = await client.query(
-      "SELECT attendance_status FROM session_attendees WHERE id = $1",
-      [attendeeId],
-    );
-
-    return result.rows[0]?.attendance_status ?? null;
-  });
-}
-
-// -------------------------------------------------------------------
 // When a notification was read, or null while it is still unread. read_at
 // being NULL is the whole definition of unread.
 // -------------------------------------------------------------------

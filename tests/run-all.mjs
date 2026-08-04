@@ -35,7 +35,7 @@ const unit = spawnSync(
 //
 // That indirection is the point. run-e2e.mjs refuses to run against anything
 // that is not a local, disposable database, and the suite creates and deletes
-// users, teams and classes in whatever .env points at. Spawning Playwright
+// users, teams and notifications in whatever .env points at. Spawning Playwright
 // here would route around that check, so `pnpm test:all` would happily do to a
 // real database what `pnpm test:e2e` is written to prevent.
 //

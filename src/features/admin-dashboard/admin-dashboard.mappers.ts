@@ -1,39 +1,7 @@
 import { NOTIFICATION_AUDIENCE_LABELS } from "@/lib/data/kysely-database-types";
 import type { NotificationBroadcast, Team } from "@/lib/data/kysely-database-types";
-import type { ScheduleSessionRow } from "@/lib/data/repositories/class-sessions.repository";
 
-import type { DashboardBroadcastDTO, DashboardSessionDTO, DashboardTeamDTO } from "./admin-dashboard.types";
-
-// -------------------------------------------------------------------
-// Map one scheduled session to the dashboard DTO.
-//
-// The date and time fields are carried through as the strings their DATE and
-// TIME columns produced. Parsing them into a Date here would reintroduce the
-// timezone shift those string columns exist to avoid.
-//
-// `counts` is absent for a session nobody is on: getAttendanceCountsForSessions
-// groups by session, so a session with no roster rows has no row to return. A
-// miss is zero, not unknown.
-// -------------------------------------------------------------------
-export function mapDBScheduleSessionToDashboardSessionDTO(
-  row: ScheduleSessionRow,
-  counts?: { total: number; cancelled: number },
-): DashboardSessionDTO {
-  return {
-    id: row.id,
-    sessionDate: row.sessionDate,
-    sessionStart: row.sessionStart,
-    sessionEnd: row.sessionEnd,
-    status: row.status,
-    className: row.className,
-    programName: row.programName,
-    locationName: row.locationName,
-    leadUserName: row.leadUserName,
-    capacity: row.capacity,
-    attendeeCount: counts?.total ?? 0,
-    cancelledCount: counts?.cancelled ?? 0,
-  };
-}
+import type { DashboardBroadcastDTO, DashboardTeamDTO } from "./admin-dashboard.types";
 
 // -------------------------------------------------------------------
 // Map a team to the dashboard DTO. The member count is passed in rather than

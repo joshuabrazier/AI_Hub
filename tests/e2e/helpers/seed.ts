@@ -8,11 +8,6 @@ import { readEnvVar } from "./env";
 // Better Auth rejects state-changing requests without an Origin header (CSRF).
 const ORIGIN = readEnvVar("NEXT_PUBLIC_APP_URL");
 
-// The app resolves "today" in its own zone (todayInAppZone), not the server's.
-// Seeded dates have to agree with that or a session seeded "tomorrow" lands on
-// today - or yesterday - either side of midnight.
-const APP_TIME_ZONE = readEnvVar("NEXT_PUBLIC_APP_TIME_ZONE");
-
 // The suite's standard password. Long enough for PASSWORD_MIN_LENGTH and the
 // same everywhere, so a spec never has to invent one.
 export const SEED_PASSWORD = "Passw0rd12345";
@@ -22,33 +17,6 @@ export const SEED_PASSWORD = "Passw0rd12345";
 // ever looked them up).
 export function newId(): string {
   return randomUUID().replace(/-/g, "");
-}
-
-// -------------------------------------------------------------------
-// Dates
-//
-// Calendar dates are 'YYYY-MM-DD' strings everywhere in this app, and the DATE
-// columns are read back as strings on purpose. These build them the same way
-// the server does: in the APP's zone, never the machine's.
-// -------------------------------------------------------------------
-export function todayInAppZone(): string {
-  // en-CA formats as YYYY-MM-DD, and `timeZone` makes it the app's calendar
-  // day rather than the test machine's.
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: APP_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
-// A date `days` either side of today, in the app's zone. The arithmetic runs
-// on a UTC instant built from the calendar parts, so a daylight-saving change
-// in the app zone cannot shift the answer by a day.
-export function appDateOffsetBy(days: number): string {
-  const [year, month, day] = todayInAppZone().split("-").map(Number);
-
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
 // -------------------------------------------------------------------
@@ -69,14 +37,6 @@ export type SeededUser = {
 export type SeededTeam = {
   id: string;
   name: string;
-};
-
-export type SeededClass = {
-  id: string;
-  name: string;
-  programId: string;
-  locationId: string;
-  teamId: string | null;
 };
 
 // -------------------------------------------------------------------
@@ -102,12 +62,6 @@ export class Seeder {
 
   // Recorded in the order rows must be REMOVED, which is the reverse of the
   // order they are created in.
-  private readonly attendeeIds: string[] = [];
-  private readonly classMemberIds: string[] = [];
-  private readonly classSessionIds: string[] = [];
-  private readonly classIds: string[] = [];
-  private readonly programIds: string[] = [];
-  private readonly locationIds: string[] = [];
   private readonly notificationIds: string[] = [];
   private readonly invitationIds: string[] = [];
   private readonly teamMemberIds: string[] = [];
@@ -256,128 +210,6 @@ export class Seeder {
   }
 
   // -----------------------------------------------------------------
-  // A class, with the program and location it needs. Classes carry their own
-  // start_date / end_date - there are no terms in this model.
-  //
-  // `team` is optional: a class with no team is admin-only, and one with a team
-  // is administered by that team's managers.
-  // -----------------------------------------------------------------
-  async class(options?: {
-    team?: SeededTeam;
-    name?: string;
-    capacity?: number;
-    startDate?: string;
-    endDate?: string;
-    isActive?: boolean;
-  }): Promise<SeededClass> {
-    const id = newId();
-    const programId = newId();
-    const locationId = newId();
-    const name = options?.name ?? this.label(`E2E Class ${this.classIds.length + 1}`);
-
-    await withClient(async (client) => {
-      await client.query(
-        "INSERT INTO locations (id, name, address, is_active) VALUES ($1, $2, '1 Test Street', TRUE)",
-        [locationId, this.label("E2E Location")],
-      );
-      await client.query("INSERT INTO programs (id, name, is_active) VALUES ($1, $2, TRUE)", [
-        programId,
-        this.label("E2E Program"),
-      ]);
-      await client.query(
-        `INSERT INTO classes (id, program_id, location_id, team_id, name, schedule, capacity, start_date, end_date, is_active)
-         VALUES ($1, $2, $3, $4, $5, '[]'::jsonb, $6, $7, $8, $9)`,
-        [
-          id,
-          programId,
-          locationId,
-          options?.team?.id ?? null,
-          name,
-          options?.capacity ?? 10,
-          options?.startDate ?? appDateOffsetBy(-30),
-          options?.endDate ?? appDateOffsetBy(90),
-          options?.isActive ?? true,
-        ],
-      );
-    });
-
-    this.locationIds.push(locationId);
-    this.programIds.push(programId);
-    this.classIds.push(id);
-
-    return { id, name, programId, locationId, teamId: options?.team?.id ?? null };
-  }
-
-  // -----------------------------------------------------------------
-  // One dated occurrence of a class.
-  // -----------------------------------------------------------------
-  async classSession(
-    seededClass: SeededClass,
-    options?: { date?: string; start?: string; end?: string; status?: "scheduled" | "completed" | "cancelled" },
-  ): Promise<string> {
-    const id = newId();
-
-    await withClient((client) =>
-      client.query(
-        `INSERT INTO class_sessions (id, class_id, session_date, session_start, session_end, status)
-         VALUES ($1, $2, $3, $4, $5, $6::session_status)`,
-        [
-          id,
-          seededClass.id,
-          options?.date ?? appDateOffsetBy(3),
-          options?.start ?? "16:00",
-          options?.end ?? "16:30",
-          options?.status ?? "scheduled",
-        ],
-      ),
-    );
-    this.classSessionIds.push(id);
-
-    return id;
-  }
-
-  /** Class membership: this user is in this class. */
-  async joinClass(seededClass: SeededClass, user: SeededUser): Promise<string> {
-    const id = newId();
-
-    await withClient((client) =>
-      client.query("INSERT INTO class_members (id, class_id, user_id) VALUES ($1, $2, $3)", [
-        id,
-        seededClass.id,
-        user.id,
-      ]),
-    );
-    this.classMemberIds.push(id);
-
-    return id;
-  }
-
-  // -----------------------------------------------------------------
-  // A place on one session: the row a member gives up when they cancel.
-  // Returns the session_attendees id, which is the "booking id" the portal
-  // sends back - and which the service re-checks against the session before it
-  // writes anything.
-  // -----------------------------------------------------------------
-  async booking(
-    classSessionId: string,
-    user: SeededUser,
-    attendanceStatus: "booked" | "attended" | "absent" | "cancelled" = "booked",
-  ): Promise<string> {
-    const id = newId();
-
-    await withClient((client) =>
-      client.query(
-        `INSERT INTO session_attendees (id, class_session_id, user_id, attendance_status)
-         VALUES ($1, $2, $3, $4::attendance_status)`,
-        [id, classSessionId, user.id, attendanceStatus],
-      ),
-    );
-    this.attendeeIds.push(id);
-
-    return id;
-  }
-
-  // -----------------------------------------------------------------
   // A notification in one person's inbox. read_at NULL is what "unread" means,
   // and it is what drives the unread count.
   // -----------------------------------------------------------------
@@ -450,9 +282,9 @@ export class Seeder {
   // -----------------------------------------------------------------
   // Remove exactly what this seeder created, children before parents.
   //
-  // Several of these would cascade anyway (a class takes its sessions and its
-  // members with it), but they are listed explicitly so the order is a
-  // statement of the foreign keys rather than a bet on them.
+  // Several of these would cascade anyway (a user takes their notifications
+  // with them), but they are listed explicitly so the order is a statement of
+  // the foreign keys rather than a bet on them.
   // -----------------------------------------------------------------
   async cleanup(): Promise<void> {
     await withClient(async (client) => {
@@ -474,21 +306,15 @@ export class Seeder {
         }
       }
 
-      await remove("session_attendees", "id", this.attendeeIds);
-      await remove("class_members", "id", this.classMemberIds);
-      await remove("class_sessions", "id", this.classSessionIds);
-      await remove("classes", "id", this.classIds);
-      await remove("programs", "id", this.programIds);
-      await remove("locations", "id", this.locationIds);
       await remove("notifications", "id", this.notificationIds);
       // Invitations reference the inviter, so they go before the users do.
       await remove("user_invitations", "id", this.invitationIds);
       await remove("team_members", "id", this.teamMemberIds);
       await remove("teams", "id", this.teamIds);
 
-      // Signing in, failing to sign in and cancelling a place all write an
-      // audit entry, and a two-factor sign-in leaves verification rows behind.
-      // None of it blocks the delete - actor_user_id is ON DELETE SET NULL -
+      // Signing in and failing to sign in both write an audit entry, and a
+      // two-factor sign-in leaves verification rows behind. None of it blocks
+      // the delete - actor_user_id is ON DELETE SET NULL -
       // so it would simply accumulate as anonymous rows in the local database.
       // Scoped to the seeded accounts and addresses, so no real trail is
       // touched, and run before the users go because the id is what half of it

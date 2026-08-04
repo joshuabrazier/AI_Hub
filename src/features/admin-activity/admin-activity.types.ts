@@ -64,15 +64,6 @@ export const AUDIT_ACTION_META: Record<string, { label: string; category: string
   // Documents
   [AUDIT_ACTIONS.DOCUMENT_SIGNED]: { label: "Document signed", category: "Documents" },
 
-  // Scheduling
-  [AUDIT_ACTIONS.CLASS_CREATED]: { label: "Class created", category: "Scheduling" },
-  [AUDIT_ACTIONS.CLASS_UPDATED]: { label: "Class updated", category: "Scheduling" },
-  [AUDIT_ACTIONS.CLASS_MEMBER_ADDED]: { label: "Joined a class", category: "Scheduling" },
-  [AUDIT_ACTIONS.CLASS_MEMBER_REMOVED]: { label: "Left a class", category: "Scheduling" },
-  [AUDIT_ACTIONS.BOOKING_CANCELLED]: { label: "Booking cancelled", category: "Scheduling" },
-  [AUDIT_ACTIONS.CLOSURE_DAY_ADDED]: { label: "Closure day added", category: "Scheduling" },
-  [AUDIT_ACTIONS.CLOSURE_DAY_REMOVED]: { label: "Closure day removed", category: "Scheduling" },
-
   // Authentication
   [AUDIT_ACTIONS.AUTH_SIGNED_IN]: { label: "Signed in", category: "Auth" },
   [AUDIT_ACTIONS.AUTH_SIGNED_OUT]: { label: "Signed out", category: "Auth" },

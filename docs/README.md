@@ -29,6 +29,7 @@ contributor and agent quick reference.
 6. Configure `.github/workflows/deploy.yml` deliberately - it is inert until you
    set `AZURE_WEBAPP_NAME`.
 
-Rename the delivery vocabulary if `programs` / `classes` / `sessions` do not fit
-the project. Everything else - users, teams, invitations, notifications,
-documents, audit, retention - is domain-neutral and should not need touching.
+Then add the project's own domain. The base carries none: users, teams,
+invitations, notifications, documents, audit and retention are all
+domain-neutral, and nothing above them presumes what the project delivers. See
+"Adding a domain" in [architecture.md](architecture.md) for the shape to follow.

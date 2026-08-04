@@ -9,13 +9,6 @@ DROP TABLE IF EXISTS schema_migrations;
 DROP TABLE IF EXISTS enquiry_submissions;
 DROP TABLE IF EXISTS enquiry_categories;
 DROP TABLE IF EXISTS audit_logs;
-DROP TABLE IF EXISTS closure_days;
-DROP TABLE IF EXISTS session_attendees;
-DROP TABLE IF EXISTS class_sessions;
-DROP TABLE IF EXISTS class_members;
-DROP TABLE IF EXISTS classes;
-DROP TABLE IF EXISTS locations;
-DROP TABLE IF EXISTS programs;
 DROP TABLE IF EXISTS document_signatures;
 DROP TABLE IF EXISTS documents;
 DROP TABLE IF EXISTS notifications;
@@ -35,8 +28,6 @@ DROP TABLE IF EXISTS users;
 DROP TYPE IF EXISTS user_role;
 DROP TYPE IF EXISTS team_role;
 DROP TYPE IF EXISTS invitation_status;
-DROP TYPE IF EXISTS session_status;
-DROP TYPE IF EXISTS attendance_status;
 
 ---------------------------------------------------------------------
 -- ENUM Types
@@ -77,31 +68,6 @@ CREATE TYPE invitation_status AS ENUM (
 );
 
 ---------------------------------------------------------------------
--- Session Status (one dated occurrence of a class)
----------------------------------------------------------------------
-CREATE TYPE session_status AS ENUM (
-    'scheduled',
-    'completed',
-    'cancelled'
-);
-
----------------------------------------------------------------------
--- Attendance Status
--- A member's status for one session (session_attendees.attendance_status).
--- 'booked' is the default written when they join a class; staff set the
--- rest per session.
----------------------------------------------------------------------
-CREATE TYPE attendance_status AS ENUM (
-    'booked',
-    'attended',
-    'absent',
-    -- Set when a member cancels their own booked place (the session still
-    -- runs for everyone else). Kept rather than deleted so the change is on
-    -- the record, and excluded from capacity counts so the place frees up.
-    'cancelled'
-);
-
----------------------------------------------------------------------
 -- Tables
 ---------------------------------------------------------------------
 
@@ -109,7 +75,7 @@ CREATE TYPE attendance_status AS ENUM (
 -- Users Table
 -- The centre of the model: every person is a user. Better Auth owns the
 -- authentication columns; the app adds role, is_active and the small
--- profile block (phone, notification preferences, date of birth).
+-- profile block (phone, notification preferences).
 ---------------------------------------------------------------------
 CREATE TABLE users (
     id TEXT NOT NULL PRIMARY KEY,
@@ -157,8 +123,7 @@ CREATE TABLE two_factor (
 CREATE INDEX idx_two_factor_user ON two_factor(user_id);
 
 ---------------------------------------------------------------------
--- Sessions Table (better-auth) - login sessions, NOT class sessions.
--- The dated occurrences of a class live in class_sessions.
+-- Sessions Table (better-auth) - login sessions.
 ---------------------------------------------------------------------
 CREATE TABLE sessions (
     id TEXT NOT NULL PRIMARY KEY,
@@ -211,8 +176,8 @@ CREATE TABLE verifications (
 ---------------------------------------------------------------------
 -- Teams Table
 -- An explicitly created, named grouping of users (a cohort, a department,
--- a client organisation, a household). Nothing creates a team implicitly:
--- an admin makes one and then adds people to it.
+-- a client organisation). Nothing creates a team implicitly: an admin makes
+-- one and then adds people to it.
 ---------------------------------------------------------------------
 CREATE TABLE teams (
     id          TEXT NOT NULL PRIMARY KEY,
@@ -288,149 +253,6 @@ CREATE TABLE site_content (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
----------------------------------------------------------------------
--- Programs Table
--- A named offering that classes are instances of (a course, a training
--- track, a service line).
----------------------------------------------------------------------
-CREATE TABLE programs (
-    id          TEXT NOT NULL PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_programs_is_active ON programs(is_active);
-
----------------------------------------------------------------------
--- Locations Table
--- Venues where classes run.
----------------------------------------------------------------------
-CREATE TABLE locations (
-    id         TEXT NOT NULL PRIMARY KEY,
-    name       TEXT NOT NULL,
-    address    TEXT NOT NULL,
-    is_active  BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_locations_is_active ON locations(is_active);
-
----------------------------------------------------------------------
--- Classes Table
--- A recurring class: a program delivered at a location, on one or more
--- weekly days (each with its own time, in the schedule JSONB), between
--- start_date and end_date, with a capacity. Dated occurrences are
--- generated into class_sessions across that range.
---
--- team_id is optional. When set, the class belongs to that team and the
--- team's managers can administer it; when NULL it is admin-only.
----------------------------------------------------------------------
-CREATE TABLE classes (
-    id           TEXT NOT NULL PRIMARY KEY,
-    program_id   TEXT NOT NULL REFERENCES programs(id),
-    location_id  TEXT NOT NULL REFERENCES locations(id),
-    team_id      TEXT NULL REFERENCES teams(id) ON DELETE SET NULL,
-    -- The staff member running it (optional).
-    lead_user_id TEXT NULL REFERENCES users(id) ON DELETE SET NULL,
-    name         TEXT NOT NULL,
-    description  TEXT NOT NULL DEFAULT '',
-    -- JSONB array of { day, startTime, endTime }.
-    schedule     JSONB NOT NULL,
-    capacity     INT NOT NULL,
-    start_date   DATE NOT NULL,
-    end_date     DATE NOT NULL,
-    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT classes_capacity_positive CHECK (capacity > 0),
-    CONSTRAINT classes_dates_ordered CHECK (end_date >= start_date)
-);
-
-CREATE INDEX idx_classes_program  ON classes(program_id);
-CREATE INDEX idx_classes_location ON classes(location_id);
-CREATE INDEX idx_classes_team     ON classes(team_id);
-CREATE INDEX idx_classes_lead     ON classes(lead_user_id);
-CREATE INDEX idx_classes_dates    ON classes(start_date, end_date);
-
----------------------------------------------------------------------
--- Class Members Table
--- A user who is in a class (a row = joined). Joining also writes that
--- user's per-session roster rows into session_attendees.
----------------------------------------------------------------------
-CREATE TABLE class_members (
-    id         TEXT NOT NULL PRIMARY KEY,
-    class_id   TEXT NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    joined_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (class_id, user_id)
-);
-
-CREATE INDEX idx_class_members_class ON class_members(class_id);
-CREATE INDEX idx_class_members_user  ON class_members(user_id);
-
----------------------------------------------------------------------
--- Class Sessions Table
--- The individual dated occurrences of a class, generated weekly across the
--- class's start_date..end_date range.
----------------------------------------------------------------------
-CREATE TABLE class_sessions (
-    id            TEXT NOT NULL PRIMARY KEY,
-    class_id      TEXT NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-    lead_user_id  TEXT NULL REFERENCES users(id) ON DELETE SET NULL,
-    session_date  DATE NOT NULL,
-    session_start TIME NOT NULL,
-    session_end   TIME NOT NULL,
-    status        session_status NOT NULL DEFAULT 'scheduled',
-    notes         TEXT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT class_sessions_times_ordered CHECK (session_end > session_start)
-);
-
-CREATE INDEX idx_class_sessions_class ON class_sessions(class_id);
-CREATE INDEX idx_class_sessions_date  ON class_sessions(session_date);
-
----------------------------------------------------------------------
--- Session Attendees Table
--- One row per user per session: the roster, plus that user's attendance
--- status for that session.
----------------------------------------------------------------------
-CREATE TABLE session_attendees (
-    id                TEXT NOT NULL PRIMARY KEY,
-    class_session_id  TEXT NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
-    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    attendance_status attendance_status NOT NULL DEFAULT 'booked',
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (class_session_id, user_id)
-);
-
-CREATE INDEX idx_session_attendees_session ON session_attendees(class_session_id);
-CREATE INDEX idx_session_attendees_user    ON session_attendees(user_id);
-
----------------------------------------------------------------------
--- Closure Days Table
--- Dates on which no classes run (closed for any reason). Every session on
--- one of these dates is shown as cancelled on the schedule. Non-destructive:
--- removing the day restores its sessions. `reason` is shown to members.
----------------------------------------------------------------------
-CREATE TABLE closure_days (
-    id         TEXT NOT NULL PRIMARY KEY,
-    day_date   DATE NOT NULL UNIQUE,
-    reason     TEXT NOT NULL,
-    created_by TEXT NULL REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_closure_days_date ON closure_days(day_date);
 
 ---------------------------------------------------------------------
 -- Documents Table
@@ -528,7 +350,7 @@ CREATE TABLE notification_broadcasts (
     id             TEXT NOT NULL PRIMARY KEY,
     created_by     TEXT NULL REFERENCES users(id) ON DELETE SET NULL,
     type           TEXT NOT NULL,
-    -- Who it was addressed to: 'everyone' | 'teams' | 'users' | 'classes'.
+    -- Who it was addressed to: 'everyone' | 'teams' | 'users'.
     -- audience_label is a denormalised human summary for display.
     audience_type  TEXT NOT NULL DEFAULT 'everyone',
     audience_label TEXT NULL,

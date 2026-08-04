@@ -2,9 +2,13 @@
 
 This is a **reusable portal base**, not a finished product. It ships the parts
 every internal portal needs - authentication, two-factor, invitations,
-role-based access, teams, scheduling, notifications, document signing, an audit
-trail and a data-retention job - so a new project starts from a working,
-secured application rather than from nothing.
+role-based access, teams, notifications, document signing, an audit trail and a
+data-retention job - so a new project starts from a working, secured
+application rather than from nothing.
+
+It deliberately ships **no domain**. There is nothing in it describing what any
+particular project delivers, so the first real work on a new project is adding
+that, not unpicking somebody else's.
 
 It is a server-rendered Next.js 16 / React 19 app backed by Postgres, with
 Better Auth for authentication and Azure Communication Services for email.
@@ -42,22 +46,18 @@ platform role: the platform role decides which area they can reach, the team
 role decides what they can do inside a team they belong to. An admin assigns a
 manager to a team by creating a `team_members` row with `team_role = 'manager'`.
 
-Delivery sits on top:
+That is the whole domain. Everything else is cross-cutting: `user_invitations`,
+`documents` and `document_signatures`, `notifications` (+ types, templates,
+broadcasts), `site_content`, `enquiry_categories` / `enquiry_submissions`,
+`audit_logs`, plus Better Auth's `sessions` / `accounts` / `verifications` /
+`two_factor`.
 
-```text
-programs -> classes -> class_sessions
-                    -> class_members      (who is in the class)
-                    -> session_attendees  (the roster, per session)
-```
-
-A class carries its own `start_date` and `end_date` and generates its sessions
-across that range. It may optionally belong to a team, in which case that team's
-managers can administer it; a class with no team is admin-only.
-
-Supporting tables: `locations`, `closure_days`, `documents` and
-`document_signatures`, `notifications` (+ types, templates, broadcasts),
-`site_content`, `enquiry_categories` / `enquiry_submissions`, `audit_logs`, plus
-Better Auth's `sessions` / `accounts` / `verifications` / `two_factor`.
+**Adding a domain.** A new project's own tables go alongside these, not inside
+them. The pattern to copy is `admin-teams`: a table, a `*.repository.ts`, a
+feature module (`.page` / `.service` / `.actions` / `.types` / `.mappers`), a
+route, and a nav entry. If the thing being added belongs to a team, put the
+`team_id` on its row and authorize through `requireTeamManagement` - that is what
+makes it visible to the right managers and to nobody else.
 
 The authoritative DDL is `src/lib/data/sql/database-schema.sql`. There is no
 seed file, deliberately: nothing ships with credentials in it. Bootstrap the

@@ -117,9 +117,9 @@ export async function requireTeamScope(): Promise<TeamScope> {
 }
 
 // -------------------------------------------------------------------
-// The scope a caller has for MANAGING team data (adding members, editing the
-// team's classes). Admins are unrestricted; managers get only the teams an
-// admin assigned them to; members get nothing.
+// The scope a caller has for MANAGING team data (adding members, and whatever
+// else a project hangs off a team). Admins are unrestricted; managers get only
+// the teams an admin assigned them to; members get nothing.
 // -------------------------------------------------------------------
 export async function requireManagementScope(): Promise<TeamScope> {
   const user = await requireUser();

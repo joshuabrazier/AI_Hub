@@ -6,12 +6,16 @@ outside the repo, the known findings and follow-ups, and incident response.
 
 ## What we are protecting
 
-The app holds sensitive personal data: children's names and dates of birth,
-medical and allergy information, guardian contact details, and signed legal
-waivers. It is subject to the Australian Privacy Principles. The security model
-assumes an authenticated attacker (a stolen or shared session) as well as an
-anonymous one, and treats children's medical data and credentials as the crown
-jewels.
+As shipped, the base holds account data (names, email addresses, phone numbers),
+team membership - which is what every authorization decision turns on - and
+signed documents, including the signature image. It is written to be subject to
+the Australian Privacy Principles. The security model assumes an authenticated
+attacker (a stolen or shared session) as well as an anonymous one, and treats
+credentials and signatures as the crown jewels.
+
+**A project that adds more sensitive data than this must revisit this document.**
+Health, financial or children's data raises the stakes on encryption, retention
+and audit, and the controls below were sized for the data listed above.
 
 ## Authentication
 
@@ -146,8 +150,15 @@ in production; in development it also allows localhost, LAN ranges, and
 `src/lib/audit/` records privileged and auth actions to `audit_logs`:
 
 - Sign-in, failed sign-in, sign-out, password change, and impersonation start.
-- Sensitive client and child changes (medical entries record only *that* a field
-  changed, never the value).
+- Account changes: creation, update, role change, activation/deactivation,
+  invitation sent and cancelled, and de-identification.
+- Team membership changes, which are authorization changes and are recorded as
+  carefully as a role change.
+- Document signing.
+
+When a project audits a field that is sensitive or encrypted, record only *that*
+it changed, never the value - otherwise the trail becomes a plaintext copy of
+the thing being protected. `changes` on `RecordAuditEventInput` says so too.
 
 Audit writes are best-effort and fully guarded, so a logging failure never breaks
 the auth or business flow. Rows are pruned by the monthly retention job (see
@@ -162,8 +173,9 @@ below), default 180 days.
 - `BETTER_AUTH_SECRET` can be rotated, but doing so forces every user to sign in
   again.
 - **`FIELD_ENCRYPTION_KEY` must never change** once data is encrypted with it.
-  Rotating it makes all existing medical info and signatures permanently
-  unreadable. A rotation would require a decrypt-with-old / re-encrypt-with-new
+  Rotating it makes every existing signature, and anything else a project has
+  field-encrypted, permanently unreadable. A rotation would require a
+  decrypt-with-old / re-encrypt-with-new
   migration. Treat it as permanent once real data exists. The same caution applies
   to enrolled 2FA secrets under `BETTER_AUTH_SECRET`.
 
@@ -179,12 +191,17 @@ scrubs data when `RETENTION_JOB_ENABLED=true`; by default it runs as a no-op
 preview, so deploying can never scrub data on its own. De-identification is
 **irreversible**.
 
-One ordering hazard worth knowing: the audit purge runs BEFORE the
-de-identification sweep in the same request, and the sweep uses sign-in events
-from the audit log to decide who is dormant. If `AUDIT_LOG_RETENTION_DAYS` is
-shorter than the inactivity threshold, accounts can look dormant purely because
-their sign-in records were rotated away. Keep the audit window longer than the
-inactivity window.
+One ordering hazard worth knowing, and it matters more than it looks: the audit
+purge runs BEFORE the de-identification sweep in the same request, and sign-in
+events from the audit log are the **only** evidence of activity the sweep has -
+there is no `last_active_at` column. If `AUDIT_LOG_RETENTION_DAYS` is shorter
+than `RETENTION_INACTIVE_MONTHS`, accounts can look dormant purely because their
+sign-in records were rotated away, and dormant here means scrubbed. Keep the
+audit window comfortably longer than the inactivity window.
+
+A project that adds its own record of activity (something dated that only a
+present person produces) should widen the dormancy query to consider it, so the
+rule does not rest on the audit log alone.
 
 ## Supply chain and CI
 

@@ -40,7 +40,7 @@ export default function AuthShell({ children }: { children: React.ReactNode }) {
           </p>
           <SectionDivider className="mt-8 max-w-sm" />
           <p className="mt-8 max-w-md text-muted-foreground">
-            Your schedule, your documents and your messages, in one place.
+            Your teams, your documents and your messages, in one place.
           </p>
         </div>
 

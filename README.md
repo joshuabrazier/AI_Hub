@@ -7,11 +7,16 @@ the parts every one of them needs, already built and secured:
 - invite-only sign-up, password reset, email change
 - three role-scoped areas: admin, manager, member
 - teams, with many-to-many membership as the security boundary
-- programs, classes, sessions, attendance and bookings
 - notifications with per-person preferences and unread tracking
 - signable documents with field-encrypted signatures
 - an append-only audit trail and a data-retention job
 - a public marketing site whose copy is edited from inside the app
+
+It carries **no domain of its own**: there is nothing here about what a
+particular project delivers. That is the point - the plumbing is finished, the
+subject matter is not, and whatever the project actually does gets added as new
+feature modules following the layering in
+[docs/architecture.md](docs/architecture.md).
 
 Start projects **from** this repo rather than from scratch. See
 [docs/README.md](docs/README.md) for the checklist.
@@ -72,7 +77,7 @@ CI runs type-check, lint and unit tests, and it type-checks `tests/**` too, so a
 broken spec breaks the build.
 
 `pnpm test:e2e` **refuses to run against a non-local database.** The suite
-creates and deletes users, teams and classes in whatever `.env` points at, and
+creates and deletes users, teams and notifications in whatever `.env` points at, and
 copying a production `.env` in to "get it running" is an easy mistake to make.
 Override with `E2E_ALLOW_REMOTE_DB=true` only for a database you are certain is
 disposable.

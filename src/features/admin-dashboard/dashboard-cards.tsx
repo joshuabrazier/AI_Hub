@@ -1,25 +1,13 @@
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
-import {
-  ArrowRight,
-  Bell,
-  CalendarDays,
-  LayoutPanelLeft,
-  type LucideIcon,
-  MapPin,
-  UserRound,
-  Users,
-} from "lucide-react";
+import { ArrowRight, Bell, LayoutPanelLeft, type LucideIcon } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader } from "@/components/ui/card";
-import { SESSION_STATUS, SESSION_STATUS_LABELS, type SessionStatus } from "@/lib/data/kysely-database-types";
-import { formatIsoDate, formatTime } from "@/lib/format";
 import { ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
-import type { DashboardBroadcastDTO, DashboardSessionDTO, DashboardTeamDTO } from "./admin-dashboard.types";
+import type { DashboardBroadcastDTO, DashboardTeamDTO } from "./admin-dashboard.types";
 
 // -------------------------------------------------------------------
 // Dashboard primitives
@@ -173,109 +161,6 @@ function ViewAllButton({ href, label }: { href: string; label: string }) {
         <ArrowRight size={16} aria-hidden="true" />
       </Link>
     </Button>
-  );
-}
-
-// -------------------------------------------------------------------
-// Today's schedule
-// -------------------------------------------------------------------
-function SessionStatusBadge({ status }: { status: SessionStatus }) {
-  if (status === SESSION_STATUS.CANCELLED) {
-    return <Badge variant="destructive">{SESSION_STATUS_LABELS[status]}</Badge>;
-  }
-
-  if (status === SESSION_STATUS.COMPLETED) {
-    return <Badge variant="success">{SESSION_STATUS_LABELS[status]}</Badge>;
-  }
-
-  return <Badge variant="secondary">{SESSION_STATUS_LABELS[status]}</Badge>;
-}
-
-function TodaySessionRow({ session }: { session: DashboardSessionDTO }) {
-  const isCancelled = session.status === SESSION_STATUS.CANCELLED;
-
-  return (
-    <li className="flex flex-wrap items-center gap-3 py-3">
-      {/* Times line up in a column, so they take the mono face and tabular
-          figures rather than the running face. */}
-      <div className="w-20 shrink-0 font-mono tabular-nums">
-        <p
-          className={cn(
-            "text-sm font-semibold",
-            isCancelled ? "text-muted-foreground line-through" : "text-foreground",
-          )}
-        >
-          {formatTime(session.sessionStart)}
-        </p>
-        <p className="text-xs text-muted-foreground">{formatTime(session.sessionEnd)}</p>
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{session.className}</p>
-        <p className="truncate text-xs text-muted-foreground">{session.programName}</p>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <MapPin size={12} aria-hidden="true" className="shrink-0" />
-            {session.locationName}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <UserRound size={12} aria-hidden="true" className="shrink-0" />
-            {session.leadUserName ?? "Unassigned"}
-          </span>
-        </p>
-      </div>
-
-      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <Users size={14} aria-hidden="true" />
-        <span className="font-mono tabular-nums">
-          {session.attendeeCount}/{session.capacity}
-        </span>
-        {/* Places that were taken and then given up. Without this, a session
-            sitting under capacity reads as one that never filled. */}
-        {session.cancelledCount > 0 && <span>{session.cancelledCount} cancelled</span>}
-      </span>
-
-      <SessionStatusBadge status={session.status} />
-    </li>
-  );
-}
-
-export function TodayScheduleCard({
-  sessions,
-  todayIso,
-  weekSessionCount,
-}: {
-  sessions: DashboardSessionDTO[];
-  todayIso: string;
-  weekSessionCount: number;
-}) {
-  return (
-    <DashboardCard
-      icon={CalendarDays}
-      title="Today's schedule"
-      // todayIso is a 'YYYY-MM-DD' string from the app's own time zone, so it
-      // is formatted as-is rather than read off the viewer's clock.
-      subtitle={formatIsoDate(todayIso, "EEEE d MMMM")}
-      action={<ViewAllButton href={ROUTES.ADMIN_SCHEDULE} label="View week" />}
-    >
-      {sessions.length === 0 ? (
-        <EmptyState
-          icon={CalendarDays}
-          title="No sessions today"
-          subtitle={
-            weekSessionCount > 0
-              ? `${weekSessionCount} session${weekSessionCount === 1 ? "" : "s"} scheduled this week`
-              : "Nothing scheduled this week"
-          }
-        />
-      ) : (
-        <ul className="divide-y divide-border">
-          {sessions.map((session) => (
-            <TodaySessionRow key={session.id} session={session} />
-          ))}
-        </ul>
-      )}
-    </DashboardCard>
   );
 }
 

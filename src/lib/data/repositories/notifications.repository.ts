@@ -130,8 +130,8 @@ export async function addNotificationsRepo(
 // -------------------------------------------------------------------
 // Recipient resolution
 //
-// One function per audience type (everyone / teams / users / classes), plus
-// one for the pool the individual-person picker offers. The picker is
+// One function per audience type (everyone / teams / users), plus one for the
+// pool the individual-person picker offers. The picker is
 // deliberately not the same query as the "everyone" audience: they answer
 // different questions and applying one to the other is what made staff
 // unaddressable.
@@ -254,27 +254,3 @@ export async function getRecipientUsersByTeamIdsRepo(teamIds: string[]): Promise
   }
 }
 
-// -------------------------------------------------------------------
-// The "classes" audience: everyone in the given classes, via class_members
-// (joining a class is what puts a person here). DISTINCT and untagged for
-// the same reason as teams: somebody in two of the addressed classes is one
-// recipient, not two.
-// -------------------------------------------------------------------
-export async function getRecipientUsersByClassIdsRepo(classIds: string[]): Promise<NotificationRecipient[]> {
-  try {
-    if (classIds.length === 0) return [];
-
-    return await database
-      .selectFrom("classMembers as cm")
-      .innerJoin("users as u", "u.id", "cm.userId")
-      .select(["u.id as id", "u.name as name", "u.preferredName as preferredName", "u.email as email"])
-      .distinct()
-      .where("cm.classId", "in", classIds)
-      .where("u.isActive", "=", true)
-      .where("u.deidentifiedAt", "is", null)
-      .orderBy("u.name")
-      .execute();
-  } catch (error) {
-    throw handleError("getRecipientUsersByClassIdsRepo", error);
-  }
-}

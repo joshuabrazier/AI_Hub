@@ -26,7 +26,7 @@ import { handleError } from "@/lib/handle-errors";
 // -------------------------------------------------------------------
 
 // A person becomes a de-identification candidate once dormant for this many
-// months (see docs/data-retention.md). Business-configurable.
+// months (see docs/security.md). Business-configurable.
 export const RETENTION_INACTIVE_MONTHS = 12;
 
 // The fixed placeholder written over identifying text. Not reversible - a
@@ -39,25 +39,26 @@ export type RetentionCandidate = {
   email: string;
   role: string;
   createdAt: Date;
-  // Most recent sign-in / most recent session they were on the roster for.
-  // Null means never. lastSessionDate is a DATE column, so it comes back as a
-  // 'YYYY-MM-DD' string and is compared lexicographically, never as a Date.
+  // Most recent sign-in. Null means never.
   lastSignInAt: Date | null;
-  lastSessionDate: string | null;
 };
 
 // -------------------------------------------------------------------
 // The people who currently meet the retention rule. ALL of these must hold:
 //   - an admin has deactivated the account (users.is_active = false),
-//   - the account is older than the window,
-//   - they have not signed in within the window, and
-//   - they have not been on a session roster within the window,
+//   - the account is older than the window, and
+//   - they have not signed in within the window,
 // and they have not already been de-identified.
 //
 // The deactivation requirement is a deliberate human gate: nobody is scrubbed
 // just for drifting away, an admin has to retire the account first. Dormancy
 // is derived rather than stored - there is no `last_active_at` column - so it
-// comes from sign-in audit events plus session attendance.
+// comes from sign-in audit events.
+//
+// That makes AUDIT_LOG_RETENTION_DAYS load-bearing: sign-in events are the ONLY
+// evidence of activity, so a purge window shorter than this one would rotate
+// away the very rows that keep an account out of this list. Keep the audit
+// window longer than RETENTION_INACTIVE_MONTHS.
 //
 // SELECT only. This is the single source of truth for "who qualifies", and
 // the job below reuses it so the preview an admin sees is the same set the
@@ -77,12 +78,6 @@ async function selectRetentionCandidates(): Promise<RetentionCandidate[]> {
       WHERE al.action = ${AUDIT_ACTIONS.AUTH_SIGNED_IN}
         AND al.actor_user_id IS NOT NULL
       GROUP BY al.actor_user_id
-    ),
-    last_attendance AS (
-      SELECT sa.user_id, MAX(cs.session_date) AS last_session_date
-      FROM session_attendees sa
-      JOIN class_sessions cs ON cs.id = sa.class_session_id
-      GROUP BY sa.user_id
     )
     SELECT
       u.id AS "userId",
@@ -90,19 +85,13 @@ async function selectRetentionCandidates(): Promise<RetentionCandidate[]> {
       u.email AS "email",
       u.role::text AS "role",
       u.created_at AS "createdAt",
-      ls.last_signin_at AS "lastSignInAt",
-      la.last_session_date::text AS "lastSessionDate"
+      ls.last_signin_at AS "lastSignInAt"
     FROM users u
     LEFT JOIN last_signin ls ON ls.user_id = u.id
-    LEFT JOIN last_attendance la ON la.user_id = u.id
     WHERE u.deidentified_at IS NULL
       AND u.is_active = false
       AND u.created_at < now() - make_interval(months => ${months}::int)
       AND (ls.last_signin_at IS NULL OR ls.last_signin_at < now() - make_interval(months => ${months}::int))
-      AND (
-        la.last_session_date IS NULL
-        OR la.last_session_date < (CURRENT_DATE - make_interval(months => ${months}::int))
-      )
     ORDER BY u.name
   `.execute(database);
 
@@ -176,9 +165,9 @@ export type DeidentifyRunResult = {
 //
 // DESTRUCTIVE and IRREVERSIBLE when it actually runs: it overwrites name,
 // email, phone and image with a tombstone, drops the stored credentials and
-// any live session, and stamps `deidentified_at`. The user ROW is kept, so
-// class rosters, attendance counts and the audit trail stay consistent -
-// deleting it would silently rewrite history the trail is there to preserve.
+// any live session, and stamps `deidentified_at`. The user ROW is kept, so team
+// membership and the audit trail stay consistent - deleting it would silently
+// rewrite history the trail is there to preserve.
 //
 // GATED. `RETENTION_JOB_ENABLED` is checked here, not only by the caller.
 // The route already computes dryRun from the same flag; this second check is

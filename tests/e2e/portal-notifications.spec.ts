@@ -30,7 +30,7 @@ test("a notification arrives unread and opening it marks only that one read", as
   seeder = new Seeder(request);
 
   const member = await seeder.user();
-  const firstTitle = seeder.label("E2E Pool Closure");
+  const firstTitle = seeder.label("E2E First Notice");
   const secondTitle = seeder.label("E2E Timetable Update");
 
   const firstId = await seeder.notification(member, { title: firstTitle });

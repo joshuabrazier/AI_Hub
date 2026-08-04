@@ -39,7 +39,7 @@ anything is missing or malformed.
 | `NEXT_PUBLIC_APP_TITLE` | yes | |
 | `NEXT_PUBLIC_APP_DESCRIPTION` | yes | |
 | `NEXT_PUBLIC_APP_URL` | yes | full URL including scheme, e.g. `http://localhost:3000` |
-| `NEXT_PUBLIC_APP_TIME_ZONE` | no | IANA zone for calendar dates and session times. Defaults to `Australia/Adelaide`. Set it deliberately per project - see `src/lib/timezone.ts`. |
+| `NEXT_PUBLIC_APP_TIME_ZONE` | no | IANA zone the app renders dates and times in. Defaults to `Australia/Adelaide`. Set it deliberately per project - see `src/lib/timezone.ts`. |
 | `NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX` | yes | non-empty |
 | `NEXT_PUBLIC_PASSWORD_MIN_LENGTH` | yes | keep in sync with the server (8) |
 | `NEXT_PUBLIC_PASSWORD_MAX_LENGTH` | yes | keep in sync with the server |
@@ -116,7 +116,7 @@ precompiled and stable, then shuts it down when the run finishes.
 - Install the browser once: `pnpm exec playwright install chromium`
 - Stop `pnpm dev` first - the built server also uses port 3000.
 - The runner REFUSES to start against a non-local database. The suite creates
-  and deletes users, teams and classes in whatever `.env` points at, so copying a
+  and deletes users, teams and notifications in whatever `.env` points at, so copying a
   production `.env` in would write to live data. Override with
   `E2E_ALLOW_REMOTE_DB=true` only for a database you are certain is disposable.
 - Run: `pnpm test:e2e` (routes through `tests/run-e2e.mjs`, which forces plain, non-animated output so Windows terminals do not garble it).

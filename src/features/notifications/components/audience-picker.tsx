@@ -15,7 +15,7 @@ import type { AudienceOptionDTO, NotificationAudienceDTO, NotificationAudienceOp
 // The composer's working copy of an audience.
 //
 // It keeps a selection per audience type rather than one shared list, so
-// switching from teams to classes and back does not silently discard what was
+// switching from teams to people and back does not silently discard what was
 // already chosen - and so the value handed to the server is only ever the ids
 // belonging to the type that is actually selected.
 // -------------------------------------------------------------------
@@ -23,7 +23,6 @@ export type AudienceDraft = {
   audienceType: NotificationAudienceType;
   teamIds: Set<string>;
   userIds: Set<string>;
-  classIds: Set<string>;
 };
 
 export function emptyAudienceDraft(audienceType: NotificationAudienceType): AudienceDraft {
@@ -31,7 +30,6 @@ export function emptyAudienceDraft(audienceType: NotificationAudienceType): Audi
     audienceType,
     teamIds: new Set(),
     userIds: new Set(),
-    classIds: new Set(),
   };
 }
 
@@ -45,8 +43,6 @@ export function isAudienceDraftComplete(draft: AudienceDraft): boolean {
       return draft.teamIds.size > 0;
     case NOTIFICATION_AUDIENCE_TYPES.USERS:
       return draft.userIds.size > 0;
-    case NOTIFICATION_AUDIENCE_TYPES.CLASSES:
-      return draft.classIds.size > 0;
   }
 }
 
@@ -63,8 +59,6 @@ export function toAudienceRequest(draft: AudienceDraft): NotificationAudienceDTO
       return { audienceType: NOTIFICATION_AUDIENCE_TYPES.TEAMS, teamIds: [...draft.teamIds] };
     case NOTIFICATION_AUDIENCE_TYPES.USERS:
       return { audienceType: NOTIFICATION_AUDIENCE_TYPES.USERS, userIds: [...draft.userIds] };
-    case NOTIFICATION_AUDIENCE_TYPES.CLASSES:
-      return { audienceType: NOTIFICATION_AUDIENCE_TYPES.CLASSES, classIds: [...draft.classIds] };
   }
 }
 
@@ -82,8 +76,7 @@ function toggleIn(current: Set<string>, id: string): Set<string> {
 // -------------------------------------------------------------------
 // AudiencePicker
 //
-// Choose who a notification goes to: everyone, whole teams, whole classes, or
-// named people.
+// Choose who a notification goes to: everyone, whole teams, or named people.
 //
 // The lists it offers are already narrowed server-side to what the signed-in
 // sender may address, and "Everyone" is absent entirely for a manager. None of
@@ -104,7 +97,6 @@ export function AudiencePicker({
   const audienceTypes: NotificationAudienceType[] = [
     ...(options.canAddressEveryone ? [NOTIFICATION_AUDIENCE_TYPES.EVERYONE] : []),
     NOTIFICATION_AUDIENCE_TYPES.TEAMS,
-    NOTIFICATION_AUDIENCE_TYPES.CLASSES,
     NOTIFICATION_AUDIENCE_TYPES.USERS,
   ];
 
@@ -151,22 +143,6 @@ export function AudiencePicker({
           <p className="text-xs text-muted-foreground">
             Everybody in the chosen teams. Somebody in two of them still gets one message.
           </p>
-        </div>
-      )}
-
-      {value.audienceType === NOTIFICATION_AUDIENCE_TYPES.CLASSES && (
-        <div className="space-y-2" role="group" aria-labelledby="composer-classes-label">
-          <Label id="composer-classes-label">Classes</Label>
-          <CheckboxPicker
-            idPrefix="audience-class"
-            options={toPickerOptions(options.classes)}
-            selected={value.classIds}
-            onToggle={(id) => onChange({ ...value, classIds: toggleIn(value.classIds, id) })}
-            searchable={options.classes.length > 8}
-            emptyMessage="No classes available to you."
-            disabled={disabled}
-          />
-          <p className="text-xs text-muted-foreground">Everybody who has joined the chosen classes.</p>
         </div>
       )}
 

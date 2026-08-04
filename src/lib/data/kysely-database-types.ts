@@ -88,82 +88,6 @@ export const INVITATION_STATUS_LABELS: Record<InvitationStatus, string> = {
 };
 
 // -------------------------------------------------------------------
-// Session Status (one dated occurrence of a class)
-// -------------------------------------------------------------------
-export const SESSION_STATUS = {
-  SCHEDULED: "scheduled",
-  COMPLETED: "completed",
-  CANCELLED: "cancelled",
-} as const;
-
-export type SessionStatus = (typeof SESSION_STATUS)[keyof typeof SESSION_STATUS];
-
-export const SESSION_STATUS_LABELS: Record<SessionStatus, string> = {
-  [SESSION_STATUS.SCHEDULED]: "Scheduled",
-  [SESSION_STATUS.COMPLETED]: "Completed",
-  [SESSION_STATUS.CANCELLED]: "Cancelled",
-};
-
-// -------------------------------------------------------------------
-// Attendance Status
-// A member's status for one session (session_attendees.attendance_status).
-// 'booked' is written when they join a class; staff set the rest per session.
-//
-// CANCELLED is load-bearing: it is what frees a place. Capacity counts and
-// rosters exclude it everywhere, and the row is kept rather than deleted so
-// the change stays on the record.
-// -------------------------------------------------------------------
-export const ATTENDANCE_STATUS = {
-  BOOKED: "booked",
-  ATTENDED: "attended",
-  ABSENT: "absent",
-  CANCELLED: "cancelled",
-} as const;
-
-export type AttendanceStatus = (typeof ATTENDANCE_STATUS)[keyof typeof ATTENDANCE_STATUS];
-
-export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = {
-  [ATTENDANCE_STATUS.BOOKED]: "Booked",
-  [ATTENDANCE_STATUS.ATTENDED]: "Attended",
-  [ATTENDANCE_STATUS.ABSENT]: "Absent",
-  [ATTENDANCE_STATUS.CANCELLED]: "Cancelled",
-};
-
-// Statuses that occupy a place in a session. Anything not listed here has
-// freed its place. Use this rather than re-listing statuses at each call site.
-export const PLACE_TAKING_ATTENDANCE_STATUSES = [
-  ATTENDANCE_STATUS.BOOKED,
-  ATTENDANCE_STATUS.ATTENDED,
-  ATTENDANCE_STATUS.ABSENT,
-] as const;
-
-// -------------------------------------------------------------------
-// Days of the week (each class stores its own per-day schedule; these back
-// the day picker and label lookups)
-// -------------------------------------------------------------------
-export const DAYS_OF_WEEK = [
-  { value: "monday", label: "Monday" },
-  { value: "tuesday", label: "Tuesday" },
-  { value: "wednesday", label: "Wednesday" },
-  { value: "thursday", label: "Thursday" },
-  { value: "friday", label: "Friday" },
-  { value: "saturday", label: "Saturday" },
-  { value: "sunday", label: "Sunday" },
-] as const;
-
-export type DayOfWeek = (typeof DAYS_OF_WEEK)[number]["value"];
-
-export const DAY_OF_WEEK_LABELS: Record<DayOfWeek, string> = {
-  monday: "Monday",
-  tuesday: "Tuesday",
-  wednesday: "Wednesday",
-  thursday: "Thursday",
-  friday: "Friday",
-  saturday: "Saturday",
-  sunday: "Sunday",
-};
-
-// -------------------------------------------------------------------
 // Notification audience
 // Who a staff member can address a broadcast to. Managers are restricted to
 // teams they manage - that is enforced in the service, not here.
@@ -172,7 +96,6 @@ export const NOTIFICATION_AUDIENCE_TYPES = {
   EVERYONE: "everyone",
   TEAMS: "teams",
   USERS: "users",
-  CLASSES: "classes",
 } as const;
 
 export type NotificationAudienceType =
@@ -182,14 +105,12 @@ export const NOTIFICATION_AUDIENCE_LABELS: Record<NotificationAudienceType, stri
   [NOTIFICATION_AUDIENCE_TYPES.EVERYONE]: "Everyone",
   [NOTIFICATION_AUDIENCE_TYPES.TEAMS]: "Specific teams",
   [NOTIFICATION_AUDIENCE_TYPES.USERS]: "Specific people",
-  [NOTIFICATION_AUDIENCE_TYPES.CLASSES]: "Specific classes",
 };
 
 // Fallback notification categories, used only when the admin-managed
 // notification_types table is empty (a fresh database).
 export const DEFAULT_NOTIFICATION_TYPE_KEYS = {
   GENERAL: "general",
-  SCHEDULE: "schedule",
   ACCOUNT: "account",
 } as const;
 
@@ -275,7 +196,6 @@ export type UpdateUser = Updateable<Users>;
 
 // -------------------------------------------------------------------
 // Sessions Table (better-auth) - LOGIN sessions.
-// The dated occurrences of a class are class_sessions, not this.
 // -------------------------------------------------------------------
 export interface Sessions {
   id: string;
@@ -429,158 +349,6 @@ export interface SiteContentTable {
 export type SiteContent = Selectable<SiteContentTable>;
 export type NewSiteContent = Insertable<SiteContentTable>;
 export type UpdateSiteContent = Updateable<SiteContentTable>;
-
-// -------------------------------------------------------------------
-// Programs Table
-// A named offering that classes are instances of.
-// -------------------------------------------------------------------
-export interface Programs {
-  id: string;
-  name: string;
-  description: string;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type Program = Selectable<Programs>;
-export type NewProgram = Insertable<Programs>;
-export type UpdateProgram = Updateable<Programs>;
-
-// -------------------------------------------------------------------
-// Locations Table
-// Venues where classes run.
-// -------------------------------------------------------------------
-export interface Locations {
-  id: string;
-  name: string;
-  address: string;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type Location = Selectable<Locations>;
-export type NewLocation = Insertable<Locations>;
-export type UpdateLocation = Updateable<Locations>;
-
-// -------------------------------------------------------------------
-// Classes Table
-// A recurring class: a program delivered at a location, on one or more weekly
-// days, between startDate and endDate. Dated occurrences are generated into
-// class_sessions across that range.
-//
-// startDate/endDate are DATE columns, so pg returns them as 'YYYY-MM-DD'
-// strings. Compare them lexicographically; never convert to Date.
-//
-// teamId is optional. When set, the team's managers can administer the class;
-// when NULL it is admin-only.
-// -------------------------------------------------------------------
-export interface ClassScheduleDay {
-  day: DayOfWeek;
-  startTime: string; // HH:MM
-  endTime: string; // HH:MM
-}
-
-export interface Classes {
-  id: string;
-  programId: string;
-  locationId: string;
-  teamId: string | null;
-  // The staff member running it (optional).
-  leadUserId: string | null;
-  name: string;
-  description: string;
-  // JSONB: read back as a parsed array; written as a JSON string.
-  schedule: ColumnType<ClassScheduleDay[], string, string>;
-  capacity: number;
-  startDate: string;
-  endDate: string;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type Class = Selectable<Classes>;
-export type NewClass = Insertable<Classes>;
-export type UpdateClass = Updateable<Classes>;
-
-// -------------------------------------------------------------------
-// Class Members Table
-// A user who is in a class. Joining also writes that user's per-session
-// roster rows into session_attendees.
-// -------------------------------------------------------------------
-export interface ClassMembers {
-  id: string;
-  classId: string;
-  userId: string;
-  joinedAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type ClassMember = Selectable<ClassMembers>;
-export type NewClassMember = Insertable<ClassMembers>;
-export type UpdateClassMember = Updateable<ClassMembers>;
-
-// -------------------------------------------------------------------
-// Class Sessions Table
-// sessionDate is a DATE ('YYYY-MM-DD' string); sessionStart/sessionEnd are
-// TIME columns ('HH:MM:SS' strings).
-// -------------------------------------------------------------------
-export interface ClassSessions {
-  id: string;
-  classId: string;
-  leadUserId: string | null;
-  sessionDate: string;
-  sessionStart: string;
-  sessionEnd: string;
-  status: SessionStatus;
-  notes: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type ClassSession = Selectable<ClassSessions>;
-export type NewClassSession = Insertable<ClassSessions>;
-export type UpdateClassSession = Updateable<ClassSessions>;
-
-// -------------------------------------------------------------------
-// Session Attendees Table
-// One row per user per session: the roster, plus that user's attendance
-// status for that session.
-// -------------------------------------------------------------------
-export interface SessionAttendees {
-  id: string;
-  classSessionId: string;
-  userId: string;
-  attendanceStatus: AttendanceStatus;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type SessionAttendee = Selectable<SessionAttendees>;
-export type NewSessionAttendee = Insertable<SessionAttendees>;
-export type UpdateSessionAttendee = Updateable<SessionAttendees>;
-
-// -------------------------------------------------------------------
-// Closure Days Table
-// Dates on which no classes run. Sessions on these dates show as cancelled.
-// Non-destructive: removing the day restores its sessions. dayDate is a DATE
-// ('YYYY-MM-DD' string). `reason` is shown to members.
-// -------------------------------------------------------------------
-export interface ClosureDays {
-  id: string;
-  dayDate: string;
-  reason: string;
-  createdBy: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type ClosureDay = Selectable<ClosureDays>;
-export type NewClosureDay = Insertable<ClosureDays>;
-export type UpdateClosureDay = Updateable<ClosureDays>;
 
 // -------------------------------------------------------------------
 // Documents Table
@@ -790,13 +558,6 @@ export interface Database {
   teamMembers: TeamMembers;
   userInvitations: UserInvitations;
   siteContent: SiteContentTable;
-  programs: Programs;
-  locations: Locations;
-  classes: Classes;
-  classMembers: ClassMembers;
-  classSessions: ClassSessions;
-  sessionAttendees: SessionAttendees;
-  closureDays: ClosureDays;
   documents: Documents;
   documentSignatures: DocumentSignatures;
   notificationTypes: NotificationTypes;

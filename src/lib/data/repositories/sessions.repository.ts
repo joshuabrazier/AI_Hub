@@ -4,8 +4,7 @@ import { handleError } from "@/lib/handle-errors";
 import { database, DBClient } from "../kysely-database-client";
 
 // -------------------------------------------------------------------
-// Login sessions (better-auth), not class sessions - the dated occurrences
-// of a class are class_sessions.
+// Login sessions (better-auth).
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------

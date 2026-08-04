@@ -33,15 +33,6 @@ export const AUDIT_ACTIONS = {
   // Documents
   DOCUMENT_SIGNED: "document.signed",
 
-  // Scheduling
-  CLASS_CREATED: "class.created",
-  CLASS_UPDATED: "class.updated",
-  CLASS_MEMBER_ADDED: "class.member_added",
-  CLASS_MEMBER_REMOVED: "class.member_removed",
-  BOOKING_CANCELLED: "booking.cancelled",
-  CLOSURE_DAY_ADDED: "closure_day.added",
-  CLOSURE_DAY_REMOVED: "closure_day.removed",
-
   // Authentication
   AUTH_SIGNED_IN: "auth.signed_in",
   AUTH_SIGNED_OUT: "auth.signed_out",
@@ -57,9 +48,6 @@ export const AUDIT_ENTITY_TYPES = {
   TEAM: "team",
   TEAM_MEMBER: "team_member",
   DOCUMENT: "document",
-  CLASS: "class",
-  BOOKING: "booking",
-  CLOSURE_DAY: "closure_day",
   AUTH: "auth",
 } as const;
 

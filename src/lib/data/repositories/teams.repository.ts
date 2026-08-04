@@ -80,7 +80,7 @@ export async function createTeamRepo(newTeam: NewTeam, db: DBClient = database):
 // -------------------------------------------------------------------
 // Update a team by id. Undefined if the id does not exist. Retiring a team
 // is an update setting isActive to false, not a delete - deleting would
-// cascade its memberships away and orphan the classes pointing at it.
+// cascade its memberships away and orphan anything else pointing at it.
 // -------------------------------------------------------------------
 export async function updateTeamByIdRepo(
   id: string,
@@ -90,8 +90,8 @@ export async function updateTeamByIdRepo(
   try {
     // Updateable<Teams> allows id and createdAt, so a patch carrying an id
     // would rewrite the primary key of the row the WHERE matched and drag
-    // every team_members / class row pointing at it onto a new id. Neither
-    // column is ever legitimately patched, so drop both before the spread.
+    // every team_members row pointing at it onto a new id. Neither column is
+    // ever legitimately patched, so drop both before the spread.
     const patch: UpdateTeam = { ...updateTeam };
     delete patch.id;
     delete patch.createdAt;

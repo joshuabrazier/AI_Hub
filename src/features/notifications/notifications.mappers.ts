@@ -127,17 +127,3 @@ export function mapDBTeamMemberToAudienceOptionDTO(member: TeamMemberWithUser): 
     subtitle: member.email,
   };
 }
-
-// A class the sender may address. The subtitle names the owning team so two
-// classes with the same name are still tellable apart.
-export function mapClassToAudienceOptionDTO(
-  classId: string,
-  className: string,
-  teamName: string | null,
-): AudienceOptionDTO {
-  return {
-    id: classId,
-    name: className,
-    subtitle: teamName,
-  };
-}

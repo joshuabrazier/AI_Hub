@@ -70,9 +70,9 @@ describe("submitEnquiryService", () => {
   it("passes the chosen category through to the email as its label", async () => {
     mockAdmins.mockResolvedValue([admin("a1@example.com")]);
 
-    await submitEnquiryService(enquiry({ category: "Booking a class" }));
+    await submitEnquiryService(enquiry({ category: "Joining a team" }));
 
-    expect(mockSend.mock.calls[0][0].enquiry.categoryLabel).toBe("Booking a class");
+    expect(mockSend.mock.calls[0][0].enquiry.categoryLabel).toBe("Joining a team");
   });
 
   it("also includes the contact inbox, deduped against admins", async () => {

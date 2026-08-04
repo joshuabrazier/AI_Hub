@@ -32,7 +32,7 @@ const serverEnvSchema = z.object({
     .default("false")
     .transform((value) => value === "true"),
 
-  // Data-retention monthly job (see docs/data-retention.md).
+  // Data-retention monthly job (see docs/security.md).
   // RETENTION_JOB_SECRET is the bearer token the trigger endpoint requires; the
   // endpoint is inert (503) until it is set. RETENTION_JOB_ENABLED is the master
   // switch: while "false" (default) the job only REPORTS what it would

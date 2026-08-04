@@ -91,7 +91,7 @@ export function AdminTeamsFormDialog({ team, open, onOpenChange }: Props) {
 
       <FormSwitchField control={form.control} name="isActive" label="Active" />
 
-      {/* Retiring a team keeps its membership and its classes; it just
+      {/* Retiring a team keeps its membership and its history; it just
           stops being offered anywhere new. */}
       <p className="text-sm text-muted-foreground">
         Retiring a team keeps its members and history. It only stops the team being offered when assigning new work.

@@ -109,7 +109,7 @@ export async function getUserByEmailRepo(email: string, db: DBClient = database)
 }
 
 // -------------------------------------------------------------------
-// Get several users by id - resolves a set of ids (a roster, a broadcast
+// Get several users by id - resolves a set of ids (a team's membership, a broadcast
 // audience) to accounts in one query instead of one per id.
 // -------------------------------------------------------------------
 export async function getUsersByIdsRepo(userIds: string[], db: DBClient = database): Promise<User[]> {

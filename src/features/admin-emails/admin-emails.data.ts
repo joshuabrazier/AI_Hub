@@ -28,7 +28,7 @@ const SAMPLE = {
 };
 
 const NOTIFICATION_BODY =
-  "<p>Hi there,</p><p>Thursday&rsquo;s session at the main hall is cancelled this week while the room is being repaired. We&rsquo;ll be back to the usual schedule next week.</p><p>Thanks for your patience!</p>";
+  "<p>Hi there,</p><p>We have added a document to your portal that needs your signature. It only takes a moment, and you can read it in full before you sign.</p><p>Thanks!</p>";
 
 // -------------------------------------------------------------------
 // Build every email preview from its real template, so this gallery always
@@ -118,7 +118,7 @@ export function buildEmailPreviews(): EmailPreview[] {
         name: "Jamie Rivera",
         phone: "0400 123 456",
         email: "jamie.rivera@example.com",
-        categoryLabel: "Booking a class",
+        categoryLabel: "General enquiry",
         preferredDays: ["Monday", "Wednesday", "Saturday"],
         message:
           "Hi! I'd like to know what's available for a beginner. Mornings suit us best, but we're flexible.",

@@ -177,7 +177,7 @@ export async function createTeamService(requestDTO: CreateTeamRequestDTO): Promi
 
 // -------------------------------------------------------------------
 // Update a team. Retiring one is isActive = false, never a delete - deleting
-// would cascade its memberships away and orphan the classes pointing at it.
+// would cascade its memberships away and orphan anything else pointing at it.
 // -------------------------------------------------------------------
 export async function updateTeamService(requestDTO: UpdateTeamRequestDTO): Promise<string | undefined> {
   try {

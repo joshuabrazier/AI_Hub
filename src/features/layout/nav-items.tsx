@@ -1,17 +1,11 @@
 import {
   Bell,
-  BookOpen,
-  CalendarClock,
-  CalendarDays,
-  CalendarOff,
   Files,
   FileText,
   House,
-  Layers,
   LayoutPanelLeft,
   type LucideIcon,
   Mail,
-  MapPin,
   ScrollText,
   Settings,
   ShieldCheck,
@@ -89,29 +83,6 @@ const ADMIN_NAV: NavGroup[] = [
     ],
   },
   {
-    label: "Delivery",
-    items: [
-      {
-        label: "Delivery",
-        icon: Layers,
-        tooltip: "Programs, classes and scheduling",
-        children: [
-          { label: "Programs", href: ROUTES.ADMIN_PROGRAMS, icon: BookOpen, tooltip: "What you offer" },
-          { label: "Classes", href: ROUTES.ADMIN_CLASSES, icon: Layers, tooltip: "Recurring classes" },
-          { label: "Sessions", href: ROUTES.ADMIN_SESSIONS, icon: CalendarClock, tooltip: "Individual sessions" },
-          { label: "Locations", href: ROUTES.ADMIN_LOCATIONS, icon: MapPin, tooltip: "Where classes run" },
-          {
-            label: "Closure days",
-            href: ROUTES.ADMIN_CLOSURE_DAYS,
-            icon: CalendarOff,
-            tooltip: "Days when nothing runs",
-          },
-        ],
-      },
-      { label: "Schedule", href: ROUTES.ADMIN_SCHEDULE, icon: CalendarDays, tooltip: "Weekly schedule" },
-    ],
-  },
-  {
     label: "Communication",
     items: [
       {
@@ -166,8 +137,6 @@ const MANAGER_NAV: NavGroup[] = [
     label: "Your teams",
     items: [
       { label: "Teams", href: ROUTES.MANAGE_TEAMS, icon: LayoutPanelLeft, tooltip: "Teams you manage" },
-      { label: "Classes", href: ROUTES.MANAGE_CLASSES, icon: Layers, tooltip: "Your teams' classes" },
-      { label: "Schedule", href: ROUTES.MANAGE_SCHEDULE, icon: CalendarDays, tooltip: "Your teams' week" },
       {
         label: "Notifications",
         href: ROUTES.MANAGE_NOTIFICATIONS,
@@ -186,13 +155,6 @@ const MEMBER_NAV: NavGroup[] = [
     label: "Your portal",
     items: [
       { label: "Home", href: ROUTES.PORTAL, icon: House, tooltip: "Home" },
-      { label: "Schedule", href: ROUTES.PORTAL_SCHEDULE, icon: CalendarDays, tooltip: "Your schedule" },
-      {
-        label: "Bookings",
-        href: ROUTES.PORTAL_BOOKINGS,
-        icon: CalendarClock,
-        tooltip: "Cancel a booking",
-      },
       {
         label: "Notifications",
         href: ROUTES.PORTAL_NOTIFICATIONS,

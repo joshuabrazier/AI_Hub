@@ -34,7 +34,7 @@ function bearerMatches(header: string | null, secret: string): boolean {
 //
 // dryRun is computed from the master switch here AND re-checked inside the
 // service, so neither one alone decides whether data is destroyed.
-// See docs/data-retention.md.
+// See docs/security.md.
 // -------------------------------------------------------------------
 export async function POST(request: Request): Promise<Response> {
   const secret = envServer.RETENTION_JOB_SECRET;

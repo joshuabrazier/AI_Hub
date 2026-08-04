@@ -1,26 +1,15 @@
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
-import {
-  ArrowRight,
-  Bell,
-  CalendarClock,
-  CalendarDays,
-  Files,
-  LayoutPanelLeft,
-  type LucideIcon,
-  MapPin,
-  UserCircle,
-} from "lucide-react";
+import { ArrowRight, Bell, Files, LayoutPanelLeft, type LucideIcon, UserCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader } from "@/components/ui/card";
-import { ATTENDANCE_STATUS, ATTENDANCE_STATUS_LABELS, TEAM_ROLE_LABELS } from "@/lib/data/kysely-database-types";
-import { formatIsoDate, formatTimeRange } from "@/lib/format";
+import { TEAM_ROLE_LABELS } from "@/lib/data/kysely-database-types";
 import { ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
-import type { PortalNotificationDTO, PortalSessionDTO, PortalTeamDTO } from "../portal-home.types";
+import type { PortalNotificationDTO, PortalTeamDTO } from "../portal-home.types";
 
 // The brand chip used on card headers, matching the staff dashboard so both
 // areas read as one product.
@@ -67,79 +56,6 @@ function CardHeaderRow({
       </div>
       {action && <CardAction>{action}</CardAction>}
     </CardHeader>
-  );
-}
-
-// -------------------------------------------------------------------
-// Next sessions
-//
-// `todayIso` and each session's date are both 'YYYY-MM-DD' strings from DATE
-// columns, so "is this today" is a string comparison. Neither becomes a Date.
-// -------------------------------------------------------------------
-export function NextSessionsCard({
-  sessions,
-  todayIso,
-}: {
-  sessions: PortalSessionDTO[];
-  todayIso: string;
-}) {
-  return (
-    <Card className="shadow-sm">
-      <CardHeaderRow
-        icon={CalendarDays}
-        title="Your next sessions"
-        subtitle="What is coming up for you"
-        action={
-          <Button variant="outline" size="sm" asChild>
-            <Link href={ROUTES.PORTAL_SCHEDULE}>
-              Full schedule
-              <ArrowRight size={16} aria-hidden="true" />
-            </Link>
-          </Button>
-        }
-      />
-
-      <CardContent>
-        {sessions.length === 0 ? (
-          <EmptyState
-            icon={CalendarDays}
-            title="Nothing scheduled"
-            subtitle="Sessions you are booked into appear here"
-          />
-        ) : (
-          <ul className="divide-y divide-border">
-            {sessions.map((session) => {
-              const isToday = session.sessionDate === todayIso;
-
-              return (
-                <li key={session.id} className="flex flex-wrap items-center gap-3 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">{session.className}</p>
-                    <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-                      <MapPin size={12} aria-hidden="true" className="shrink-0" />
-                      {session.locationName}
-                    </p>
-                  </div>
-
-                  <div className="shrink-0 text-right">
-                    <p className="text-sm font-medium text-foreground">
-                      {isToday ? "Today" : formatIsoDate(session.sessionDate)}
-                    </p>
-                    <p className="font-mono text-xs tabular-nums text-muted-foreground">
-                      {formatTimeRange(session.sessionStart, session.sessionEnd)}
-                    </p>
-                  </div>
-
-                  {session.attendanceStatus !== ATTENDANCE_STATUS.BOOKED && (
-                    <Badge variant="secondary">{ATTENDANCE_STATUS_LABELS[session.attendanceStatus]}</Badge>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -258,16 +174,10 @@ export function RecentNotificationsCard({
 // -------------------------------------------------------------------
 const QUICK_LINKS: { label: string; description: string; href: string; icon: LucideIcon }[] = [
   {
-    label: "Schedule",
-    description: "Your week at a glance",
-    href: ROUTES.PORTAL_SCHEDULE,
-    icon: CalendarDays,
-  },
-  {
-    label: "Bookings",
-    description: "Cancel a place you cannot make",
-    href: ROUTES.PORTAL_BOOKINGS,
-    icon: CalendarClock,
+    label: "Notifications",
+    description: "Messages waiting for you",
+    href: ROUTES.PORTAL_NOTIFICATIONS,
+    icon: Bell,
   },
   {
     label: "Documents",

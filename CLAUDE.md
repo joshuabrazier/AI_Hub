@@ -6,8 +6,12 @@ detail is in `docs/`.
 ## What this is
 
 A **reusable portal base**: Next.js 16 (App Router) with authentication,
-role-based access, teams, scheduling and notifications already built. Projects
-are started FROM this repo rather than from scratch.
+role-based access, teams and notifications already built. Projects are started
+FROM this repo rather than from scratch.
+
+It is deliberately a **blank canvas** below that line: there is no delivery or
+scheduling domain in it. Whatever a project actually does gets added as new
+feature modules following the layering below.
 
 Three authenticated surfaces plus a public marketing site. Postgres via Kysely,
 Better Auth, Azure email. TypeScript, Tailwind CSS 4, shadcn/ui.
@@ -48,8 +52,9 @@ team_members   (team_id, user_id, team_role)  MANY-TO-MANY and optional
 - `/manage` managers, scoped to the teams an admin assigned them
 - `/portal` members, their own data. **No id in the URL** - the session is the identity.
 
-Delivery: `programs` -> `classes` (own `start_date`/`end_date`) -> `class_sessions`,
-with `class_members` for membership and `session_attendees` for the roster.
+Everything else is cross-cutting and domain-neutral: invitations, notifications
+(types, templates, broadcasts, per-person preferences), signable documents, site
+content, enquiry categories, the audit log and the retention job.
 
 ## Architecture (follow the layering)
 
@@ -66,8 +71,8 @@ Repositories must never import from features. See `docs/architecture.md`.
 - **Resolve the actor from the session, never from the URL.** No route parameter is proof of access.
 - **An empty scope means nothing, not everything.** A manager with no teams sees no rows.
 - **A scope failure answers `notFound()`, not "forbidden".** Saying "forbidden" to a guessed id confirms the record exists and turns the route into an enumeration oracle. A *role* failure may say so plainly.
-- **Calendar dates are `'YYYY-MM-DD'` strings, not `Date`.** Postgres `DATE` is parsed to a string on purpose (timezone-safe, React-renderable). Compare lexicographically. See `src/lib/data/kysely-database-client.ts`.
-- **The app timezone is `NEXT_PUBLIC_APP_TIME_ZONE`**, read once in `src/lib/timezone.ts`. Never hardcode a zone, and never use `new Date()` to decide what day it is - use `todayInAppZone()`.
+- **Calendar dates are `'YYYY-MM-DD'` strings, not `Date`.** The pg type parser in `src/lib/data/kysely-database-client.ts` maps Postgres `DATE` to a string on purpose (timezone-safe, React-renderable), and `TIME` to `'HH:MM:SS'`. No table currently has a `DATE` column, but the parser stays so the first one a project adds is safe by default. Type such columns as `string` and compare lexicographically.
+- **The app timezone is `NEXT_PUBLIC_APP_TIME_ZONE`**, read once in `src/lib/timezone.ts` as `APP_TIME_ZONE`. Never hardcode a zone, and never use `new Date()` to decide what calendar day it is - derive it in the app zone (`formatDateTime` in `src/lib/format.ts` is the pattern).
 - **Roles are server-assigned.** `role` / `isActive` are `input:false` in Better Auth - never accept them from the client.
 - **Sanitize rich text** server-side (`src/lib/sanitize-rich-text.ts`) before `dangerouslySetInnerHTML`.
 - **Admin-editable JSON is validated on read.** Home page blocks fall back to defaults if malformed rather than throwing, and report which keys fell back.

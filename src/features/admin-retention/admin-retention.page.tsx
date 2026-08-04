@@ -4,7 +4,7 @@ import PortalPage from "@/features/layout/portal-page";
 import { StandardTablePage } from "@/features/layout/standard-table-page";
 import { USER_ROLE_LABELS, type UserRole } from "@/lib/data/kysely-database-types";
 import { envServer } from "@/lib/env-server";
-import { formatDateTime, formatIsoDate } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 
 import { getDeidentifiedUsersAction, getRetentionCandidatesAction } from "./admin-retention.actions";
 import { RETENTION_INACTIVE_MONTHS } from "./admin-retention.service";
@@ -35,7 +35,7 @@ export default async function AdminDataRetentionPage() {
         <PortalPage
           eyebrow="Admin"
           title="Data retention"
-          description={`Deactivated accounts with no sign-in and no session attendance for ${RETENTION_INACTIVE_MONTHS}+ months are de-identified automatically each month.`}
+          description={`Deactivated accounts with no sign-in for ${RETENTION_INACTIVE_MONTHS}+ months are de-identified automatically each month.`}
         >
           {/* Status of the automatic job. When off, this page is a preview. */}
           {jobEnabled ? (
@@ -76,7 +76,7 @@ export default async function AdminDataRetentionPage() {
             {candidates.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Nobody currently meets the {RETENTION_INACTIVE_MONTHS}-month rule. An account has to be deactivated
-                and have had no sign-in and no session attendance for {RETENTION_INACTIVE_MONTHS}+ months.
+                and have had no sign-in for {RETENTION_INACTIVE_MONTHS}+ months.
               </p>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-border">
@@ -88,7 +88,6 @@ export default async function AdminDataRetentionPage() {
                       <th className="px-4 py-3 font-semibold">Role</th>
                       <th className="px-4 py-3 font-semibold">Account created</th>
                       <th className="px-4 py-3 font-semibold">Last sign-in</th>
-                      <th className="px-4 py-3 font-semibold">Last session</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -104,10 +103,6 @@ export default async function AdminDataRetentionPage() {
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
                           {candidate.lastSignInAt ? formatDateTime(candidate.lastSignInAt) : "Never"}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
-                          {/* A DATE column, so already a 'YYYY-MM-DD' string. */}
-                          {candidate.lastSessionDate ? formatIsoDate(candidate.lastSessionDate) : "Never attended"}
                         </td>
                       </tr>
                     ))}

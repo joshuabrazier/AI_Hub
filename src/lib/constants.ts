@@ -32,17 +32,6 @@ export const MESSAGES = {
   TEAM_MEMBER_UPDATED: "Member updated",
   TEAM_MEMBER_REMOVED: "Member removed",
 
-  PROGRAM_CREATED: "Program created",
-  PROGRAM_UPDATED: "Program updated",
-  LOCATION_CREATED: "Location created",
-  LOCATION_UPDATED: "Location updated",
-  CLASS_CREATED: "Class created",
-  CLASS_UPDATED: "Class updated",
-  SESSION_UPDATED: "Session updated",
-  BOOKING_CANCELLED: "Booking cancelled",
-  CLOSURE_DAY_CREATED: "Closure day added",
-  CLOSURE_DAY_UPDATED: "Closure day updated",
-
   NOTIFICATION_SENT: "Notification sent",
   DOCUMENT_SIGNED: "Document signed",
   CONTENT_SAVED: "Content saved",

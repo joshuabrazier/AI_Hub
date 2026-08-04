@@ -6,7 +6,7 @@ import { USER_ROLES, type UserRole } from "@/lib/data/kysely-database-types";
 // Three authenticated areas, each with its own layout and nav:
 //   /admin   - admins. Everything.
 //   /manage  - managers. Scoped to the teams they have been assigned to.
-//   /portal  - members. Their own schedule, teams, documents and account.
+//   /portal  - members. Their own teams, documents, messages and account.
 //
 // The member portal deliberately carries NO id in its path. The previous
 // design namespaced it as /client/[clientId], which had to be checked against
@@ -41,12 +41,6 @@ export const ROUTES = {
   ADMIN_DASHBOARD: "/admin/dashboard",
   ADMIN_USERS: "/admin/users",
   ADMIN_TEAMS: "/admin/teams",
-  ADMIN_PROGRAMS: "/admin/programs",
-  ADMIN_CLASSES: "/admin/classes",
-  ADMIN_SESSIONS: "/admin/sessions",
-  ADMIN_SCHEDULE: "/admin/schedule",
-  ADMIN_LOCATIONS: "/admin/locations",
-  ADMIN_CLOSURE_DAYS: "/admin/closure-days",
   ADMIN_NOTIFICATIONS: "/admin/notifications",
   ADMIN_DOCUMENTS: "/admin/documents",
   ADMIN_CONTENT: "/admin/content",
@@ -61,15 +55,11 @@ export const ROUTES = {
   // routing only and is always re-checked against membership.
   MANAGE: "/manage",
   MANAGE_TEAMS: "/manage/teams",
-  MANAGE_CLASSES: "/manage/classes",
-  MANAGE_SCHEDULE: "/manage/schedule",
   MANAGE_NOTIFICATIONS: "/manage/notifications",
   manageTeam: (teamId: string) => `/manage/teams/${teamId}`,
 
   // Member portal
   PORTAL: "/portal",
-  PORTAL_SCHEDULE: "/portal/schedule",
-  PORTAL_BOOKINGS: "/portal/bookings",
   PORTAL_NOTIFICATIONS: "/portal/notifications",
   PORTAL_DOCUMENTS: "/portal/documents",
   PORTAL_ACCOUNT: "/portal/account",

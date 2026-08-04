@@ -8,17 +8,16 @@ import { NOTIFICATION_AUDIENCE_TYPES, type NotificationAudienceType } from "@/li
 const idSchema = z.string().min(TABLE_ID_LENGTH);
 
 // Bounds on how wide one send can be addressed. These cap the work the server
-// does per request; they are NOT an authorization control - which teams,
-// classes and people a sender may reach is decided in the service from their
-// session, never from the size of the list they submitted.
+// does per request; they are NOT an authorization control - which teams and
+// people a sender may reach is decided in the service from their session,
+// never from the size of the list they submitted.
 const MAX_TEAMS_PER_SEND = 50;
-const MAX_CLASSES_PER_SEND = 50;
 const MAX_USERS_PER_SEND = 1000;
 
 // -------------------------------------------------------------------
 // Audience
 //
-// A discriminated union rather than one object with four optional arrays: the
+// A discriminated union rather than one object with optional arrays: the
 // audience type and the ids that go with it always travel together, so a
 // "teams" send cannot arrive carrying a list of user ids for the service to
 // mistake for its target.
@@ -37,10 +36,6 @@ export const NotificationAudienceSchema = z.discriminatedUnion("audienceType", [
   z.object({
     audienceType: z.literal(NOTIFICATION_AUDIENCE_TYPES.USERS),
     userIds: z.array(idSchema).min(1, "Please choose at least one person").max(MAX_USERS_PER_SEND),
-  }),
-  z.object({
-    audienceType: z.literal(NOTIFICATION_AUDIENCE_TYPES.CLASSES),
-    classIds: z.array(idSchema).min(1, "Please choose at least one class").max(MAX_CLASSES_PER_SEND),
   }),
 ]);
 
@@ -153,7 +148,6 @@ export type NotificationAudienceOptionsDTO = {
   canAddressEveryone: boolean;
   teams: AudienceOptionDTO[];
   users: AudienceOptionDTO[];
-  classes: AudienceOptionDTO[];
 };
 
 // -------------------------------------------------------------------

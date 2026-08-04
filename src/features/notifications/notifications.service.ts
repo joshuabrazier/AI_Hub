@@ -17,7 +17,6 @@ import {
   USER_ROLES,
   type NotificationAudienceType,
 } from "@/lib/data/kysely-database-types";
-import { getAllClassesRepo, getClassesForTeamsRepo } from "@/lib/data/repositories/classes.repository";
 import {
   addNotificationBroadcastRepo,
   getBroadcastRecipientNamesRepo,
@@ -39,7 +38,6 @@ import {
   addNotificationsRepo,
   getEveryoneAudienceRecipientsRepo,
   getNotificationsByUserRepo,
-  getRecipientUsersByClassIdsRepo,
   getRecipientUsersByIdsRepo,
   getRecipientUsersByTeamIdsRepo,
   getSelectableRecipientUsersRepo,
@@ -63,10 +61,8 @@ import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
 import { sanitizeRichText } from "@/lib/sanitize-rich-text";
-import { todayInAppZone } from "@/lib/timezone";
 
 import {
-  mapClassToAudienceOptionDTO,
   mapDBBroadcastToSentNotificationDTO,
   mapDBNotificationToNotificationDTO,
   mapDBRecipientToAudienceOptionDTO,
@@ -116,7 +112,6 @@ const MAX_INBOX_NOTIFICATIONS = 200;
 // table is empty (a fresh database), so a send is never impossible.
 const FALLBACK_NOTIFICATION_TYPES = [
   { key: DEFAULT_NOTIFICATION_TYPE_KEYS.GENERAL, name: "General" },
-  { key: DEFAULT_NOTIFICATION_TYPE_KEYS.SCHEDULE, name: "Schedule" },
   { key: DEFAULT_NOTIFICATION_TYPE_KEYS.ACCOUNT, name: "Account" },
 ];
 
@@ -249,40 +244,28 @@ export async function markAllNotificationsReadService(): Promise<void> {
 // -------------------------------------------------------------------
 // Audience options
 //
-// Built from the caller's scope, so a manager is never offered a team, a class
-// or a person outside the teams they hold. This is a convenience, not a
-// control: sendNotificationService re-derives the same scope and re-checks
-// every id it is handed.
+// Built from the caller's scope, so a manager is never offered a team or a
+// person outside the teams they hold. This is a convenience, not a control:
+// sendNotificationService re-derives the same scope and re-checks every id it
+// is handed.
 // -------------------------------------------------------------------
 async function getAudienceOptions(scope: TeamScope): Promise<NotificationAudienceOptionsDTO> {
-  // The app's calendar day in its own time zone - the class queries compare it
-  // against DATE columns, which are 'YYYY-MM-DD' strings.
-  const today = todayInAppZone();
-
   if (scope.isUnrestricted) {
-    const [teams, users, classes] = await Promise.all([
-      getActiveTeamsRepo(),
-      getSelectableRecipientUsersRepo(),
-      getAllClassesRepo(today),
-    ]);
+    const [teams, users] = await Promise.all([getActiveTeamsRepo(), getSelectableRecipientUsersRepo()]);
 
     return {
       canAddressEveryone: true,
       teams: teams.map(mapDBTeamToAudienceOptionDTO),
       users: users.map(mapDBRecipientToAudienceOptionDTO),
-      classes: classes
-        .filter((classRow) => classRow.isActive)
-        .map((classRow) => mapClassToAudienceOptionDTO(classRow.id, classRow.name, classRow.teamName)),
     };
   }
 
   // An empty scope must offer nothing rather than everything. Each repository
   // short-circuits an empty id list, so there is no path where "no teams"
   // becomes an unfiltered read.
-  const [teams, members, classes] = await Promise.all([
+  const [teams, members] = await Promise.all([
     getTeamsByIdsRepo(scope.teamIds),
     getTeamMembersForTeamsRepo(scope.teamIds),
-    getClassesForTeamsRepo(scope.teamIds, today),
   ]);
 
   // A person in two of the manager's teams has a membership row per team, so
@@ -300,9 +283,6 @@ async function getAudienceOptions(scope: TeamScope): Promise<NotificationAudienc
     canAddressEveryone: false,
     teams: teams.filter((team) => team.isActive).map(mapDBTeamToAudienceOptionDTO),
     users: [...usersById.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    classes: classes
-      .filter((classRow) => classRow.isActive)
-      .map((classRow) => mapClassToAudienceOptionDTO(classRow.id, classRow.name, classRow.teamName)),
   };
 }
 
@@ -311,11 +291,11 @@ async function getAudienceOptions(scope: TeamScope): Promise<NotificationAudienc
 //
 // The one place an audience becomes a list of people. Every branch goes through
 // a repository audience query, which returns only accounts that can actually be
-// written to and which dedupes across teams and classes.
+// written to and which dedupes across teams.
 //
 // Anything the sender asked for that is outside their scope is dropped here,
 // silently and before the query - so a tampered id list can never widen a send,
-// and an out-of-scope id cannot even confirm that the team or class exists.
+// and an out-of-scope id cannot even confirm that the team exists.
 // -------------------------------------------------------------------
 type ResolvedAudience = {
   recipients: NotificationRecipient[];
@@ -371,32 +351,6 @@ async function resolveAudience(
         audienceLabel: summariseNames(
           teams.map((team) => team.name),
           "teams",
-        ),
-      };
-    }
-
-    case NOTIFICATION_AUDIENCE_TYPES.CLASSES: {
-      const today = todayInAppZone();
-
-      // For a manager, the classes they may address are the ones owned by their
-      // teams. Classes with no team are admin-only and never appear in that set.
-      const scopedClasses = scope.isUnrestricted
-        ? await getAllClassesRepo(today)
-        : await getClassesForTeamsRepo(scope.teamIds, today);
-
-      const scopedById = new Map(scopedClasses.map((classRow) => [classRow.id, classRow]));
-      const allowedClassIds = audience.classIds.filter((classId) => scopedById.has(classId));
-
-      if (allowedClassIds.length === 0) {
-        throw new DisplayErrorMessage("You can only send to classes in the teams you manage.");
-      }
-
-      return {
-        recipients: await getRecipientUsersByClassIdsRepo(allowedClassIds),
-        audienceType: NOTIFICATION_AUDIENCE_TYPES.CLASSES,
-        audienceLabel: summariseNames(
-          allowedClassIds.map((classId) => scopedById.get(classId)?.name ?? ""),
-          "classes",
         ),
       };
     }
