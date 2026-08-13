@@ -25,9 +25,13 @@ DROP TABLE IF EXISTS team_members;
 DROP TABLE IF EXISTS teams;
 DROP TABLE IF EXISTS users;
 
+DROP TABLE IF EXISTS ai_chat_messages;
+DROP TABLE IF EXISTS ai_chat_subjects;
+
 DROP TYPE IF EXISTS user_role;
 DROP TYPE IF EXISTS team_role;
 DROP TYPE IF EXISTS invitation_status;
+DROP TYPE IF EXISTS ai_chat_role;
 
 ---------------------------------------------------------------------
 -- ENUM Types
@@ -65,6 +69,18 @@ CREATE TYPE invitation_status AS ENUM (
     'completed',
     'expired',
     'revoked'
+);
+
+---------------------------------------------------------------------
+-- AI Chat Role
+-- Who authored one turn of a conversation. Deliberately only the two
+-- roles the Bedrock Converse API accepts in `messages` - a system prompt
+-- is a separate top-level field there, not a message role, so it must
+-- never be stored as one.
+---------------------------------------------------------------------
+CREATE TYPE ai_chat_role AS ENUM (
+    'user',
+    'assistant'
 );
 
 ---------------------------------------------------------------------
@@ -412,6 +428,83 @@ CREATE TABLE enquiry_submissions (
 );
 
 CREATE INDEX idx_enquiry_submissions_ip_created ON enquiry_submissions(ip_address, created_at);
+
+---------------------------------------------------------------------
+-- AI Chat Subjects Table
+-- One conversation thread, owned by exactly one user. The sidebar lists
+-- these; `title` is derived from the first message and is editable.
+--
+-- user_id is the ONLY authorization boundary on chat: a conversation is
+-- private to its owner, and every query is scoped to the SESSION user id.
+-- There is no sharing, and no staff override - an admin cannot read
+-- somebody else's chat, deliberately, because these transcripts are
+-- personal working notes rather than organisational records.
+--
+-- last_message_at orders the sidebar. It is separate from updated_at so
+-- renaming a conversation does not reorder the list.
+---------------------------------------------------------------------
+CREATE TABLE ai_chat_subjects (
+    id              TEXT NOT NULL PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title           TEXT NOT NULL,
+    last_message_at TIMESTAMPTZ NULL,
+    -- Auto-compaction. `summary` replaces the turns up to and including
+    -- `summary_through_message_id` in the REQUEST sent to the model; the
+    -- original turns stay in ai_chat_messages and the user can still read
+    -- them. NULL on a thread that has never been compacted.
+    --
+    -- The cursor is a message id rather than a count so it stays correct
+    -- regardless of what is inserted afterwards, and it is a plain column
+    -- with no foreign key: the summary must survive even if the message it
+    -- points at is ever removed, and a dangling cursor degrades to "summary
+    -- covers nothing" rather than breaking the thread.
+    summary                    TEXT NULL,
+    summary_through_message_id TEXT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Serves the sidebar: this user's conversations, most recently active first.
+CREATE INDEX idx_ai_chat_subjects_user ON ai_chat_subjects(user_id, last_message_at DESC NULLS LAST);
+
+---------------------------------------------------------------------
+-- AI Chat Messages Table
+-- One turn of a conversation, in the order it happened. The whole thread
+-- is replayed to the model on every send, so this table IS the
+-- conversation state - there is nothing stored model-side.
+--
+-- Token counts are recorded per assistant turn from the Converse
+-- response's usage block, so spend is attributable without a separate
+-- telemetry store. They are NULL on user turns and on any assistant turn
+-- whose stream ended before the usage metadata arrived.
+--
+-- IMPORTANT: with prompt caching on, `input_tokens` is only the
+-- NON-CACHED portion. Total input for a turn is
+-- input_tokens + cache_read_tokens + cache_write_tokens. Reading
+-- input_tokens alone under-reports, which is exactly the mistake that
+-- makes caching look like it is not working.
+---------------------------------------------------------------------
+CREATE TABLE ai_chat_messages (
+    id                 TEXT NOT NULL PRIMARY KEY,
+    subject_id         TEXT NOT NULL REFERENCES ai_chat_subjects(id) ON DELETE CASCADE,
+    role               ai_chat_role NOT NULL,
+    content            TEXT NOT NULL,
+    input_tokens       INT NULL,
+    output_tokens      INT NULL,
+    -- Billed at roughly a tenth of the input rate; the whole point of the
+    -- cache point on the request.
+    cache_read_tokens  INT NULL,
+    -- Billed ABOVE the input rate. Small per turn (only the delta since the
+    -- last request is written), but worth seeing.
+    cache_write_tokens INT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Replaying a thread reads it in insertion order. `id` is the tiebreaker
+-- because a user turn and its assistant reply can land in the same
+-- microsecond, and without it Postgres may return them in either order -
+-- which would send the model its own reply before the question.
+CREATE INDEX idx_ai_chat_messages_subject ON ai_chat_messages(subject_id, created_at, id);
 
 ---------------------------------------------------------------------
 -- Audit Logs Table

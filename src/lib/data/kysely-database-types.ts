@@ -88,6 +88,20 @@ export const INVITATION_STATUS_LABELS: Record<InvitationStatus, string> = {
 };
 
 // -------------------------------------------------------------------
+// AI Chat Roles
+//
+// Who authored one turn. Only the two roles the Bedrock Converse API
+// accepts inside `messages`: a system prompt is a separate top-level field
+// there, not a message role, so it is never stored as a turn.
+// -------------------------------------------------------------------
+export const AI_CHAT_ROLES = {
+  USER: "user",
+  ASSISTANT: "assistant",
+} as const;
+
+export type AiChatRole = (typeof AI_CHAT_ROLES)[keyof typeof AI_CHAT_ROLES];
+
+// -------------------------------------------------------------------
 // Notification audience
 // Who a staff member can address a broadcast to. Managers are restricted to
 // teams they manage - that is enforced in the service, not here.
@@ -520,6 +534,63 @@ export type EnquirySubmission = Selectable<EnquirySubmissions>;
 export type NewEnquirySubmission = Insertable<EnquirySubmissions>;
 
 // -------------------------------------------------------------------
+// AI Chat Subjects
+// One conversation thread. `userId` is the only authorization boundary on
+// chat - a thread is private to its owner and every query is scoped to the
+// SESSION user id. `lastMessageAt` orders the sidebar and is kept separate
+// from `updatedAt` so a rename does not reorder the list.
+// -------------------------------------------------------------------
+export interface AiChatSubjects {
+  id: string;
+  userId: string;
+  title: string;
+  lastMessageAt: Date | null;
+  // Auto-compaction. `summary` stands in for every turn up to and including
+  // `summaryThroughMessageId` in the REQUEST sent to the model; the original
+  // turns stay in ai_chat_messages and remain readable. Both NULL on a
+  // thread that has never been compacted.
+  summary: string | null;
+  summaryThroughMessageId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type AiChatSubject = Selectable<AiChatSubjects>;
+export type NewAiChatSubject = Insertable<AiChatSubjects>;
+export type UpdateAiChatSubject = Updateable<AiChatSubjects>;
+
+// -------------------------------------------------------------------
+// AI Chat Messages
+// One turn, in the order it happened. The whole thread is replayed to the
+// model on every send, so this table IS the conversation state.
+//
+// Token counts come from the Converse response's usage block, recorded on
+// the assistant turn. NULL on user turns, and on an assistant turn whose
+// stream ended before the usage metadata arrived.
+//
+// IMPORTANT: with prompt caching on, `inputTokens` is only the NON-CACHED
+// portion. Total input for a turn is inputTokens + cacheReadTokens +
+// cacheWriteTokens - reading inputTokens alone under-reports, which is the
+// mistake that makes caching look like it is not working.
+// -------------------------------------------------------------------
+export interface AiChatMessages {
+  id: string;
+  subjectId: string;
+  role: AiChatRole;
+  content: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  // Billed at roughly a tenth of the input rate.
+  cacheReadTokens: number | null;
+  // Billed above the input rate, but only the delta since the last request.
+  cacheWriteTokens: number | null;
+  createdAt: Date;
+}
+
+export type AiChatMessage = Selectable<AiChatMessages>;
+export type NewAiChatMessage = Insertable<AiChatMessages>;
+
+// -------------------------------------------------------------------
 // Audit Logs
 // Append-only trail of sensitive-data changes and auth events. `actor_*` are
 // snapshotted so the trail survives a user being renamed or deleted.
@@ -566,5 +637,7 @@ export interface Database {
   notifications: Notifications;
   enquiryCategories: EnquiryCategories;
   enquirySubmissions: EnquirySubmissions;
+  aiChatSubjects: AiChatSubjects;
+  aiChatMessages: AiChatMessages;
   auditLogs: AuditLogs;
 }

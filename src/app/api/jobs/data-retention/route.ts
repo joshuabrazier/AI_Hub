@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { deidentifyInactiveUsersService } from "@/features/admin-retention/admin-retention.service";
+import { purgeExpiredAiChatsService } from "@/features/ai-chat/ai-chat-retention.service";
 import { purgeExpiredAuditLogsService } from "@/lib/audit/audit-log.service";
 import { envServer } from "@/lib/env-server";
 
@@ -27,8 +28,11 @@ function bearerMatches(header: string | null, secret: string): boolean {
 // Trigger for the monthly data-retention job. This bearer secret
 // (RETENTION_JOB_SECRET) is the ONLY authentication here - there is no session
 // behind a scheduler, so the usual role guards do not apply and must not be
-// added. It runs two tasks:
+// added. It runs three tasks:
 //   - purges audit logs older than AUDIT_LOG_RETENTION_DAYS (routine rotation),
+//   - purges AI chat conversations idle longer than AI_CHAT_RETENTION_DAYS
+//     (also routine rotation - the user's own transcripts, on a window they
+//     can see),
 //   - de-identifies dormant accounts, but only when RETENTION_JOB_ENABLED is
 //     "true"; otherwise that part runs as a preview and changes nothing.
 //
@@ -51,6 +55,9 @@ export async function POST(request: Request): Promise<Response> {
   // Routine log rotation. Runs regardless of the de-identification switch.
   const auditLogs = await purgeExpiredAuditLogsService();
 
+  // Chat rotation, likewise independent of that switch.
+  const aiChats = await purgeExpiredAiChatsService();
+
   // De-identification. Master switch: preview unless explicitly enabled.
   const dryRun = !envServer.RETENTION_JOB_ENABLED;
   const deidentify = await deidentifyInactiveUsersService({ dryRun });
@@ -59,6 +66,7 @@ export async function POST(request: Request): Promise<Response> {
   // logs without the log itself becoming a copy of what was just removed.
   console.info(
     `[data-retention] auditLogsPurged=${auditLogs.purged} (>${auditLogs.retentionDays}d) ` +
+      `aiChatsPurged=${aiChats.purgedSubjects} (>${aiChats.retentionDays}d) ` +
       `dryRun=${deidentify.dryRun} candidates=${deidentify.candidateCount} processed=${deidentify.processedCount}`,
   );
 
@@ -66,6 +74,7 @@ export async function POST(request: Request): Promise<Response> {
   return NextResponse.json({
     ok: true,
     auditLogs,
+    aiChats,
     deidentify: {
       dryRun: deidentify.dryRun,
       jobEnabled: deidentify.jobEnabled,

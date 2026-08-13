@@ -49,6 +49,33 @@ const serverEnvSchema = z.object({
   // Unlike the de-identification switch this defaults ON, because it is routine
   // log rotation rather than an irreversible scrub of personal data.
   AUDIT_LOG_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(180),
+
+  // -------------------------------------------------------------------
+  // AI chat (Amazon Bedrock)
+  //
+  // An Amazon Bedrock API key - a BEARER TOKEN, not an access-key/secret
+  // pair. @aws-sdk/client-bedrock-runtime reads this exact variable name
+  // itself (fromEnvSigningName with signingName "bedrock" computes
+  // AWS_BEARER_TOKEN_BEDROCK), so the name is fixed by the SDK and cannot
+  // be renamed. Optional: with it unset the chat routes answer 503 and the
+  // rest of the app runs normally.
+  //
+  // Bedrock API keys EXPIRE and can be revoked from the console. Treat a
+  // sudden run of AccessDenied errors as a rotated or revoked key rather
+  // than a code fault. The region and model are pinned in
+  // src/lib/ai/bedrock-client.ts and are deliberately NOT configurable -
+  // see the data-residency note there.
+  // -------------------------------------------------------------------
+  AWS_BEARER_TOKEN_BEDROCK: z.string().min(1).optional(),
+
+  // AI chat retention. The monthly job deletes conversations with no
+  // activity for this many days, and their messages cascade. Defaults to
+  // 365. Set to 0 to keep chat history indefinitely.
+  //
+  // Chat transcripts are user-authored content that can contain anything a
+  // person chose to paste in, so unlike the audit log there is no
+  // compliance reason to keep them - a bounded window is the safer default.
+  AI_CHAT_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(365),
 });
 
 export const envServer = serverEnvSchema.parse({
@@ -74,4 +101,7 @@ export const envServer = serverEnvSchema.parse({
   RETENTION_JOB_ENABLED: process.env.RETENTION_JOB_ENABLED,
 
   AUDIT_LOG_RETENTION_DAYS: process.env.AUDIT_LOG_RETENTION_DAYS,
+
+  AWS_BEARER_TOKEN_BEDROCK: process.env.AWS_BEARER_TOKEN_BEDROCK,
+  AI_CHAT_RETENTION_DAYS: process.env.AI_CHAT_RETENTION_DAYS,
 });

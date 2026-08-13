@@ -18,6 +18,29 @@ import { AUDIT_ACTIONS } from "../audit/audit-log.types";
 const TWO_FACTOR_OTP_PERIOD_MINUTES = 5;
 
 // -------------------------------------------------------------------
+// Both loopback spellings of whatever port the app is configured on.
+//
+// Derived from NEXT_PUBLIC_APP_URL rather than hardcoded, so changing the
+// dev port is one edit in .env instead of a hunt through this file. The
+// two spellings are not interchangeable to a browser: a cookie set on
+// localhost is not sent to 127.0.0.1, so whichever one you type has to be
+// a trusted origin or Better Auth rejects the sign-in as cross-origin.
+//
+// Returns nothing if the URL is unparseable - a bad value should narrow the
+// trusted list, never widen it.
+// -------------------------------------------------------------------
+function loopbackOriginsFor(appUrl: string): string[] {
+  try {
+    const { port } = new URL(appUrl);
+    const suffix = port ? `:${port}` : "";
+
+    return [`http://localhost${suffix}`, `http://127.0.0.1${suffix}`];
+  } catch {
+    return [];
+  }
+}
+
+// -------------------------------------------------------------------
 // Better Auth Config File
 // -------------------------------------------------------------------
 export const auth = betterAuth({
@@ -40,13 +63,17 @@ export const auth = betterAuth({
   trustedOrigins:
     envServer.MODE === SITE_MODES.PRODUCTION
       ? [envClient.NEXT_PUBLIC_APP_URL]
-      : [
-          envClient.NEXT_PUBLIC_APP_URL,
-          "http://localhost:3000",
-          "http://127.0.0.1:3000",
-          "*.trycloudflare.com",
-          "192.168.*.*",
-          "10.*.*.*",
+      : // Deduplicated because NEXT_PUBLIC_APP_URL is usually one of the
+        // loopback origins already, and a repeated entry in this list reads
+        // like two different things are trusted when only one is.
+        [
+          ...new Set([
+            envClient.NEXT_PUBLIC_APP_URL,
+            ...loopbackOriginsFor(envClient.NEXT_PUBLIC_APP_URL),
+            "*.trycloudflare.com",
+            "192.168.*.*",
+            "10.*.*.*",
+          ]),
         ],
 
   // -------------------------------------------------------------------

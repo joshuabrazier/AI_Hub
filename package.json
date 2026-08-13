@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3100",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 3100",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -13,6 +13,7 @@
     "test:all": "node tests/run-all.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1102.0",
     "@azure/communication-email": "^1.1.0",
     "@azure/core-auth": "^1.10.1",
     "@hookform/resolvers": "^5.4.0",

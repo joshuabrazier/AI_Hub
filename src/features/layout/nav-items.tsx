@@ -10,6 +10,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   UserCircle,
   Users,
   UsersRound,
@@ -66,7 +67,10 @@ export type NavGroup = {
 const ADMIN_NAV: NavGroup[] = [
   {
     label: "Overview",
-    items: [{ label: "Home", href: ROUTES.ADMIN_DASHBOARD, icon: House, tooltip: "Home" }],
+    items: [
+      { label: "Home", href: ROUTES.ADMIN_DASHBOARD, icon: House, tooltip: "Home" },
+      { label: "AI chat", href: ROUTES.ADMIN_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
+    ],
   },
   {
     label: "People",
@@ -131,7 +135,10 @@ const ADMIN_NAV: NavGroup[] = [
 const MANAGER_NAV: NavGroup[] = [
   {
     label: "Overview",
-    items: [{ label: "Home", href: ROUTES.MANAGE, icon: House, tooltip: "Home" }],
+    items: [
+      { label: "Home", href: ROUTES.MANAGE, icon: House, tooltip: "Home" },
+      { label: "AI chat", href: ROUTES.MANAGE_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
+    ],
   },
   {
     label: "Your teams",
@@ -155,6 +162,7 @@ const MEMBER_NAV: NavGroup[] = [
     label: "Your portal",
     items: [
       { label: "Home", href: ROUTES.PORTAL, icon: House, tooltip: "Home" },
+      { label: "AI chat", href: ROUTES.PORTAL_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
       {
         label: "Notifications",
         href: ROUTES.PORTAL_NOTIFICATIONS,

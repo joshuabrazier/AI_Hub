@@ -32,6 +32,9 @@ export const MESSAGES = {
   TEAM_MEMBER_UPDATED: "Member updated",
   TEAM_MEMBER_REMOVED: "Member removed",
 
+  AI_CHAT_DELETED: "Conversation deleted",
+  AI_CHAT_RENAMED: "Conversation renamed",
+
   NOTIFICATION_SENT: "Notification sent",
   DOCUMENT_SIGNED: "Document signed",
   CONTENT_SAVED: "Content saved",

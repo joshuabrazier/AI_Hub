@@ -38,7 +38,7 @@ anything is missing or malformed.
 | --- | --- | --- |
 | `NEXT_PUBLIC_APP_TITLE` | yes | |
 | `NEXT_PUBLIC_APP_DESCRIPTION` | yes | |
-| `NEXT_PUBLIC_APP_URL` | yes | full URL including scheme, e.g. `http://localhost:3000` |
+| `NEXT_PUBLIC_APP_URL` | yes | full URL including scheme and port, e.g. `http://localhost:3100`. Source of truth for the port - see "Changing the port" below |
 | `NEXT_PUBLIC_APP_TIME_ZONE` | no | IANA zone the app renders dates and times in. Defaults to `Australia/Adelaide`. Set it deliberately per project - see `src/lib/timezone.ts`. |
 | `NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX` | yes | non-empty |
 | `NEXT_PUBLIC_PASSWORD_MIN_LENGTH` | yes | keep in sync with the server (8) |
@@ -80,7 +80,7 @@ mandatory staff 2FA setup, then change the password in Settings.
 ## 4. Run
 
 ```bash
-pnpm dev          # dev server at http://localhost:3000
+pnpm dev          # dev server at http://localhost:3100
 ```
 
 | Script | Purpose |
@@ -93,8 +93,26 @@ pnpm dev          # dev server at http://localhost:3000
 | `pnpm test:watch` | unit tests (watch mode) |
 | `pnpm test:e2e` | end-to-end tests (Playwright) |
 | `pnpm test:all` | unit + end-to-end |
+| `node --env-file=.env scripts/check-bedrock.mjs` | confirm the AI chat key, region and model work |
 
 Type-check with `pnpm exec tsc --noEmit`.
+
+### Changing the port
+
+The app runs on **3100** by default, chosen to stay clear of the 3000-3002 range
+most other local servers grab. Changing it takes two edits, and they must agree:
+
+1. `NEXT_PUBLIC_APP_URL` in `.env` - include the port, e.g. `http://localhost:4000`
+2. the `-p` flag on **both** the `dev` and `start` scripts in `package.json`
+
+Everything else follows from the first: Better Auth derives its trusted loopback
+origins from that URL (so sign-in keeps working on both `localhost` and
+`127.0.0.1`), and Playwright uses it as its base URL.
+
+Change only one of the two and the failure is confusing rather than obvious -
+the app serves fine, but sign-in fails as a cross-origin request, and the E2E
+suite hangs waiting for a URL nothing is listening on. `pnpm start` needs the
+flag as well as `pnpm dev`, because Playwright serves a production build.
 
 ## 5. Tests
 
@@ -114,7 +132,7 @@ app and serves it with `next start`** (not the dev server) so routes are
 precompiled and stable, then shuts it down when the run finishes.
 
 - Install the browser once: `pnpm exec playwright install chromium`
-- Stop `pnpm dev` first - the built server also uses port 3000.
+- Stop `pnpm dev` first - the built server uses the same port.
 - The runner REFUSES to start against a non-local database. The suite creates
   and deletes users, teams and notifications in whatever `.env` points at, so copying a
   production `.env` in would write to live data. Override with

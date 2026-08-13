@@ -41,6 +41,7 @@ export const ROUTES = {
   ADMIN_DASHBOARD: "/admin/dashboard",
   ADMIN_USERS: "/admin/users",
   ADMIN_TEAMS: "/admin/teams",
+  ADMIN_AI_CHAT: "/admin/ai-chat",
   ADMIN_NOTIFICATIONS: "/admin/notifications",
   ADMIN_DOCUMENTS: "/admin/documents",
   ADMIN_CONTENT: "/admin/content",
@@ -55,11 +56,13 @@ export const ROUTES = {
   // routing only and is always re-checked against membership.
   MANAGE: "/manage",
   MANAGE_TEAMS: "/manage/teams",
+  MANAGE_AI_CHAT: "/manage/ai-chat",
   MANAGE_NOTIFICATIONS: "/manage/notifications",
   manageTeam: (teamId: string) => `/manage/teams/${teamId}`,
 
   // Member portal
   PORTAL: "/portal",
+  PORTAL_AI_CHAT: "/portal/ai-chat",
   PORTAL_NOTIFICATIONS: "/portal/notifications",
   PORTAL_DOCUMENTS: "/portal/documents",
   PORTAL_ACCOUNT: "/portal/account",

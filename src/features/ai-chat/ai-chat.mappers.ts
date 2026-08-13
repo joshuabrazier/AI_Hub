@@ -1,0 +1,79 @@
+import type { AiChatMessage } from "@/lib/data/kysely-database-types";
+import type { AiChatSubjectWithCount } from "@/lib/data/repositories/ai-chat-subjects.repository";
+
+import { TITLE_MAX_CHARS } from "./ai-chat.types";
+import type { AiChatMessageDTO, AiChatSubjectDTO } from "./ai-chat.types";
+
+// -------------------------------------------------------------------
+// Map a conversation row to the sidebar DTO. The message count is carried
+// on the row rather than counted per conversation, so the sidebar renders
+// from one pass of data.
+// -------------------------------------------------------------------
+export function mapDBAiChatSubjectToDTO(subject: AiChatSubjectWithCount): AiChatSubjectDTO {
+  return {
+    id: subject.id,
+    title: subject.title,
+    messageCount: subject.messageCount,
+    lastMessageAt: subject.lastMessageAt,
+  };
+}
+
+// -------------------------------------------------------------------
+// Map one turn to its DTO.
+//
+// `content` is passed through as the plain text it was stored as. It is
+// NOT sanitised here and must never be rendered with
+// dangerouslySetInnerHTML: both halves of a conversation are untrusted
+// text - the user's half because they typed it, the model's half because a
+// model will repeat back whatever it was given - so it is rendered as a
+// text node and the browser escapes it. That is why there is no rich-text
+// path in this feature at all.
+// -------------------------------------------------------------------
+export function mapDBAiChatMessageToDTO(message: AiChatMessage): AiChatMessageDTO {
+  // With caching on, the model reports input in three parts and `inputTokens`
+  // alone is only the uncached remainder. Summed once here so no component
+  // has to remember the rule - reading inputTokens by itself is exactly the
+  // mistake that makes a working cache look broken.
+  //
+  // Null rather than 0 when none of the three is present, so "no usage was
+  // recorded" (a stream that ended early) stays distinguishable from "this
+  // turn genuinely cost nothing".
+  const parts = [message.inputTokens, message.cacheReadTokens, message.cacheWriteTokens];
+  const totalInputTokens = parts.some((part) => part !== null)
+    ? parts.reduce<number>((sum, part) => sum + (part ?? 0), 0)
+    : null;
+
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: message.createdAt,
+    inputTokens: message.inputTokens,
+    outputTokens: message.outputTokens,
+    cacheReadTokens: message.cacheReadTokens,
+    cacheWriteTokens: message.cacheWriteTokens,
+    totalInputTokens,
+  };
+}
+
+// -------------------------------------------------------------------
+// Derive a conversation title from its first user turn.
+//
+// Collapses whitespace first so a pasted multi-line prompt does not become
+// a title with newlines in it, then truncates on a word boundary where one
+// is close enough to the limit to look deliberate.
+// -------------------------------------------------------------------
+export function deriveAiChatSubjectTitle(firstMessage: string): string {
+  const collapsed = firstMessage.replace(/\s+/g, " ").trim();
+
+  if (collapsed.length <= TITLE_MAX_CHARS) return collapsed;
+
+  const clipped = collapsed.slice(0, TITLE_MAX_CHARS);
+  const lastSpace = clipped.lastIndexOf(" ");
+
+  // Only break on a word if that word ends reasonably near the limit;
+  // otherwise a single long token would leave a stub of a title.
+  const base = lastSpace > TITLE_MAX_CHARS * 0.6 ? clipped.slice(0, lastSpace) : clipped;
+
+  return `${base.trimEnd()}...`;
+}

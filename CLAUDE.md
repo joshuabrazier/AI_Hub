@@ -26,7 +26,7 @@ Because it is a base, two things matter more than usual:
 
 ## Commands
 
-- `pnpm dev` - dev server at <http://localhost:3000>
+- `pnpm dev` - dev server at <http://localhost:3100> (the port is set in the `dev`/`start` scripts and must match `NEXT_PUBLIC_APP_URL`)
 - `pnpm build` / `pnpm start` - production build / serve
 - `pnpm lint` - ESLint
 - `pnpm test` - unit tests (Vitest, co-located as `src/**/*.test.ts`)
@@ -56,6 +56,18 @@ Everything else is cross-cutting and domain-neutral: invitations, notifications
 (types, templates, broadcasts, per-person preferences), signable documents, site
 content, enquiry categories, the audit log and the retention job.
 
+**AI chat** is the one feature with its own data:
+
+```text
+ai_chat_subjects   one conversation, owned by one user (+ its compaction summary)
+ai_chat_messages   its turns, in order (+ per-turn token and cache usage)
+```
+
+It is **per-person, not team-scoped** - a conversation is private to its owner
+and no role overrides that, so the guard is `requireUser` and the boundary is
+the `userId` predicate on every query. Mounted in all three areas at
+`/{admin,manage,portal}/ai-chat`, all rendering one feature page.
+
 ## Architecture (follow the layering)
 
 Route `page.tsx` (auth guard) -> feature `.page.tsx` (compose) -> `.service.ts`
@@ -63,6 +75,14 @@ Route `page.tsx` (auth guard) -> feature `.page.tsx` (compose) -> `.service.ts`
 access) -> Postgres. Mutations go through `.actions.ts` (`"use server"`), which
 validate with Zod and call a service. DTOs and schemas live in `.types.ts`.
 Repositories must never import from features. See `docs/architecture.md`.
+
+**One documented exception:** the AI chat send is a Route Handler
+(`src/app/api/ai-chat/stream/route.ts`), not an action, because a server action
+cannot return a stream. Everything else holds - Zod still validates at the
+boundary, and the service still owns authorization and every write. A route
+handler is NOT covered by the proxy matcher and has no area layout above it, so
+its own session check is the outer gate; the service re-checks. Do not copy the
+pattern for anything that does not genuinely need to stream.
 
 ## Conventions that bite if ignored
 
@@ -81,6 +101,11 @@ Repositories must never import from features. See `docs/architecture.md`.
 - **Errors:** services/repositories use `handleError`; actions return `ServerApiResponse` via `handleServerApiError`. Both call `unstable_rethrow` so Next's `redirect()`/`notFound()` escape the catch - do not wrap them in a plain try/catch.
 - **`src/lib/tanstack-table.d.ts` has no importers but is load-bearing** - it declares `ColumnMeta.label`, used by the mobile table layout. Do not delete it as dead code.
 - **`data-table.tsx` carries `"use no memo"`** deliberately; removing it makes the table serve stale rows.
+- **AI chat pins its region and model in code** (`src/lib/ai/bedrock-client.ts`). The Bedrock key is locked to Australia and scoped to one model; the `au.` prefix is a cross-region inference profile that routes only within AU, and `global.`/`us.` are denied by the key's IAM policy. Never make either configurable, and never "fix" throttling by switching prefix. The model id takes no date stamp and no `:0`.
+- **Chat content is rendered as a text node, never as HTML.** Both halves are untrusted - the user's because they typed it, the model's because a model repeats back what it was given. There is deliberately no rich-text path in that feature.
+- **With prompt caching on, `inputTokens` is only the UNCACHED remainder.** Total input is `inputTokens + cacheReadTokens + cacheWriteTokens`. Measured live: a cached turn reported `inputTokens: 3` for a request that actually sent 8,207. Use `totalInputTokens` off the DTO; reading `inputTokens` alone is how a working cache gets mistaken for a broken counter.
+- **The chat cache point goes LAST in the request**, so the cached prefix is the whole conversation. Opus 4.6 needs 4,096 tokens minimum (below that it silently does not cache, which is fine) and has a **5-minute TTL with no 1-hour option** - that short TTL is why compaction exists alongside caching.
+- **Anthropic's server-side compaction is not reachable over Bedrock Converse** - it is a Messages-API beta needing an `anthropic-beta` header, and Converse cannot send one. `compactIfNeeded` in the chat service is the client-side equivalent. Compaction only changes what is SENT; the original turns stay in the database and stay readable.
 - **Never change `BETTER_AUTH_SECRET` or `FIELD_ENCRYPTION_KEY` on a live environment** - it breaks decryption and 2FA. `NEXT_PUBLIC_APP_TITLE` is the TOTP issuer, so changing it relabels every enrolled authenticator.
 
 ## Writing style
@@ -92,7 +117,7 @@ docs, commit messages, and UI copy.
 
 - `src/app` - routes: `(admin)` / `(manage)` / `(portal)` / `(public)`.
 - `src/features/<x>` - feature modules (page / service / actions / types / components).
-- `src/lib` - `auth`, `data` (Kysely client + types + repositories + `sql/`), `email`, `crypto`, `audit`, `brand`, `env`.
+- `src/lib` - `auth`, `data` (Kysely client + types + repositories + `sql/`), `ai` (the pinned Bedrock client), `email`, `crypto`, `audit`, `brand`, `env`.
 - `src/components` - `ui/` (shadcn), `form/`, `brand/`, shared tables and dialogs.
 - Unit tests are co-located (`src/**/*.test.ts`); Playwright lives in `tests/e2e`.
 - Schema: `src/lib/data/sql/database-schema.sql` (no migration runner; applied manually). No seed file - bootstrap the first admin with `scripts/create-admin.mjs`.

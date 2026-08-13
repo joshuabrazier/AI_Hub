@@ -37,8 +37,8 @@ export default defineConfig({
   // precompiles every route, so there is no slow on-demand compilation (and
   // no dev file-watcher recompiles from OneDrive syncing) to make navigations
   // flaky. Playwright builds, starts `next start`, waits for it to respond,
-  // then shuts it down when the run finishes. The built server listens on the
-  // same port as the app (3000), so stop `pnpm dev` before running the suite.
+  // then shuts it down when the run finishes. `pnpm start` listens on the same
+  // port as `pnpm dev`, so stop the dev server before running the suite.
   // -----------------------------------------------------------------
   webServer: {
     command: "pnpm build && pnpm start",

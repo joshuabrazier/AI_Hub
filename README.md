@@ -7,6 +7,8 @@ the parts every one of them needs, already built and secured:
 - invite-only sign-up, password reset, email change
 - three role-scoped areas: admin, manager, member
 - teams, with many-to-many membership as the security boundary
+- an AI chat assistant on Amazon Bedrock, streamed, with per-conversation history,
+  prompt caching and automatic compaction of long threads
 - notifications with per-person preferences and unread tracking
 - signable documents with field-encrypted signatures
 - an append-only audit trail and a data-retention job
@@ -72,6 +74,7 @@ Plus `public/logo.png`. No component hardcodes a brand string or a hex value.
 | `pnpm test` | unit tests (Vitest, co-located as `src/**/*.test.ts`) |
 | `pnpm test:e2e` | Playwright end-to-end |
 | `pnpm exec tsc --noEmit` | type-check |
+| `node --env-file=.env scripts/check-bedrock.mjs` | confirm the AI chat key, region and model work |
 
 CI runs type-check, lint and unit tests, and it type-checks `tests/**` too, so a
 broken spec breaks the build.
