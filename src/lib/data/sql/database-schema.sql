@@ -25,6 +25,8 @@ DROP TABLE IF EXISTS team_members;
 DROP TABLE IF EXISTS teams;
 DROP TABLE IF EXISTS users;
 
+DROP TABLE IF EXISTS ai_chat_request_logs;
+DROP TABLE IF EXISTS ai_chat_attachments;
 DROP TABLE IF EXISTS ai_chat_messages;
 DROP TABLE IF EXISTS ai_chat_subjects;
 
@@ -32,6 +34,8 @@ DROP TYPE IF EXISTS user_role;
 DROP TYPE IF EXISTS team_role;
 DROP TYPE IF EXISTS invitation_status;
 DROP TYPE IF EXISTS ai_chat_role;
+DROP TYPE IF EXISTS ai_chat_request_kind;
+DROP TYPE IF EXISTS ai_chat_attachment_kind;
 
 ---------------------------------------------------------------------
 -- ENUM Types
@@ -81,6 +85,29 @@ CREATE TYPE invitation_status AS ENUM (
 CREATE TYPE ai_chat_role AS ENUM (
     'user',
     'assistant'
+);
+
+---------------------------------------------------------------------
+-- AI Chat Request Kind
+-- Which of the two calls the app makes to the model a log row records.
+-- 'chat' is a reply to the user. 'summary' is the compaction call, which
+-- the user never sees and which would otherwise be invisible spend.
+---------------------------------------------------------------------
+CREATE TYPE ai_chat_request_kind AS ENUM (
+    'chat',
+    'summary'
+);
+
+---------------------------------------------------------------------
+-- AI Chat Attachment Kind
+-- Which Converse content block a stored file becomes. The two are NOT
+-- interchangeable and have different limits imposed by Bedrock (20 images
+-- vs 5 documents per request), so the distinction is recorded rather than
+-- re-derived from the format on every send.
+---------------------------------------------------------------------
+CREATE TYPE ai_chat_attachment_kind AS ENUM (
+    'image',
+    'document'
 );
 
 ---------------------------------------------------------------------
@@ -436,9 +463,16 @@ CREATE INDEX idx_enquiry_submissions_ip_created ON enquiry_submissions(ip_addres
 --
 -- user_id is the ONLY authorization boundary on chat: a conversation is
 -- private to its owner, and every query is scoped to the SESSION user id.
--- There is no sharing, and no staff override - an admin cannot read
--- somebody else's chat, deliberately, because these transcripts are
--- personal working notes rather than organisational records.
+-- There is no sharing and no role override on THIS table - not even an
+-- admin reads another user's rows through it.
+--
+-- That is not the same as "nobody else can ever see what was said": every
+-- request sent to the model is copied into ai_chat_request_logs, which
+-- admins can read. See the note on that table. The distinction is real -
+-- these transcripts are personal working notes, and the log exists so the
+-- organisation stays accountable for what it sends to a third party - but
+-- do not read the paragraph above as a promise of secrecy from the
+-- organisation, because it is not one.
 --
 -- last_message_at orders the sidebar. It is separate from updated_at so
 -- renaming a conversation does not reorder the list.
@@ -505,6 +539,136 @@ CREATE TABLE ai_chat_messages (
 -- microsecond, and without it Postgres may return them in either order -
 -- which would send the model its own reply before the question.
 CREATE INDEX idx_ai_chat_messages_subject ON ai_chat_messages(subject_id, created_at, id);
+
+---------------------------------------------------------------------
+-- AI Chat Attachments Table
+-- Files a user attached to a turn - photos and documents - stored as bytes
+-- and replayed to the model alongside the text on every send.
+--
+-- WHY THE BYTES LIVE IN POSTGRES. The Converse API takes file content
+-- inline in the request, so the bytes have to be readable at send time.
+-- There is no object store in this base repo, and adding one would put a
+-- second stateful dependency (plus its credentials, lifecycle and its own
+-- access-control surface) behind a chat feature. Keeping them here means
+-- one backup, one restore, one retention policy, and deletion that cannot
+-- silently leave orphaned objects paid for in a bucket. Revisit only if a
+-- project starts storing files far larger than the caps below.
+--
+-- STAGING. `message_id` is NULL between "uploaded" and "sent": the composer
+-- uploads a file as soon as it is chosen, and the turn it belongs to does
+-- not exist until Send. A staged row is already owned and scoped
+-- (user_id + subject_id are NOT NULL), so it is never anonymous; the send
+-- claims every staged row for that conversation by setting message_id.
+-- Rows still unclaimed after AI_CHAT_STAGED_ATTACHMENT_HOURS are swept by
+-- the monthly job - somebody attached a file and closed the tab.
+--
+-- LIMITS come from Bedrock and are enforced in code, not here, because
+-- they are per REQUEST rather than per row: up to 20 images of 3.75 MB and
+-- 8000x8000 px, and up to 5 documents of 4.5 MB, inside a 20 MB payload.
+-- Since every send replays the whole thread, those are effectively limits
+-- on the conversation, not on one message - see buildConverseRequest.
+--
+-- PRIVACY. These bytes are as private as the transcript they belong to and
+-- are served only to their owner. The admin request log records that a file
+-- was sent, its name, kind and size - never its content.
+---------------------------------------------------------------------
+CREATE TABLE ai_chat_attachments (
+    id         TEXT NOT NULL PRIMARY KEY,
+    -- Denormalised owner. Ownership is derivable through message -> subject,
+    -- but a staged row has no message yet, and every query in this feature
+    -- is meant to carry the user id in its WHERE clause rather than reach it
+    -- through a join. This column is what makes that possible on every read.
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subject_id TEXT NOT NULL REFERENCES ai_chat_subjects(id) ON DELETE CASCADE,
+    -- NULL while staged; set to the user turn that carried it once sent.
+    message_id TEXT NULL REFERENCES ai_chat_messages(id) ON DELETE CASCADE,
+    kind       ai_chat_attachment_kind NOT NULL,
+    -- The Converse format token ('png', 'pdf', ...), decided by SNIFFING THE
+    -- BYTES at upload - never from the filename or the browser's
+    -- Content-Type, both of which the client controls.
+    format     TEXT NOT NULL,
+    -- The original filename, for display and download. Untrusted text: it is
+    -- rendered as a text node, and a separate sanitised form is what goes to
+    -- the model (Bedrock restricts the character set of a document name).
+    file_name  TEXT NOT NULL,
+    -- Derived from `format` server-side, for the Content-Type when serving
+    -- the file back. Never the value the browser claimed at upload.
+    media_type TEXT NOT NULL,
+    byte_size  INT NOT NULL,
+    -- Image pixel dimensions, parsed from the file header at upload so an
+    -- oversized image is refused immediately rather than by Bedrock after
+    -- the user has waited for a send. NULL on documents.
+    width      INT NULL,
+    height     INT NULL,
+    bytes      BYTEA NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Replaying a thread loads every attachment for the conversation in one
+-- pass and groups them by message.
+CREATE INDEX idx_ai_chat_attachments_subject ON ai_chat_attachments(subject_id, message_id);
+
+-- Serves the staged-row sweep, which looks only at unclaimed rows.
+CREATE INDEX idx_ai_chat_attachments_staged ON ai_chat_attachments(created_at) WHERE message_id IS NULL;
+
+---------------------------------------------------------------------
+-- AI Chat Request Logs Table
+-- What was ACTUALLY sent to the model on each call, for admin review.
+--
+-- Deliberately not reconstructable from ai_chat_messages: once a thread has
+-- been compacted, the request carries a summary in place of the old turns,
+-- so replaying the transcript would show something that was never sent.
+-- This table is the record of the real payload.
+--
+-- PRIVACY. These rows contain the full text of private conversations, and
+-- an admin can read them. That is the point of the feature, and it is a
+-- deliberate exception to the rule that a chat belongs only to its owner -
+-- so the page that reads this table is admin-only, opening one payload
+-- writes an audit entry naming the admin and the subject user, and the chat
+-- UI tells users their conversations are visible to administrators. Do not
+-- widen access to this table without revisiting all three.
+--
+-- STORAGE. Every send logs the whole conversation as sent, so a thread of N
+-- turns writes N rows of up to N turns each - storage grows with the SQUARE
+-- of thread length. Compaction bounds it in practice, and
+-- AI_CHAT_LOG_RETENTION_DAYS (shorter than the chat window by default) is
+-- what actually keeps it in check. Watch this table's size before widening
+-- that window.
+---------------------------------------------------------------------
+CREATE TABLE ai_chat_request_logs (
+    id            TEXT NOT NULL PRIMARY KEY,
+    -- Soft references: a log row outlives the conversation it describes, and
+    -- deleting a chat must not erase the record that it was sent. The user
+    -- reference does cascade, because a de-identified person's transcripts
+    -- should not survive them.
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subject_id    TEXT NULL,
+    kind          ai_chat_request_kind NOT NULL,
+    model_id      TEXT NOT NULL,
+    region        TEXT NOT NULL,
+    -- The exact request as sent. `system_blocks` and `messages` are the two
+    -- arrays handed to Converse, verbatim, including the cachePoint marker.
+    system_blocks JSONB NOT NULL,
+    messages      JSONB NOT NULL,
+    -- True when the payload was too large to store whole (see the cap in the
+    -- repository). Recorded so a truncated row never passes as complete.
+    truncated     BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Usage, mirroring ai_chat_messages. NULL when the call failed before
+    -- returning any.
+    input_tokens       INT NULL,
+    output_tokens      INT NULL,
+    cache_read_tokens  INT NULL,
+    cache_write_tokens INT NULL,
+    -- NULL when the call succeeded; the error name/message when it did not.
+    -- A failed call is exactly when an admin most wants to see the payload.
+    error         TEXT NULL,
+    duration_ms   INT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- The viewer lists newest-first, optionally filtered to one person.
+CREATE INDEX idx_ai_chat_request_logs_created ON ai_chat_request_logs(created_at DESC);
+CREATE INDEX idx_ai_chat_request_logs_user ON ai_chat_request_logs(user_id, created_at DESC);
 
 ---------------------------------------------------------------------
 -- Audit Logs Table

@@ -102,6 +102,41 @@ export const AI_CHAT_ROLES = {
 export type AiChatRole = (typeof AI_CHAT_ROLES)[keyof typeof AI_CHAT_ROLES];
 
 // -------------------------------------------------------------------
+// AI Chat Request Kinds
+//
+// Which of the two calls the app makes a log row records. 'summary' is the
+// compaction call - the user never sees it, so without this it would be
+// invisible spend against their account.
+// -------------------------------------------------------------------
+export const AI_CHAT_REQUEST_KINDS = {
+  CHAT: "chat",
+  SUMMARY: "summary",
+} as const;
+
+export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_CHAT_REQUEST_KINDS];
+
+export const AI_CHAT_REQUEST_KIND_LABELS: Record<AiChatRequestKind, string> = {
+  [AI_CHAT_REQUEST_KINDS.CHAT]: "Reply",
+  [AI_CHAT_REQUEST_KINDS.SUMMARY]: "Compaction",
+};
+
+// -------------------------------------------------------------------
+// AI Chat Attachment Kinds
+//
+// Which Converse content block a stored file becomes. Bedrock caps the two
+// separately per request (20 images, 5 documents) and they are not
+// interchangeable, so the kind is stored rather than re-derived from the
+// format every time it is needed.
+// -------------------------------------------------------------------
+export const AI_CHAT_ATTACHMENT_KINDS = {
+  IMAGE: "image",
+  DOCUMENT: "document",
+} as const;
+
+export type AiChatAttachmentKind =
+  (typeof AI_CHAT_ATTACHMENT_KINDS)[keyof typeof AI_CHAT_ATTACHMENT_KINDS];
+
+// -------------------------------------------------------------------
 // Notification audience
 // Who a staff member can address a broadcast to. Managers are restricted to
 // teams they manage - that is enforced in the service, not here.
@@ -591,6 +626,102 @@ export type AiChatMessage = Selectable<AiChatMessages>;
 export type NewAiChatMessage = Insertable<AiChatMessages>;
 
 // -------------------------------------------------------------------
+// AI Chat Attachments
+// A file attached to a turn, replayed to the model with the text.
+//
+// `bytes` is a Buffer both ways - node-postgres maps BYTEA to a Buffer on
+// read and accepts one on write, so no encoding step belongs here. Select
+// it deliberately: `selectAll()` on this table pulls every file's content
+// into memory, which is the wrong default for a list.
+//
+// `messageId` is NULL while the file is staged - uploaded from the composer
+// but not yet sent - and is set to the user turn that carried it on send.
+// -------------------------------------------------------------------
+export interface AiChatAttachments {
+  id: string;
+  // Denormalised from the subject so every read can carry the owner in its
+  // WHERE clause, including reads of staged rows that have no message yet.
+  userId: string;
+  subjectId: string;
+  messageId: string | null;
+  kind: AiChatAttachmentKind;
+  // The Converse format token, decided by sniffing the bytes at upload.
+  format: string;
+  fileName: string;
+  mediaType: string;
+  byteSize: number;
+  // Parsed from the image header at upload; NULL on documents.
+  width: number | null;
+  height: number | null;
+  bytes: Buffer;
+  createdAt: Date;
+}
+
+export type AiChatAttachment = Selectable<AiChatAttachments>;
+export type NewAiChatAttachment = Insertable<AiChatAttachments>;
+
+// The same row without its content, which is what every read outside the
+// send path wants: listing what is attached must not load the files.
+export type AiChatAttachmentMeta = Omit<AiChatAttachment, "bytes">;
+
+// -------------------------------------------------------------------
+// AI Chat Request Logs
+// What was ACTUALLY sent to the model, for admin review.
+//
+// Not reconstructable from AiChatMessages: after compaction the request
+// carries a summary in place of the old turns, so replaying the transcript
+// would show something that was never sent.
+//
+// These rows hold the full text of private conversations. The only reader is
+// the admin-only viewer, and opening one writes an audit entry.
+//
+// `systemBlocks` and `messages` are JSONB: read back as parsed arrays,
+// written as JSON strings, same as the audit log's `changes`/`metadata`.
+// -------------------------------------------------------------------
+export interface AiChatRequestLogs {
+  id: string;
+  userId: string;
+  // Soft reference - a log row outlives the conversation it describes.
+  subjectId: string | null;
+  kind: AiChatRequestKind;
+  modelId: string;
+  region: string;
+  systemBlocks: ColumnType<{ text: string }[], string, string>;
+  // `attachments` records that a file was sent - kind, format, sanitised
+  // name and size - and never its content. See the note in recordRequest.
+  // Absent on rows written before attachments existed, hence optional.
+  messages: ColumnType<
+    {
+      role: string;
+      text: string;
+      cachePoint: boolean;
+      attachments?: {
+        kind: AiChatAttachmentKind;
+        format: string;
+        name: string | null;
+        byteSize: number;
+      }[];
+    }[],
+    string,
+    string
+  >;
+  // True when the payload was too large to store whole, so a truncated row
+  // never passes as complete.
+  truncated: Generated<boolean>;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  // NULL on success. A failed call is when an admin most wants the payload.
+  error: string | null;
+  durationMs: number | null;
+  createdAt: Date;
+}
+
+export type AiChatRequestLog = Selectable<AiChatRequestLogs>;
+export type NewAiChatRequestLog = Insertable<AiChatRequestLogs>;
+
+// -------------------------------------------------------------------
 // Audit Logs
 // Append-only trail of sensitive-data changes and auth events. `actor_*` are
 // snapshotted so the trail survives a user being renamed or deleted.
@@ -639,5 +770,7 @@ export interface Database {
   enquirySubmissions: EnquirySubmissions;
   aiChatSubjects: AiChatSubjects;
   aiChatMessages: AiChatMessages;
+  aiChatAttachments: AiChatAttachments;
+  aiChatRequestLogs: AiChatRequestLogs;
   auditLogs: AuditLogs;
 }

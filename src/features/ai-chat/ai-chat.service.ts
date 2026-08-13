@@ -3,23 +3,56 @@ import "server-only";
 import {
   ConverseCommand,
   ConverseStreamCommand,
+  type ContentBlock,
+  type DocumentFormat,
+  type ImageFormat,
   type Message,
   type SystemContentBlock,
 } from "@aws-sdk/client-bedrock-runtime";
 import { generateId } from "better-auth";
 import { revalidatePath } from "next/cache";
 
-import { BEDROCK_MODEL_ID, getBedrockClient, isBedrockConfigured } from "@/lib/ai/bedrock-client";
+import {
+  inspectAttachment,
+  sanitizeDocumentName,
+  MAX_DOCUMENTS_PER_REQUEST,
+  MAX_IMAGES_PER_REQUEST,
+  MAX_REQUEST_ATTACHMENT_BYTES,
+} from "@/lib/ai/attachment-formats";
+import {
+  BEDROCK_MODEL_ID,
+  BEDROCK_REGION,
+  getBedrockClient,
+  isBedrockConfigured,
+} from "@/lib/ai/bedrock-client";
 import { requireUser } from "@/lib/auth/session-auth-server";
 import {
+  AI_CHAT_ATTACHMENT_KINDS,
+  AI_CHAT_REQUEST_KINDS,
   AI_CHAT_ROLES,
+  type AiChatAttachment,
+  type AiChatAttachmentKind,
+  type AiChatAttachmentMeta,
   type AiChatMessage,
+  type AiChatRequestKind,
   type AiChatSubject,
 } from "@/lib/data/kysely-database-types";
+import {
+  addAiChatAttachmentRepo,
+  claimStagedAiChatAttachmentsRepo,
+  deleteStagedAiChatAttachmentRepo,
+  getAiChatAttachmentBytesForSubjectRepo,
+  getAiChatAttachmentsForSubjectRepo,
+  getStagedAiChatAttachmentsRepo,
+} from "@/lib/data/repositories/ai-chat-attachments.repository";
 import {
   addAiChatMessageRepo,
   getAiChatMessagesBySubjectRepo,
 } from "@/lib/data/repositories/ai-chat-messages.repository";
+import {
+  addAiChatRequestLogRepo,
+  boundPayload,
+} from "@/lib/data/repositories/ai-chat-request-logs.repository";
 import {
   createAiChatSubjectRepo,
   deleteAiChatSubjectForUserRepo,
@@ -34,6 +67,7 @@ import { ROUTES } from "@/lib/routes";
 
 import {
   deriveAiChatSubjectTitle,
+  mapDBAiChatAttachmentToDTO,
   mapDBAiChatMessageToDTO,
   mapDBAiChatSubjectToDTO,
 } from "./ai-chat.mappers";
@@ -43,11 +77,14 @@ import {
   MAX_HISTORY_CHARS,
   SUMMARY_MAX_TOKENS,
   UNTITLED_SUBJECT_TITLE,
+  type AiChatAttachmentDTO,
   type AiChatPageDTO,
   type AiChatSubjectDetailDTO,
   type DeleteAiChatSubjectRequestDTO,
+  type RemoveAiChatAttachmentRequestDTO,
   type RenameAiChatSubjectRequestDTO,
   type SendAiChatMessageRequestDTO,
+  type UploadAiChatAttachmentRequestDTO,
 } from "./ai-chat.types";
 
 // -------------------------------------------------------------------
@@ -55,10 +92,18 @@ import {
 //
 // THE AUTHORIZATION MODEL, WHICH IS DIFFERENT FROM THE REST OF THE APP
 //
-// Chat is not team-scoped. A conversation belongs to one person and nobody
-// else can read it - not their manager, not an admin. So the guard here is
+// Chat is not team-scoped. A conversation belongs to one person, and no
+// other ordinary user - manager included - can read it. So the guard here is
 // requireUser (any signed-in role) rather than a role or team check, and
 // the boundary is the `userId` predicate every repository query carries.
+//
+// ONE EXCEPTION, and it is deliberate: every request sent to the model is
+// recorded in ai_chat_request_logs, which ADMINS CAN READ in full through
+// /admin/ai-chat-log. That exists so somebody is accountable for what the
+// organisation sends to a third-party model and what it costs. It is not a
+// hole in the model above - the chat surfaces here still refuse to serve one
+// user another's conversation - but it does mean chat is confidential from
+// peers rather than from the organisation, and the chat page says so.
 //
 // That predicate IS the authorization check, not a filter applied after
 // one. Every entry point below resolves the conversation through
@@ -145,9 +190,32 @@ export async function getAiChatPageService(subjectId?: string): Promise<AiChatPa
     const targetRow = await getAiChatSubjectForUserRepo(target.id, user.id);
     const messages = await getAiChatMessagesBySubjectRepo(target.id);
 
+    // One read for the whole conversation, metadata only - the bytes stay in
+    // the database until somebody actually downloads a file. Grouped here
+    // rather than queried per message so opening a long thread is one query,
+    // not one per turn.
+    const attachments = await getAiChatAttachmentsForSubjectRepo(target.id, user.id);
+
+    const attachmentsByMessage = new Map<string, AiChatAttachmentMeta[]>();
+    const staged: AiChatAttachmentDTO[] = [];
+
+    for (const attachment of attachments) {
+      if (!attachment.messageId) {
+        staged.push(mapDBAiChatAttachmentToDTO(attachment));
+        continue;
+      }
+
+      const list = attachmentsByMessage.get(attachment.messageId);
+      if (list) list.push(attachment);
+      else attachmentsByMessage.set(attachment.messageId, [attachment]);
+    }
+
     const active: AiChatSubjectDetailDTO = {
       subject: target,
-      messages: messages.map(mapDBAiChatMessageToDTO),
+      messages: messages.map((message) =>
+        mapDBAiChatMessageToDTO(message, attachmentsByMessage.get(message.id) ?? []),
+      ),
+      staged,
       // Only meaningful if it actually points at a turn still in the
       // transcript; a stale cursor should not draw a marker at nothing.
       summarizedThroughMessageId:
@@ -241,6 +309,137 @@ export async function deleteAiChatSubjectService(
 
 
 // -------------------------------------------------------------------
+// Store a file against a conversation, staged until the next send.
+//
+// The bytes decide what this is. `fileName` is used for display and to
+// break a tie between two Office formats, and the browser's Content-Type
+// is not consulted at all - see inspectAttachment. A caller cannot make
+// this store something outside the allowlist by lying in either.
+//
+// The caps checked here are the ones a single message could never satisfy:
+// a request carries at most 20 images and 5 documents, so a sixth PDF on
+// one turn is refused now rather than silently dropped at send time.
+// Attachments from EARLIER turns are not counted - those are allowed to
+// exceed the budget and fall out oldest-first, which is what makes a long
+// conversation with files in it keep working.
+// -------------------------------------------------------------------
+export async function uploadAiChatAttachmentService(
+  requestDTO: UploadAiChatAttachmentRequestDTO,
+  file: { fileName: string; bytes: Buffer },
+): Promise<AiChatAttachmentDTO> {
+  try {
+    const user = await requireUser();
+
+    const subject = await requireOwnedSubject(requestDTO.subjectId, user.id);
+
+    const inspection = inspectAttachment(file.bytes, file.fileName);
+
+    if (!inspection.ok) {
+      throw new DisplayErrorMessage(inspection.reason);
+    }
+
+    const staged = await getStagedAiChatAttachmentsRepo(subject.id, user.id);
+
+    const stagedImages = staged.filter((item) => item.kind === AI_CHAT_ATTACHMENT_KINDS.IMAGE).length;
+    const stagedDocuments = staged.length - stagedImages;
+    const stagedBytes = staged.reduce((total, item) => total + item.byteSize, 0);
+
+    if (inspection.kind === AI_CHAT_ATTACHMENT_KINDS.IMAGE && stagedImages >= MAX_IMAGES_PER_REQUEST) {
+      throw new DisplayErrorMessage(`You can attach up to ${MAX_IMAGES_PER_REQUEST} images to one message.`);
+    }
+
+    if (inspection.kind === AI_CHAT_ATTACHMENT_KINDS.DOCUMENT && stagedDocuments >= MAX_DOCUMENTS_PER_REQUEST) {
+      throw new DisplayErrorMessage(
+        `You can attach up to ${MAX_DOCUMENTS_PER_REQUEST} documents to one message.`,
+      );
+    }
+
+    if (stagedBytes + file.bytes.length > MAX_REQUEST_ATTACHMENT_BYTES) {
+      throw new DisplayErrorMessage("Those files are too large to send together. Remove one and try again.");
+    }
+
+    const stored = await addAiChatAttachmentRepo({
+      id: generateId(),
+      userId: user.id,
+      subjectId: subject.id,
+      // Staged. The send claims it; nothing else sets this column.
+      messageId: null,
+      kind: inspection.kind,
+      format: inspection.format,
+      // Bounded so a pathological name cannot be used to bloat the row, and
+      // trimmed of any path the browser may have included.
+      fileName: file.fileName.split(/[\\/]/).pop()?.slice(0, 255) || "Attachment",
+      mediaType: inspection.mediaType,
+      byteSize: file.bytes.length,
+      width: inspection.width,
+      height: inspection.height,
+      bytes: file.bytes,
+      createdAt: new Date(),
+    });
+
+    revalidateAiChatViews();
+
+    return mapDBAiChatAttachmentToDTO(stored);
+  } catch (error) {
+    throw handleError("uploadAiChatAttachmentService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Take a staged file back off a message before it is sent.
+//
+// Only staged rows can go: once a file has been sent it is part of the
+// transcript, and removing it would leave the conversation referring to
+// something the model can no longer be shown. Deleting the conversation
+// still removes it, by cascade.
+// -------------------------------------------------------------------
+export async function removeAiChatAttachmentService(
+  requestDTO: RemoveAiChatAttachmentRequestDTO,
+): Promise<void> {
+  try {
+    const user = await requireUser();
+
+    const removed = await deleteStagedAiChatAttachmentRepo(requestDTO.attachmentId, user.id);
+
+    if (removed === 0) {
+      throw new DisplayErrorMessage("That attachment has already been sent or removed.");
+    }
+
+    revalidateAiChatViews();
+  } catch (error) {
+    throw handleError("removeAiChatAttachmentService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Every sent file on a conversation, grouped by the turn that carried it.
+//
+// This is the one read that loads attachment CONTENT in bulk, because the
+// Converse API takes file bytes inline and there is no way to hand it a
+// reference instead. It is bounded by the same caps the composer enforces,
+// and staged rows are skipped - a file that has not been sent yet is not
+// part of any turn, and including it would send it a request early.
+// -------------------------------------------------------------------
+async function loadAttachmentsByMessage(
+  subjectId: string,
+  userId: string,
+): Promise<Map<string, AiChatAttachment[]>> {
+  const rows = await getAiChatAttachmentBytesForSubjectRepo(subjectId, userId);
+
+  const grouped = new Map<string, AiChatAttachment[]>();
+
+  for (const row of rows) {
+    if (!row.messageId) continue;
+
+    const list = grouped.get(row.messageId);
+    if (list) list.push(row);
+    else grouped.set(row.messageId, [row]);
+  }
+
+  return grouped;
+}
+
+// -------------------------------------------------------------------
 // Build the Converse request from a stored transcript.
 //
 // Two things are folded in here, and they pull in opposite directions, so
@@ -271,12 +470,124 @@ type ConverseRequest = {
   system: SystemContentBlock[];
   messages: Message[];
   trimmed: number;
+  // How many attached files were left out because the request budget was
+  // already spent. Logged, not shown - the reply is still correct.
+  droppedAttachments: number;
 };
+
+// -------------------------------------------------------------------
+// Decide which attachments this request can carry.
+//
+// THE LIMITS ARE PER REQUEST, NOT PER MESSAGE, AND THAT IS THE WHOLE
+// PROBLEM. Bedrock allows 20 images and 5 documents in a call. Every send
+// here replays the entire conversation, so those caps apply to everything
+// the thread has ever attached, all at once - a conversation with five PDFs
+// in it has spent its document budget, and the sixth cannot go even though
+// no single message came close to a limit.
+//
+// So attachments are admitted NEWEST FIRST and the oldest fall out. That
+// ordering is the point: the file somebody just attached is the one they
+// are asking about, and a request that silently dropped it in favour of a
+// photo from last week would look broken. Anything evicted is replaced by a
+// note in its own message, so the model can say "I can no longer see that
+// file" instead of hallucinating its contents.
+//
+// The byte budget is checked too, and it is not redundant with the counts:
+// 20 images at 3.75 MB is 75 MB, which would blow the 20 MB payload cap
+// long before the image count ran out.
+// -------------------------------------------------------------------
+type AttachmentSelection = {
+  admitted: Map<string, AiChatAttachment[]>;
+  droppedByMessage: Map<string, number>;
+  droppedTotal: number;
+};
+
+function selectAttachments(
+  kept: AiChatMessage[],
+  attachmentsByMessage: Map<string, AiChatAttachment[]>,
+): AttachmentSelection {
+  const admitted = new Map<string, AiChatAttachment[]>();
+  const droppedByMessage = new Map<string, number>();
+
+  let images = 0;
+  let documents = 0;
+  let bytes = 0;
+  let droppedTotal = 0;
+
+  for (let index = kept.length - 1; index >= 0; index -= 1) {
+    const message = kept[index];
+    const files = attachmentsByMessage.get(message.id);
+
+    if (!files || files.length === 0) continue;
+
+    for (const file of files) {
+      const isImage = file.kind === AI_CHAT_ATTACHMENT_KINDS.IMAGE;
+
+      const withinCount = isImage ? images < MAX_IMAGES_PER_REQUEST : documents < MAX_DOCUMENTS_PER_REQUEST;
+      const withinBytes = bytes + file.byteSize <= MAX_REQUEST_ATTACHMENT_BYTES;
+
+      if (!withinCount || !withinBytes) {
+        droppedByMessage.set(message.id, (droppedByMessage.get(message.id) ?? 0) + 1);
+        droppedTotal += 1;
+        continue;
+      }
+
+      if (isImage) images += 1;
+      else documents += 1;
+
+      bytes += file.byteSize;
+
+      const list = admitted.get(message.id);
+      if (list) list.push(file);
+      else admitted.set(message.id, [file]);
+    }
+  }
+
+  return { admitted, droppedByMessage, droppedTotal };
+}
+
+// -------------------------------------------------------------------
+// Turn stored files into Converse content blocks.
+//
+// Attachments come BEFORE the text in the block array, which is Anthropic's
+// documented guidance: a question that follows its image is answered better
+// than one that precedes it.
+//
+// A document carries a `name`, and Bedrock restricts that field to a narrow
+// character set - so the name the model sees is a sanitised form of the
+// filename, not the filename. Its position in the request is what makes an
+// unnameable file distinguishable ("Document 3"), which is why the counter
+// is threaded through rather than reset per message.
+// -------------------------------------------------------------------
+function attachmentBlocks(files: AiChatAttachment[], documentPosition: { next: number }): ContentBlock[] {
+  return files.map((file) => {
+    if (file.kind === AI_CHAT_ATTACHMENT_KINDS.IMAGE) {
+      return {
+        image: {
+          format: file.format as ImageFormat,
+          source: { bytes: new Uint8Array(file.bytes) },
+        },
+      };
+    }
+
+    const position = documentPosition.next;
+    documentPosition.next += 1;
+
+    return {
+      document: {
+        format: file.format as DocumentFormat,
+        name: sanitizeDocumentName(file.fileName, position),
+        source: { bytes: new Uint8Array(file.bytes) },
+      },
+    };
+  });
+}
 
 function buildConverseRequest(
   transcript: AiChatMessage[],
   summary: string | null,
   summaryThroughMessageId: string | null,
+  attachmentsByMessage: Map<string, AiChatAttachment[]>,
 ): ConverseRequest {
   // Everything after the summarised cursor. A cursor matching no row (a
   // summary written against turns since removed) degrades to "the summary
@@ -311,17 +622,45 @@ function buildConverseRequest(
     firstKept += 1;
   }
 
-  const messages: Message[] = kept.map((turn, index) => ({
-    role: turn.role === AI_CHAT_ROLES.USER ? "user" : "assistant",
-    content:
-      index === kept.length - 1
-        ? // The cache point rides on the final turn, so the cached prefix is
-          // the entire request. Below the model's 4,096-token minimum it is
-          // simply ignored - the request still succeeds, it just does not
-          // cache - so there is no size check to get wrong here.
-          [{ text: turn.content }, { cachePoint: { type: "default" } }]
-        : [{ text: turn.content }],
-  }));
+  const { admitted, droppedByMessage, droppedTotal } = selectAttachments(kept, attachmentsByMessage);
+
+  // Shared across the whole request so document names stay unique and their
+  // numbering matches the order the model reads them in.
+  const documentPosition = { next: 1 };
+
+  const messages: Message[] = kept.map((turn, index) => {
+    const files = admitted.get(turn.id) ?? [];
+    const dropped = droppedByMessage.get(turn.id) ?? 0;
+
+    const content: ContentBlock[] = [...attachmentBlocks(files, documentPosition), { text: turn.content }];
+
+    if (dropped > 0) {
+      // Its own block rather than appended to the user's text: what they
+      // typed stays exactly what they typed, and the model is told plainly
+      // that something is missing so it can say so instead of guessing.
+      content.push({
+        text:
+          `[${dropped} file${dropped === 1 ? "" : "s"} attached here earlier ` +
+          `${dropped === 1 ? "is" : "are"} no longer included in this conversation. ` +
+          `Say so if the user asks about ${dropped === 1 ? "it" : "them"}.]`,
+      });
+    }
+
+    // The cache point rides on the final turn, so the cached prefix is the
+    // entire request - attachments included, which is where caching earns
+    // the most: a 3 MB PDF re-read at a tenth of the input rate on every
+    // following turn instead of being paid for in full each time. Below the
+    // model's 4,096-token minimum it is simply ignored, so there is no size
+    // check to get wrong here.
+    if (index === kept.length - 1) {
+      content.push({ cachePoint: { type: "default" } });
+    }
+
+    return {
+      role: turn.role === AI_CHAT_ROLES.USER ? "user" : "assistant",
+      content,
+    };
+  });
 
   const system: SystemContentBlock[] = [{ text: SYSTEM_PROMPT }];
 
@@ -335,7 +674,130 @@ function buildConverseRequest(
     });
   }
 
-  return { system, messages, trimmed: firstKept };
+  return { system, messages, trimmed: firstKept, droppedAttachments: droppedTotal };
+}
+
+// -------------------------------------------------------------------
+// Record what was actually sent.
+//
+// Called after every model request, successful or not - a failed call is
+// exactly when an admin most wants to see the payload that caused it.
+//
+// Best-effort and fully guarded, like the audit log: a logging failure must
+// never break the reply the user is waiting for. It writes the arrays in the
+// shape they went out in, including where the cache point sat, because
+// "roughly what was sent" is not what this table is for.
+// -------------------------------------------------------------------
+// What the log records about one attached file. Named so the two branches
+// below widen to the same shape rather than to a union of two array types.
+type LoggedAttachment = {
+  kind: AiChatAttachmentKind;
+  format: string;
+  name: string | null;
+  byteSize: number;
+};
+
+async function recordRequest(entry: {
+  userId: string;
+  subjectId: string | null;
+  kind: AiChatRequestKind;
+  system: SystemContentBlock[];
+  messages: Message[];
+  usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    cacheReadTokens: number | null;
+    cacheWriteTokens: number | null;
+  };
+  error: string | null;
+  startedAt: number;
+}): Promise<void> {
+  try {
+    // Flattened to the things a reader needs - who said it, what they said,
+    // what they attached - plus whether the cache point rode on that turn.
+    // Storing the raw SDK union would make the viewer parse Bedrock's wire
+    // format to show a sentence.
+    //
+    // ATTACHMENTS ARE RECORDED AS METADATA, NEVER CONTENT. An admin can see
+    // that a 2.1 MB PDF called "Invoice March" was sent, which is what the
+    // log is for - accountability for what leaves the organisation and what
+    // it costs. Copying the bytes in would put a second full copy of every
+    // file into a table that already grows with the square of thread length,
+    // and would widen a privacy exception that is deliberately narrow.
+    //
+    // Read off the BUILT blocks rather than the database rows, so the log
+    // describes what was actually in the request - including the eviction
+    // when an older file did not make the budget.
+    const messages = entry.messages.map((message) => {
+      const blocks = message.content ?? [];
+
+      return {
+        role: message.role ?? "unknown",
+        text: blocks
+          .map((block) => ("text" in block ? block.text : ""))
+          .filter(Boolean)
+          .join(""),
+        cachePoint: blocks.some((block) => "cachePoint" in block),
+        attachments: blocks.flatMap<LoggedAttachment>((block) => {
+          if ("image" in block && block.image) {
+            return [
+              {
+                kind: AI_CHAT_ATTACHMENT_KINDS.IMAGE,
+                format: block.image.format ?? "unknown",
+                // Images have no name field in Converse - there is nothing
+                // to record here beyond the format and the size.
+                name: null,
+                byteSize: block.image.source?.bytes?.byteLength ?? 0,
+              },
+            ];
+          }
+
+          if ("document" in block && block.document) {
+            return [
+              {
+                kind: AI_CHAT_ATTACHMENT_KINDS.DOCUMENT,
+                format: block.document.format ?? "unknown",
+                // The SANITISED name, because that is the one the model saw.
+                name: block.document.name ?? null,
+                byteSize: block.document.source?.bytes?.byteLength ?? 0,
+              },
+            ];
+          }
+
+          return [];
+        }),
+      };
+    });
+
+    const systemBlocks = entry.system.map((block) => ({
+      text: "text" in block && block.text ? block.text : "",
+    }));
+
+    // Bounded together so a shortened payload cannot be filed as complete.
+    const serialisedMessages = boundPayload(JSON.stringify(messages));
+    const serialisedSystem = boundPayload(JSON.stringify(systemBlocks));
+
+    await addAiChatRequestLogRepo({
+      id: generateId(),
+      userId: entry.userId,
+      subjectId: entry.subjectId,
+      kind: entry.kind,
+      modelId: BEDROCK_MODEL_ID,
+      region: BEDROCK_REGION,
+      systemBlocks: serialisedSystem.value,
+      messages: serialisedMessages.value,
+      truncated: serialisedMessages.truncated || serialisedSystem.truncated,
+      inputTokens: entry.usage.inputTokens,
+      outputTokens: entry.usage.outputTokens,
+      cacheReadTokens: entry.usage.cacheReadTokens,
+      cacheWriteTokens: entry.usage.cacheWriteTokens,
+      error: entry.error,
+      durationMs: Date.now() - entry.startedAt,
+      createdAt: new Date(),
+    });
+  } catch (error) {
+    console.error("[recordRequest] failed to record an AI chat request", error);
+  }
 }
 
 // -------------------------------------------------------------------
@@ -365,6 +827,7 @@ async function compactIfNeeded(
   subject: AiChatSubject,
   transcript: AiChatMessage[],
   userId: string,
+  attachmentsByMessage: Map<string, AiChatAttachment[]>,
 ): Promise<{ summary: string | null; summaryThroughMessageId: string | null }> {
   const current = {
     summary: subject.summary,
@@ -398,41 +861,83 @@ async function compactIfNeeded(
   const folding = live.slice(0, foldCount);
   const throughMessage = folding[folding.length - 1];
 
+  // Attached files are named in the folded text even though their content
+  // cannot be: a summary is words, and an image is not. Once these turns are
+  // behind the cursor their files stop being sent, so without this the model
+  // would have no idea a document it was asked about ever existed.
   const transcriptText = folding
-    .map((turn) => `${turn.role === AI_CHAT_ROLES.USER ? "User" : "Assistant"}: ${turn.content}`)
+    .map((turn) => {
+      const speaker = turn.role === AI_CHAT_ROLES.USER ? "User" : "Assistant";
+      const files = attachmentsByMessage.get(turn.id) ?? [];
+
+      const attached =
+        files.length > 0 ? ` [attached: ${files.map((file) => file.fileName).join(", ")}]` : "";
+
+      return `${speaker}${attached}: ${turn.content}`;
+    })
     .join("\n\n");
+
+  const startedAt = Date.now();
+
+  // Built as named values rather than inline, so the exact arrays that go to
+  // the model are the exact arrays that get logged below.
+  const summarySystem: SystemContentBlock[] = [
+    {
+      text:
+        "You compress conversation transcripts so a later reader can carry on without them. " +
+        "Preserve decisions, facts, names, numbers, code identifiers, and anything the user asked to be " +
+        "remembered. Drop pleasantries and restatements. Write plain prose in the third person, with no " +
+        "preamble and no closing remark. Never invent detail that is not in the transcript. " +
+        "Where a turn is marked [attached: ...], record that the file was shared and what was concluded " +
+        "about it - the file itself will not be available to the later reader, so say what it showed " +
+        "rather than referring to it as though it can still be opened.",
+    },
+  ];
+
+  const summaryMessages: Message[] = [
+    {
+      role: "user",
+      content: [
+        {
+          text: current.summary
+            ? "Here is a summary of the conversation so far, followed by the turns that came after it. " +
+              "Produce ONE merged summary covering both.\n\n" +
+              `<existing_summary>\n${current.summary}\n</existing_summary>\n\n` +
+              `<new_turns>\n${transcriptText}\n</new_turns>`
+            : `Summarise this conversation.\n\n<transcript>\n${transcriptText}\n</transcript>`,
+        },
+      ],
+    },
+  ];
 
   try {
     const response = await getBedrockClient().send(
       new ConverseCommand({
         modelId: BEDROCK_MODEL_ID,
-        system: [
-          {
-            text:
-              "You compress conversation transcripts so a later reader can carry on without them. " +
-              "Preserve decisions, facts, names, numbers, code identifiers, and anything the user asked to be " +
-              "remembered. Drop pleasantries and restatements. Write plain prose in the third person, with no " +
-              "preamble and no closing remark. Never invent detail that is not in the transcript.",
-          },
-        ],
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                text: current.summary
-                  ? "Here is a summary of the conversation so far, followed by the turns that came after it. " +
-                    "Produce ONE merged summary covering both.\n\n" +
-                    `<existing_summary>\n${current.summary}\n</existing_summary>\n\n` +
-                    `<new_turns>\n${transcriptText}\n</new_turns>`
-                  : `Summarise this conversation.\n\n<transcript>\n${transcriptText}\n</transcript>`,
-              },
-            ],
-          },
-        ],
+        system: summarySystem,
+        messages: summaryMessages,
         inferenceConfig: { maxTokens: SUMMARY_MAX_TOKENS },
       }),
     );
+
+    // Logged like any other call. The user never sees this request, so
+    // without a record it would be spend on their account that nothing
+    // accounts for.
+    await recordRequest({
+      userId,
+      subjectId: subject.id,
+      kind: AI_CHAT_REQUEST_KINDS.SUMMARY,
+      system: summarySystem,
+      messages: summaryMessages,
+      usage: {
+        inputTokens: response.usage?.inputTokens ?? null,
+        outputTokens: response.usage?.outputTokens ?? null,
+        cacheReadTokens: response.usage?.cacheReadInputTokens ?? null,
+        cacheWriteTokens: response.usage?.cacheWriteInputTokens ?? null,
+      },
+      error: null,
+      startedAt,
+    });
 
     const summary = response.output?.message?.content?.[0]?.text?.trim();
 
@@ -453,6 +958,17 @@ async function compactIfNeeded(
 
     return { summary, summaryThroughMessageId: throughMessage.id };
   } catch (error) {
+    await recordRequest({
+      userId,
+      subjectId: subject.id,
+      kind: AI_CHAT_REQUEST_KINDS.SUMMARY,
+      system: summarySystem,
+      messages: summaryMessages,
+      usage: { inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null },
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      startedAt,
+    });
+
     // Logged, not thrown - see the note above.
     console.error("compactIfNeeded: summarisation failed, continuing uncompacted", error);
     return current;
@@ -494,7 +1010,7 @@ export async function* streamAiChatReplyService(
   // The user's turn lands first, and its own text is included in the history
   // below - so what the model sees is exactly what the transcript shows, with
   // no separate "current message" path that could drift.
-  await addAiChatMessageRepo({
+  const askedMessage = await addAiChatMessageRepo({
     id: generateId(),
     subjectId: subject.id,
     role: AI_CHAT_ROLES.USER,
@@ -505,6 +1021,12 @@ export async function* streamAiChatReplyService(
     cacheWriteTokens: null,
     createdAt: askedAt,
   });
+
+  // Anything staged on this conversation belongs to the turn just written.
+  // Done before the transcript is read, so the files are already attached
+  // to a message by the time the request is built - there is no separate
+  // "and also these files" path that could disagree with what was stored.
+  const claimed = await claimStagedAiChatAttachmentsRepo(subject.id, user.id, askedMessage.id);
 
   await touchAiChatSubjectRepo(subject.id, askedAt);
 
@@ -519,9 +1041,29 @@ export async function* streamAiChatReplyService(
 
   const transcript = await getAiChatMessagesBySubjectRepo(subject.id);
 
-  const { summary, summaryThroughMessageId } = await compactIfNeeded(subject, transcript, user.id);
+  // Every file on the conversation, not just the ones claimed above: earlier
+  // turns carry theirs into this request too, and the budget is measured
+  // across all of them. On a thread with no attachments this matches no rows
+  // and costs nothing, which is why it is unconditional.
+  const attachmentsByMessage = await loadAttachmentsByMessage(subject.id, user.id);
 
-  const { system, messages, trimmed } = buildConverseRequest(transcript, summary, summaryThroughMessageId);
+  if (claimed > 0) {
+    console.info(`streamAiChatReplyService: attached ${claimed} file(s) to message ${askedMessage.id}`);
+  }
+
+  const { summary, summaryThroughMessageId } = await compactIfNeeded(
+    subject,
+    transcript,
+    user.id,
+    attachmentsByMessage,
+  );
+
+  const { system, messages, trimmed, droppedAttachments } = buildConverseRequest(
+    transcript,
+    summary,
+    summaryThroughMessageId,
+    attachmentsByMessage,
+  );
 
   if (trimmed > 0) {
     // The backstop fired, which means compaction did not keep up. Not
@@ -529,11 +1071,24 @@ export async function* streamAiChatReplyService(
     console.warn(`streamAiChatReplyService: backstop trimmed ${trimmed} turn(s) beyond the summary`);
   }
 
+  if (droppedAttachments > 0) {
+    // Expected on a long thread with many files, and handled - the model is
+    // told which turns lost theirs. Logged because it changes what the
+    // answer can be based on.
+    console.info(
+      `streamAiChatReplyService: subject ${subject.id} exceeded the per-request attachment budget; ` +
+        `${droppedAttachments} older file(s) were not sent`,
+    );
+  }
+
   let reply = "";
   let inputTokens: number | null = null;
   let outputTokens: number | null = null;
   let cacheReadTokens: number | null = null;
   let cacheWriteTokens: number | null = null;
+  let failure: string | null = null;
+
+  const startedAt = Date.now();
 
   try {
     const response = await getBedrockClient().send(
@@ -571,6 +1126,10 @@ export async function* streamAiChatReplyService(
       }
     }
   } catch (error) {
+    // Captured for the request log before rethrowing - a failed call is
+    // exactly the one an admin will want the payload for.
+    failure = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+
     // Logged with context and rethrown. The route turns it into a message for
     // the reader; anything already streamed is kept by the `finally`.
     throw handleError("streamAiChatReplyService", error);
@@ -596,6 +1155,21 @@ export async function* streamAiChatReplyService(
 
       await touchAiChatSubjectRepo(subject.id, answeredAt);
     }
+
+    // Recorded here rather than in the try, so it runs on success, on
+    // failure, AND on an abandoned stream - the three cases an admin
+    // reviewing spend needs to be able to tell apart. The arrays are the
+    // exact ones handed to Converse above.
+    await recordRequest({
+      userId: user.id,
+      subjectId: subject.id,
+      kind: AI_CHAT_REQUEST_KINDS.CHAT,
+      system,
+      messages,
+      usage: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens },
+      error: failure,
+      startedAt,
+    });
 
     revalidateAiChatViews();
   }

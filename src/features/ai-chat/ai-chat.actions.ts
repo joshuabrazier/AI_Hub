@@ -8,11 +8,14 @@ import { ServerApiResponse } from "@/lib/types";
 import {
   createAiChatSubjectService,
   deleteAiChatSubjectService,
+  removeAiChatAttachmentService,
   renameAiChatSubjectService,
 } from "./ai-chat.service";
 import {
   DeleteAiChatSubjectRequestDTO,
   DeleteAiChatSubjectSchema,
+  RemoveAiChatAttachmentRequestDTO,
+  RemoveAiChatAttachmentSchema,
   RenameAiChatSubjectRequestDTO,
   RenameAiChatSubjectSchema,
 } from "./ai-chat.types";
@@ -20,9 +23,12 @@ import {
 // -------------------------------------------------------------------
 // AI chat actions
 //
-// Everything EXCEPT sending a message. A send streams its reply, and a
-// server action cannot return a stream, so that one path is a Route Handler
-// (src/app/api/ai-chat/stream/route.ts) instead.
+// Everything EXCEPT sending a message and uploading a file. A send streams
+// its reply, and an upload would need the global server-action body limit
+// raised to clear a 4.5 MB document, so both are Route Handlers instead
+// (src/app/api/ai-chat/stream and .../attachments). REMOVING an attachment
+// is an ordinary JSON mutation with nothing large about it, so it stays
+// here where it belongs.
 //
 // Each action validates its input and hands off to the service. The
 // requireUser here is the outer gate only - the service repeats it, because
@@ -81,5 +87,26 @@ export async function deleteAiChatSubjectAction(
     return { success: true, data: null } satisfies ServerApiResponse<null>;
   } catch (error) {
     return handleServerApiError("deleteAiChatSubjectAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Take a staged file off the composer before it is sent. Only ever removes
+// an attachment that has not been sent yet - see the service.
+// -------------------------------------------------------------------
+export async function removeAiChatAttachmentAction(
+  requestDTO: RemoveAiChatAttachmentRequestDTO,
+): Promise<ServerApiResponse<null>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(RemoveAiChatAttachmentSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    await removeAiChatAttachmentService(validatedRequest.data);
+
+    return { success: true, data: null } satisfies ServerApiResponse<null>;
+  } catch (error) {
+    return handleServerApiError("removeAiChatAttachmentAction", error);
   }
 }

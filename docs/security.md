@@ -7,9 +7,10 @@ outside the repo, the known findings and follow-ups, and incident response.
 ## What we are protecting
 
 As shipped, the base holds account data (names, email addresses, phone numbers),
-team membership - which is what every authorization decision turns on - and
-signed documents, including the signature image. It is written to be subject to
-the Australian Privacy Principles. The security model assumes an authenticated
+team membership - which is what every authorization decision turns on - signed
+documents including the signature image, and **AI chat transcripts and their
+attachments**, which can contain anything a user chose to type, paste or upload.
+It is written to be subject to the Australian Privacy Principles. The security model assumes an authenticated
 attacker (a stolen or shared session) as well as an anonymous one, and treats
 credentials and signatures as the crown jewels.
 
@@ -103,6 +104,36 @@ Configured in `src/lib/auth/auth.ts` (Better Auth), backed by Postgres.
   calling a service, and return a typed `ServerApiResponse` rather than leaking
   internal errors.
 
+## File uploads (AI chat attachments)
+
+Uploads exist in exactly one place - files attached to an AI chat turn - and
+`src/lib/ai/attachment-formats.ts` is the whole trust boundary for them.
+
+- **The type is decided by the bytes.** The header is parsed to identify the
+  format, and neither the filename nor the browser's `Content-Type` is treated
+  as evidence. For images the same pass that proves the format also reads the
+  pixel dimensions, so an oversized image is refused at upload rather than by
+  Bedrock after the user has waited. Text formats are admitted only on proof of
+  valid UTF-8 with no NUL bytes.
+- **The allowlist is the Amazon Bedrock Converse contract**, not Anthropic's
+  first-party API - four image formats and nine document formats. A unit test
+  asserts the tables against the AWS SDK's `ImageFormat` / `DocumentFormat`
+  enums, so a drift in either direction fails the build.
+- **Serving an uploaded file back is where the real risk sits**, because the
+  bytes are user-controlled and the origin is ours. Four controls, all
+  load-bearing: `X-Content-Type-Options: nosniff`; a `Content-Type` derived from
+  the sniffed format server-side; `Content-Disposition: attachment` for
+  everything except the four image formats; and `Content-Security-Policy:
+  sandbox; default-src 'none'` on the response. `html` maps to `text/plain`
+  deliberately - serving user markup as `text/html` here would be stored XSS.
+  The filename is emitted RFC 5987 encoded so it cannot break out of the header.
+- **Access is the owner predicate.** Every query carries the session user id,
+  including the download route, and a file that is not the caller's answers 404.
+  There is no admin override: the request log records that a file was sent - its
+  name, kind and size - and never its content.
+- **Size is bounded twice** on upload, once on the declared `Content-Length` and
+  again on what actually arrived, because the header is client-supplied.
+
 ## Response headers
 
 Applied to every route in `next.config.ts`:
@@ -150,6 +181,8 @@ in production; in development it also allows localhost, LAN ranges, and
 `src/lib/audit/` records privileged and auth actions to `audit_logs`:
 
 - Sign-in, failed sign-in, sign-out, password change, and impersonation start.
+- An admin opening a user's AI chat request payload (`ai_chat.request_viewed`),
+  naming both the admin and the person whose conversation was read.
 - Account changes: creation, update, role change, activation/deactivation,
   invitation sent and cancelled, and de-identification.
 - Team membership changes, which are authorization changes and are recorded as
@@ -202,6 +235,21 @@ audit window comfortably longer than the inactivity window.
 A project that adds its own record of activity (something dated that only a
 present person produces) should widen the dormancy query to consider it, so the
 rule does not rest on the audit log alone.
+
+The same job also rotates the AI chat data, on three independent windows. None
+of these is gated on `RETENTION_JOB_ENABLED` - that switch guards an
+irreversible scrub of a person's identity, whereas these are routine rotation of
+the user's own content on a window they can see.
+
+| Setting | Default | What it removes |
+| --- | --- | --- |
+| `AI_CHAT_RETENTION_DAYS` | 365 | Conversations idle longer than this. Messages and their attachments cascade. |
+| `AI_CHAT_LOG_RETENTION_DAYS` | 30 | Request-log rows. Much shorter on purpose: the table duplicates private content that admins can read, and grows with the **square** of thread length. |
+| `AI_CHAT_STAGED_ATTACHMENT_HOURS` | 24 | Files uploaded but never sent. Nothing else collects these - the cascades only reach a file once it belongs to a turn. |
+
+Attachment bytes are stored in Postgres (`ai_chat_attachments.bytes`), capped by
+Bedrock at 3.75 MB per image and 4.5 MB per document. Watch that table's size
+alongside the request log before widening any of the windows above.
 
 ## Supply chain and CI
 

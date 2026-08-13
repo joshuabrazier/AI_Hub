@@ -59,14 +59,25 @@ content, enquiry categories, the audit log and the retention job.
 **AI chat** is the one feature with its own data:
 
 ```text
-ai_chat_subjects   one conversation, owned by one user (+ its compaction summary)
-ai_chat_messages   its turns, in order (+ per-turn token and cache usage)
+ai_chat_subjects     one conversation, owned by one user (+ its compaction summary)
+ai_chat_messages     its turns, in order (+ per-turn token and cache usage)
+ai_chat_attachments  files sent with a turn - the BYTES live in Postgres
 ```
 
-It is **per-person, not team-scoped** - a conversation is private to its owner
-and no role overrides that, so the guard is `requireUser` and the boundary is
-the `userId` predicate on every query. Mounted in all three areas at
-`/{admin,manage,portal}/ai-chat`, all rendering one feature page.
+It is **per-person, not team-scoped** - a conversation is private from other
+users, so the guard is `requireUser` and the boundary is the `userId` predicate
+on every query. Mounted in all three areas at `/{admin,manage,portal}/ai-chat`,
+all rendering one feature page.
+
+`ai_chat_request_logs` is the deliberate exception: it records **what was
+actually sent to the model** on every call, and **admins can read it in full**
+at `/admin/ai-chat-log`. So chat is confidential from peers, not from the
+organisation - and the chat page says exactly that. Three things hold it
+together and none is optional: the service guards on `ADMIN`, opening a payload
+writes an `ai_chat.request_viewed` audit entry naming both parties, and the log
+has its own shorter retention window. The log records that a file was **sent**
+(name, kind, size) and never its **content** - there is no admin path to an
+uploaded file, and adding one is a decision about the promise on the chat page.
 
 ## Architecture (follow the layering)
 
@@ -76,13 +87,24 @@ access) -> Postgres. Mutations go through `.actions.ts` (`"use server"`), which
 validate with Zod and call a service. DTOs and schemas live in `.types.ts`.
 Repositories must never import from features. See `docs/architecture.md`.
 
-**One documented exception:** the AI chat send is a Route Handler
-(`src/app/api/ai-chat/stream/route.ts`), not an action, because a server action
-cannot return a stream. Everything else holds - Zod still validates at the
-boundary, and the service still owns authorization and every write. A route
-handler is NOT covered by the proxy matcher and has no area layout above it, so
-its own session check is the outer gate; the service re-checks. Do not copy the
-pattern for anything that does not genuinely need to stream.
+**Two documented exceptions, both in AI chat, both Route Handlers rather than
+actions:**
+
+- `src/app/api/ai-chat/stream/route.ts` - the send, because a server action
+  cannot return a stream.
+- `src/app/api/ai-chat/attachments/route.ts` - the upload, because actions are
+  bounded by `serverActions.bodySizeLimit`, which is global and defaults to
+  1 MB. Raising it to clear a 4.5 MB document would weaken that limit for every
+  action in the app.
+
+Everything else holds for both - Zod still validates at the boundary, and the
+service still owns authorization and every write. A route handler is NOT covered
+by the proxy matcher and has no area layout above it, so its own session check
+is the outer gate; the service re-checks. Do not copy the pattern for anything
+that does not genuinely need to stream or to carry megabytes.
+
+(`GET /api/ai-chat/attachments/[id]` is also a route handler, but it is a read
+serving bytes, so the actions rule never applied to it.)
 
 ## Conventions that bite if ignored
 
@@ -102,7 +124,11 @@ pattern for anything that does not genuinely need to stream.
 - **`src/lib/tanstack-table.d.ts` has no importers but is load-bearing** - it declares `ColumnMeta.label`, used by the mobile table layout. Do not delete it as dead code.
 - **`data-table.tsx` carries `"use no memo"`** deliberately; removing it makes the table serve stale rows.
 - **AI chat pins its region and model in code** (`src/lib/ai/bedrock-client.ts`). The Bedrock key is locked to Australia and scoped to one model; the `au.` prefix is a cross-region inference profile that routes only within AU, and `global.`/`us.` are denied by the key's IAM policy. Never make either configurable, and never "fix" throttling by switching prefix. The model id takes no date stamp and no `:0`.
-- **Chat content is rendered as a text node, never as HTML.** Both halves are untrusted - the user's because they typed it, the model's because a model repeats back what it was given. There is deliberately no rich-text path in that feature.
+- **Chat content is rendered as a text node, never as HTML.** Both halves are untrusted - the user's because they typed it, the model's because a model repeats back what it was given. There is deliberately no rich-text path in that feature. Filenames are untrusted too, and get the same treatment.
+- **An attachment's type comes from its BYTES, never its name or its `Content-Type`.** `src/lib/ai/attachment-formats.ts` sniffs the header, and for images the same pass that proves the format also reads the dimensions. The allowlist is the Converse contract - 4 image formats, 9 document formats - and a unit test asserts it against the AWS SDK enums so drift fails the build rather than a send.
+- **Uploaded files are served back with `nosniff`, a server-derived type, and `attachment` disposition for everything except images.** `html` deliberately maps to `text/plain`. Serving user-uploaded markup as `text/html` from this origin is stored XSS; all of that is load-bearing, not belt-and-braces.
+- **Bedrock's attachment caps are per REQUEST, and every send replays the whole thread** - so 20 images / 5 documents / the payload cap are really limits on the *conversation*. `selectAttachments` admits newest-first and lets the oldest fall out, replacing an evicted file with a note so the model can say it can no longer see it. Do not "fix" that by capping per message; the newest file is the one being asked about.
+- **A document's `name` is restricted by Bedrock** to alphanumerics, single spaces, hyphens, parens and brackets - most real filenames need rewriting, and AWS flags the field as prompt-injection-prone. `sanitizeDocumentName` handles both. Its reasoning assumes chat has no tools and no sharing; revisit it if that changes.
 - **With prompt caching on, `inputTokens` is only the UNCACHED remainder.** Total input is `inputTokens + cacheReadTokens + cacheWriteTokens`. Measured live: a cached turn reported `inputTokens: 3` for a request that actually sent 8,207. Use `totalInputTokens` off the DTO; reading `inputTokens` alone is how a working cache gets mistaken for a broken counter.
 - **The chat cache point goes LAST in the request**, so the cached prefix is the whole conversation. Opus 4.6 needs 4,096 tokens minimum (below that it silently does not cache, which is fine) and has a **5-minute TTL with no 1-hour option** - that short TTL is why compaction exists alongside caching.
 - **Anthropic's server-side compaction is not reachable over Bedrock Converse** - it is a Messages-API beta needing an `anthropic-beta` header, and Converse cannot send one. `compactIfNeeded` in the chat service is the client-side equivalent. Compaction only changes what is SENT; the original turns stay in the database and stay readable.

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { deleteStagedAiChatAttachmentsOlderThanRepo } from "@/lib/data/repositories/ai-chat-attachments.repository";
+import { deleteAiChatRequestLogsOlderThanRepo } from "@/lib/data/repositories/ai-chat-request-logs.repository";
 import { deleteAiChatSubjectsInactiveSinceRepo } from "@/lib/data/repositories/ai-chat-subjects.repository";
 import { envServer } from "@/lib/env-server";
 
@@ -26,20 +28,50 @@ export type AiChatPurgeResult = {
   retentionDays: number;
   // Conversations deleted (0 when off). Messages go with them.
   purgedSubjects: number;
+  // The request log has its own, shorter window - it duplicates private
+  // content that admins can read, and it grows quadratically with thread
+  // length, so it is not tied to how long the chats themselves are kept.
+  logRetentionDays: number;
+  purgedRequestLogs: number;
+  // Files uploaded but never sent. Measured in HOURS, and independent of
+  // both windows above: an abandoned upload is not history anybody is
+  // keeping, it is bytes with no message to belong to.
+  stagedAttachmentHours: number;
+  purgedStagedAttachments: number;
 };
+
+// An instant comparison against a timestamptz, so UTC is correct and no
+// app-zone conversion is needed.
+const cutoffFor = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+const cutoffForHours = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000);
 
 export async function purgeExpiredAiChatsService(): Promise<AiChatPurgeResult> {
   const retentionDays = envServer.AI_CHAT_RETENTION_DAYS;
+  const logRetentionDays = envServer.AI_CHAT_LOG_RETENTION_DAYS;
+  const stagedAttachmentHours = envServer.AI_CHAT_STAGED_ATTACHMENT_HOURS;
 
-  if (retentionDays <= 0) {
-    return { retentionDays: 0, purgedSubjects: 0 };
-  }
+  // The three windows are independent: purging the log does not touch the
+  // conversations, and vice versa. Any of them can be switched off alone.
+  const purgedSubjects =
+    retentionDays > 0 ? await deleteAiChatSubjectsInactiveSinceRepo(cutoffFor(retentionDays)) : 0;
 
-  // An instant comparison against a timestamptz, so UTC is correct and no
-  // app-zone conversion is needed.
-  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  const purgedRequestLogs =
+    logRetentionDays > 0 ? await deleteAiChatRequestLogsOlderThanRepo(cutoffFor(logRetentionDays)) : 0;
 
-  const purgedSubjects = await deleteAiChatSubjectsInactiveSinceRepo(cutoff);
+  // Sent attachments are NOT touched here - they cascade with the message
+  // and the conversation, so they are already covered by the window above.
+  // This only collects uploads that never became part of a turn.
+  const purgedStagedAttachments =
+    stagedAttachmentHours > 0
+      ? await deleteStagedAiChatAttachmentsOlderThanRepo(cutoffForHours(stagedAttachmentHours))
+      : 0;
 
-  return { retentionDays, purgedSubjects };
+  return {
+    retentionDays: retentionDays > 0 ? retentionDays : 0,
+    purgedSubjects,
+    logRetentionDays: logRetentionDays > 0 ? logRetentionDays : 0,
+    purgedRequestLogs,
+    stagedAttachmentHours: stagedAttachmentHours > 0 ? stagedAttachmentHours : 0,
+    purgedStagedAttachments,
+  };
 }

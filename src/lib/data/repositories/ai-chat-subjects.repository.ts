@@ -8,9 +8,13 @@ import { AiChatSubject, NewAiChatSubject, UpdateAiChatSubject } from "../kysely-
 // AI chat conversations.
 //
 // `user_id` is the whole authorization boundary here, and unlike the rest
-// of the app it is NOT team-scoped: a conversation belongs to one person
-// and nobody else reads it, staff included. That is deliberate - these are
-// personal working transcripts, not organisational records.
+// of the app it is NOT team-scoped: a conversation belongs to one person,
+// and nothing in this file will serve it to anybody else, staff included.
+//
+// The organisation still keeps a record of what was SENT to the model, in
+// ai_chat_request_logs, and admins can read that. It is a separate table
+// with its own admin-only service for exactly this reason - so the rule
+// here stays absolute and easy to check.
 //
 // So every function below takes a userId and puts it in the WHERE clause,
 // including the ones that already have a subject id. The id is not the

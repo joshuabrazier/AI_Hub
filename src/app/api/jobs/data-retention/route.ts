@@ -30,9 +30,13 @@ function bearerMatches(header: string | null, secret: string): boolean {
 // behind a scheduler, so the usual role guards do not apply and must not be
 // added. It runs three tasks:
 //   - purges audit logs older than AUDIT_LOG_RETENTION_DAYS (routine rotation),
-//   - purges AI chat conversations idle longer than AI_CHAT_RETENTION_DAYS
-//     (also routine rotation - the user's own transcripts, on a window they
-//     can see),
+//   - purges AI chat conversations idle longer than AI_CHAT_RETENTION_DAYS,
+//     request-log rows older than AI_CHAT_LOG_RETENTION_DAYS (also routine
+//     rotation; the log has its own, shorter window because it duplicates
+//     private content and grows quadratically), and files uploaded but
+//     never sent, after AI_CHAT_STAGED_ATTACHMENT_HOURS - nothing else
+//     collects those, because the cascades only reach a file once it
+//     belongs to a message,
 //   - de-identifies dormant accounts, but only when RETENTION_JOB_ENABLED is
 //     "true"; otherwise that part runs as a preview and changes nothing.
 //
@@ -67,6 +71,8 @@ export async function POST(request: Request): Promise<Response> {
   console.info(
     `[data-retention] auditLogsPurged=${auditLogs.purged} (>${auditLogs.retentionDays}d) ` +
       `aiChatsPurged=${aiChats.purgedSubjects} (>${aiChats.retentionDays}d) ` +
+      `aiChatLogsPurged=${aiChats.purgedRequestLogs} (>${aiChats.logRetentionDays}d) ` +
+      `aiChatStagedFilesPurged=${aiChats.purgedStagedAttachments} (>${aiChats.stagedAttachmentHours}h) ` +
       `dryRun=${deidentify.dryRun} candidates=${deidentify.candidateCount} processed=${deidentify.processedCount}`,
   );
 

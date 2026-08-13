@@ -1,8 +1,8 @@
-import type { AiChatMessage } from "@/lib/data/kysely-database-types";
+import type { AiChatAttachmentMeta, AiChatMessage } from "@/lib/data/kysely-database-types";
 import type { AiChatSubjectWithCount } from "@/lib/data/repositories/ai-chat-subjects.repository";
 
 import { TITLE_MAX_CHARS } from "./ai-chat.types";
-import type { AiChatMessageDTO, AiChatSubjectDTO } from "./ai-chat.types";
+import type { AiChatAttachmentDTO, AiChatMessageDTO, AiChatSubjectDTO } from "./ai-chat.types";
 
 // -------------------------------------------------------------------
 // Map a conversation row to the sidebar DTO. The message count is carried
@@ -29,7 +29,35 @@ export function mapDBAiChatSubjectToDTO(subject: AiChatSubjectWithCount): AiChat
 // text node and the browser escapes it. That is why there is no rich-text
 // path in this feature at all.
 // -------------------------------------------------------------------
-export function mapDBAiChatMessageToDTO(message: AiChatMessage): AiChatMessageDTO {
+// -------------------------------------------------------------------
+// Map one attachment to its DTO.
+//
+// Takes the metadata row, which has no `bytes` field to leak by accident -
+// the type makes it impossible to hand a file's content to the browser
+// from here, rather than relying on remembering not to.
+//
+// `fileName` is passed through untouched. It is the name from the
+// uploader's own filesystem, so it is untrusted text and is rendered as a
+// text node like message content. The SANITISED name the model is shown is
+// a separate thing entirely, derived at send time.
+// -------------------------------------------------------------------
+export function mapDBAiChatAttachmentToDTO(attachment: AiChatAttachmentMeta): AiChatAttachmentDTO {
+  return {
+    id: attachment.id,
+    kind: attachment.kind,
+    format: attachment.format,
+    fileName: attachment.fileName,
+    mediaType: attachment.mediaType,
+    byteSize: attachment.byteSize,
+    width: attachment.width,
+    height: attachment.height,
+  };
+}
+
+export function mapDBAiChatMessageToDTO(
+  message: AiChatMessage,
+  attachments: AiChatAttachmentMeta[] = [],
+): AiChatMessageDTO {
   // With caching on, the model reports input in three parts and `inputTokens`
   // alone is only the uncached remainder. Summed once here so no component
   // has to remember the rule - reading inputTokens by itself is exactly the
@@ -53,6 +81,7 @@ export function mapDBAiChatMessageToDTO(message: AiChatMessage): AiChatMessageDT
     cacheReadTokens: message.cacheReadTokens,
     cacheWriteTokens: message.cacheWriteTokens,
     totalInputTokens,
+    attachments: attachments.map(mapDBAiChatAttachmentToDTO),
   };
 }
 

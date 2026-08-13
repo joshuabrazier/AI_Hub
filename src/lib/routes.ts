@@ -49,6 +49,7 @@ export const ROUTES = {
   ADMIN_EMAILS: "/admin/emails",
   ADMIN_CONFIGURATIONS: "/admin/configurations",
   ADMIN_ACTIVITY: "/admin/activity",
+  ADMIN_AI_CHAT_LOG: "/admin/ai-chat-log",
   ADMIN_DATA_RETENTION: "/admin/data-retention",
 
   // Manager area. Every one of these is scoped server-side to the teams the

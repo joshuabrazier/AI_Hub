@@ -64,6 +64,11 @@ export const AUDIT_ACTION_META: Record<string, { label: string; category: string
   // Documents
   [AUDIT_ACTIONS.DOCUMENT_SIGNED]: { label: "Document signed", category: "Documents" },
 
+  // AI chat. Filed under Access rather than a category of its own: what it
+  // records is one person reading another's private content, which is the
+  // same question an admin is asking when they filter to Access.
+  [AUDIT_ACTIONS.AI_CHAT_REQUEST_VIEWED]: { label: "AI chat request viewed", category: "Access" },
+
   // Authentication
   [AUDIT_ACTIONS.AUTH_SIGNED_IN]: { label: "Signed in", category: "Auth" },
   [AUDIT_ACTIONS.AUTH_SIGNED_OUT]: { label: "Signed out", category: "Auth" },

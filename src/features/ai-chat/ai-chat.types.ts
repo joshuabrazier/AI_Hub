@@ -1,11 +1,12 @@
 import z from "zod";
 
 import { TABLE_ID_LENGTH } from "@/lib/constants";
-import { type AiChatRole } from "@/lib/data/kysely-database-types";
+import { type AiChatAttachmentKind, type AiChatRole } from "@/lib/data/kysely-database-types";
 
 // Ids are always re-checked server-side against the session user; the length
 // bound only keeps obvious rubbish out of the query.
 const subjectIdSchema = z.string().min(TABLE_ID_LENGTH);
+const attachmentIdSchema = z.string().min(TABLE_ID_LENGTH);
 
 // -------------------------------------------------------------------
 // Bounds
@@ -89,6 +90,28 @@ export type AiChatSubjectDTO = {
 };
 
 // -------------------------------------------------------------------
+// One attached file, as the screen sees it.
+//
+// Never carries the bytes. The transcript renders names and sizes, and the
+// download route serves the content on demand - so opening a conversation
+// with twenty photos in it does not ship twenty photos to the browser.
+//
+// `fileName` is the name the user's own filesystem gave it, and it is
+// untrusted text: rendered as a text node, never as HTML, and never
+// interpolated into a URL or a header without encoding.
+// -------------------------------------------------------------------
+export type AiChatAttachmentDTO = {
+  id: string;
+  kind: AiChatAttachmentKind;
+  format: string;
+  fileName: string;
+  mediaType: string;
+  byteSize: number;
+  width: number | null;
+  height: number | null;
+};
+
+// -------------------------------------------------------------------
 // One turn of a conversation.
 //
 // Token counts are present only on assistant turns, and only when the
@@ -110,6 +133,9 @@ export type AiChatMessageDTO = {
   // Derived in the mapper rather than in the component so every surface
   // that shows a token count shows the same number.
   totalInputTokens: number | null;
+  // Files sent with this turn. Only ever populated on user turns - the
+  // model returns text, so an assistant turn has nothing to attach.
+  attachments: AiChatAttachmentDTO[];
 };
 
 // -------------------------------------------------------------------
@@ -118,6 +144,10 @@ export type AiChatMessageDTO = {
 export type AiChatSubjectDetailDTO = {
   subject: AiChatSubjectDTO;
   messages: AiChatMessageDTO[];
+  // Files uploaded from the composer but not yet sent. They survive a page
+  // reload because they are rows, not browser state - so choosing a large
+  // PDF and then refreshing does not silently lose it.
+  staged: AiChatAttachmentDTO[];
   // The id of the last turn covered by the summary, or null if this thread
   // has never been compacted. The transcript still shows every message; the
   // UI uses this to mark where the model's own recall becomes a summary,
@@ -188,3 +218,23 @@ export const SendAiChatMessageSchema = z.object({
 });
 
 export type SendAiChatMessageRequestDTO = z.infer<typeof SendAiChatMessageSchema>;
+
+// -------------------------------------------------------------------
+// Attachments.
+//
+// The upload itself is multipart and its file is validated by inspecting
+// the BYTES (see src/lib/ai/attachment-formats.ts), not by a schema - a
+// Zod rule can only describe what the client claimed. This schema covers
+// the one field that travels alongside it.
+// -------------------------------------------------------------------
+export const UploadAiChatAttachmentSchema = z.object({
+  subjectId: subjectIdSchema,
+});
+
+export type UploadAiChatAttachmentRequestDTO = z.infer<typeof UploadAiChatAttachmentSchema>;
+
+export const RemoveAiChatAttachmentSchema = z.object({
+  attachmentId: attachmentIdSchema,
+});
+
+export type RemoveAiChatAttachmentRequestDTO = z.infer<typeof RemoveAiChatAttachmentSchema>;

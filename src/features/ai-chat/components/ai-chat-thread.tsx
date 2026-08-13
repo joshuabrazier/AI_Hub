@@ -3,16 +3,24 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Archive, CircleStop, SendHorizontal, Sparkles, UserRound } from "lucide-react";
+import { Archive, CircleStop, Loader2, Paperclip, SendHorizontal, Sparkles, UserRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { AI_CHAT_ACCEPTED_SUMMARY, AI_CHAT_ACCEPT_ATTRIBUTE } from "@/lib/ai/attachment-formats";
 import { MESSAGES } from "@/lib/constants";
 import { AI_CHAT_ROLES } from "@/lib/data/kysely-database-types";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-import { MAX_MESSAGE_CHARS, type AiChatMessageDTO, type AiChatSubjectDetailDTO } from "../ai-chat.types";
+import { removeAiChatAttachmentAction } from "../ai-chat.actions";
+import {
+  MAX_MESSAGE_CHARS,
+  type AiChatAttachmentDTO,
+  type AiChatMessageDTO,
+  type AiChatSubjectDetailDTO,
+} from "../ai-chat.types";
+import { AiChatAttachmentList } from "./ai-chat-attachment-list";
 
 // -------------------------------------------------------------------
 // AiChatThread
@@ -36,6 +44,14 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
   const [messages, setMessages] = useState<AiChatMessageDTO[]>(detail.messages);
   const [draft, setDraft] = useState("");
 
+  // Files uploaded but not yet sent. Seeded from the server, so a page
+  // reload does not lose an attachment somebody already waited for, and
+  // advanced locally as uploads land.
+  const [staged, setStaged] = useState<AiChatAttachmentDTO[]>(detail.staged);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [isDropTarget, setIsDropTarget] = useState(false);
+
   // The reply currently arriving. Null when nothing is in flight; an empty
   // string means the request is away but no text has come back yet, which
   // is what drives the thinking indicator.
@@ -43,8 +59,77 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
 
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Drag events fire on every child element, so a plain boolean would clear
+  // the highlight as soon as the pointer crossed one. Counting enters and
+  // leaves is what makes it survive the crossing.
+  const dragDepth = useRef(0);
 
   const isStreaming = reply !== null;
+  const isUploading = uploadingCount > 0;
+
+  // -------------------------------------------------------------------
+  // Upload chosen files.
+  //
+  // SEQUENTIAL, and that is not laziness. The per-message caps (20 images,
+  // 5 documents, and a shared byte budget) are checked server-side against
+  // the rows already staged, so uploads sent in parallel would each read a
+  // stale count and could collectively walk past a limit that neither one
+  // broke on its own.
+  //
+  // Each file is reported on its own: one rejected type does not discard
+  // the others that were selected with it.
+  // -------------------------------------------------------------------
+  const upload = async (files: File[]) => {
+    if (files.length === 0 || isStreaming) return;
+
+    setUploadingCount((current) => current + files.length);
+
+    try {
+      for (const file of files) {
+        const body = new FormData();
+        body.append("subjectId", detail.subject.id);
+        body.append("file", file);
+
+        try {
+          const response = await fetch("/api/ai-chat/attachments", { method: "POST", body });
+          const payload = await response.json().catch(() => null);
+
+          if (!response.ok) {
+            toast.error(payload?.error ?? MESSAGES.SOMETHING_WENT_WRONG);
+            continue;
+          }
+
+          setStaged((current) => [...current, payload.attachment as AiChatAttachmentDTO]);
+        } catch (error) {
+          console.error(error);
+          toast.error(MESSAGES.SOMETHING_WENT_WRONG);
+        } finally {
+          setUploadingCount((current) => current - 1);
+        }
+      }
+    } catch {
+      // The per-file catch above handles the expected failures; this only
+      // guards the loop itself, and the counter has to be released or the
+      // composer stays disabled forever.
+      setUploadingCount(0);
+    }
+  };
+
+  const remove = async (attachmentId: string) => {
+    setRemovingId(attachmentId);
+
+    const response = await removeAiChatAttachmentAction({ attachmentId });
+
+    setRemovingId(null);
+
+    if (!response.success) {
+      toast.error(response.formError ?? MESSAGES.SOMETHING_WENT_WRONG);
+      return;
+    }
+
+    setStaged((current) => current.filter((attachment) => attachment.id !== attachmentId));
+  };
 
   // Keep the newest text in view as it arrives. `instant` rather than smooth
   // because a smooth scroll re-triggered on every chunk never catches up.
@@ -59,7 +144,11 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
 
   const send = async () => {
     const content = draft.trim();
-    if (!content || isStreaming) return;
+
+    // An upload in flight blocks the send: the server claims whatever is
+    // staged at the moment the turn is written, so sending mid-upload would
+    // attach some of the chosen files and silently leave the rest behind.
+    if (!content || isStreaming || isUploading) return;
 
     // Optimistic user turn. The id is local and is replaced by the server's
     // on the refresh below; it only has to be unique within this render.
@@ -73,10 +162,14 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
       cacheReadTokens: null,
       cacheWriteTokens: null,
       totalInputTokens: null,
+      // The send claims exactly what is staged now, so showing it on the
+      // optimistic turn is accurate rather than hopeful.
+      attachments: staged,
     };
 
     setMessages((current) => [...current, optimistic]);
     setDraft("");
+    setStaged([]);
     setReply("");
 
     const controller = new AbortController();
@@ -142,6 +235,7 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
             cacheReadTokens: null,
             cacheWriteTokens: null,
             totalInputTokens: null,
+            attachments: [],
           },
         ]);
       }
@@ -202,6 +296,7 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
                   cacheReadTokens: null,
                   cacheWriteTokens: null,
                   totalInputTokens: null,
+                  attachments: [],
                 }}
                 isStreaming
               />
@@ -212,17 +307,100 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
         <div ref={bottomRef} />
       </div>
 
-      {/* Composer */}
-      <div className="border-t border-border p-3">
+      {/* Composer. Doubles as the drop zone, so a file can be dragged
+          anywhere over it rather than onto a small target. */}
+      <div
+        className={cn("border-t border-border p-3 transition-colors", isDropTarget && "bg-primary/5")}
+        onDragEnter={(event) => {
+          // Only react to an actual file drag; dragging selected text over
+          // the composer should do nothing.
+          if (!event.dataTransfer.types.includes("Files")) return;
+
+          dragDepth.current += 1;
+          setIsDropTarget(true);
+        }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+
+          // Without this the browser navigates to the dropped file.
+          event.preventDefault();
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setIsDropTarget(false);
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+
+          event.preventDefault();
+          dragDepth.current = 0;
+          setIsDropTarget(false);
+
+          void upload(Array.from(event.dataTransfer.files));
+        }}
+      >
+        {(staged.length > 0 || isUploading) && (
+          <div className="mb-2">
+            <AiChatAttachmentList attachments={staged} onRemove={(id) => void remove(id)} removingId={removingId} />
+
+            {isUploading && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
+                <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                Uploading {uploadingCount} file{uploadingCount === 1 ? "" : "s"}...
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
+          {/* The real input stays off-screen and the button drives it, so the
+              control matches the rest of the UI while keeping a native file
+              picker and its keyboard behaviour. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={AI_CHAT_ACCEPT_ATTRIBUTE}
+            className="sr-only"
+            tabIndex={-1}
+            onChange={(event) => {
+              void upload(Array.from(event.target.files ?? []));
+              // Cleared so choosing the same file twice in a row still
+              // fires a change event.
+              event.target.value = "";
+            }}
+          />
+
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            disabled={isStreaming || isUploading}
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach files"
+            title={`Attach files - ${AI_CHAT_ACCEPTED_SUMMARY}`}
+          >
+            <Paperclip size={16} aria-hidden="true" />
+          </Button>
+
           <Textarea
             aria-label="Message"
             value={draft}
             maxLength={MAX_MESSAGE_CHARS}
             rows={2}
-            placeholder="Ask anything..."
+            placeholder={staged.length > 0 ? "Ask about the attached files..." : "Ask anything..."}
             disabled={isStreaming}
             onChange={(event) => setDraft(event.target.value)}
+            onPaste={(event) => {
+              // Pasting a screenshot is the fastest way to attach one, and
+              // the clipboard carries it as a file item. Text pastes have no
+              // file items and fall through to the default handler.
+              const files = Array.from(event.clipboardData.files);
+              if (files.length === 0) return;
+
+              event.preventDefault();
+              void upload(files);
+            }}
             onKeyDown={(event) => {
               // Enter sends, Shift+Enter makes a new line - the convention
               // for a chat composer. Guarded on the IME composition flag so
@@ -247,7 +425,11 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
               Stop
             </Button>
           ) : (
-            <Button type="button" onClick={() => void send()} disabled={draft.trim().length === 0}>
+            <Button
+              type="button"
+              onClick={() => void send()}
+              disabled={draft.trim().length === 0 || isUploading}
+            >
               <SendHorizontal size={16} aria-hidden="true" />
               Send
             </Button>
@@ -255,7 +437,8 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
         </div>
 
         <p className="mt-2 text-xs text-muted-foreground">
-          Enter to send, Shift + Enter for a new line. Replies can be wrong - check anything that matters.
+          Enter to send, Shift + Enter for a new line. Attach, paste or drop files - {AI_CHAT_ACCEPTED_SUMMARY}
+          . Replies can be wrong - check anything that matters.
         </p>
       </div>
     </div>
@@ -296,6 +479,11 @@ function MessageRow({ message, isStreaming = false }: { message: AiChatMessageDT
         ) : (
           <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{message.content}</p>
         )}
+
+        {/* What was sent with this turn. No remove handler: once a file is
+            part of the transcript it stays, because the model was shown it
+            and the answer above may depend on it. */}
+        <AiChatAttachmentList attachments={message.attachments} className="mt-2" />
 
         {/* Cost per answer, once the reply has landed and been persisted.
             `totalInputTokens` rather than `inputTokens`: with caching on the

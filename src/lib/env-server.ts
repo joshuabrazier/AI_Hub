@@ -76,6 +76,26 @@ const serverEnvSchema = z.object({
   // person chose to paste in, so unlike the audit log there is no
   // compliance reason to keep them - a bounded window is the safer default.
   AI_CHAT_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(365),
+
+  // Request-log retention. The monthly job deletes ai_chat_request_logs rows
+  // older than this. Defaults to 30 - deliberately much shorter than the chat
+  // window, for two reasons: the table duplicates private conversation content
+  // that admins can read, and every send logs the WHOLE thread, so its size
+  // grows with the square of thread length. Set to 0 to keep the log forever,
+  // and watch the table if you do.
+  AI_CHAT_LOG_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
+
+  // How long a file that was uploaded but never sent is kept, in HOURS.
+  // Somebody attached something and closed the tab: the row is owned and
+  // private, but nothing else will ever collect it - the message and
+  // conversation cascades only reach attachments that have a message.
+  //
+  // Hours rather than days because there is nothing to preserve here. The
+  // default is generous enough to survive an interrupted session picked up
+  // the next morning, and short enough that abandoned uploads do not
+  // accumulate as bytes nobody will read. Set to 0 to keep them forever,
+  // which is only sensible while debugging.
+  AI_CHAT_STAGED_ATTACHMENT_HOURS: z.coerce.number().int().nonnegative().default(24),
 });
 
 export const envServer = serverEnvSchema.parse({
@@ -104,4 +124,6 @@ export const envServer = serverEnvSchema.parse({
 
   AWS_BEARER_TOKEN_BEDROCK: process.env.AWS_BEARER_TOKEN_BEDROCK,
   AI_CHAT_RETENTION_DAYS: process.env.AI_CHAT_RETENTION_DAYS,
+  AI_CHAT_LOG_RETENTION_DAYS: process.env.AI_CHAT_LOG_RETENTION_DAYS,
+  AI_CHAT_STAGED_ATTACHMENT_HOURS: process.env.AI_CHAT_STAGED_ATTACHMENT_HOURS,
 });

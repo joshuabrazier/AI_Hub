@@ -98,6 +98,25 @@ Data flows down and never skips a layer:
 Mutations go through **Server Actions** (`features/<x>/<x>.actions.ts`), which
 validate input with Zod and call a service.
 
+### The two exceptions to that, both in AI chat
+
+Both are Route Handlers, and both are exceptions because of the **shape of the
+HTTP exchange**, never because the layering was inconvenient. Zod still
+validates at the boundary and the service still owns authorization and every
+write; only the response or request body differs.
+
+| Route | Why it cannot be an action |
+| --- | --- |
+| `POST /api/ai-chat/stream` | The reply streams, and a server action returns a value. |
+| `POST /api/ai-chat/attachments` | Actions are bounded by `serverActions.bodySizeLimit`, which is **global** and defaults to 1 MB. Raising it to clear a 4.5 MB document would weaken that limit for every action in the app. |
+
+A route handler is not covered by the proxy matcher and has no area layout above
+it, so its own session check is the outer gate and the service re-checks -
+the same two-layer arrangement every guarded page uses.
+
+`GET /api/ai-chat/attachments/[attachmentId]` is a route handler too, but it is
+a read that returns bytes, so the mutations rule never applied to it.
+
 ## Authentication and authorization
 
 Configured in `src/lib/auth/auth.ts`.

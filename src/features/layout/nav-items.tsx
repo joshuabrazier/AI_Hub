@@ -117,6 +117,12 @@ const ADMIN_NAV: NavGroup[] = [
           },
           { label: "Activity", href: ROUTES.ADMIN_ACTIVITY, icon: ScrollText, tooltip: "Audit trail" },
           {
+            label: "AI requests",
+            href: ROUTES.ADMIN_AI_CHAT_LOG,
+            icon: Sparkles,
+            tooltip: "What is sent to the model",
+          },
+          {
             label: "Data retention",
             href: ROUTES.ADMIN_DATA_RETENTION,
             icon: ShieldCheck,

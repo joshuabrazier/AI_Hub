@@ -22,7 +22,11 @@ export default async function AiChatPage({ eyebrow, subjectId }: { eyebrow: stri
     <PortalPage
       eyebrow={eyebrow}
       title="AI chat"
-      description="Ask anything. Each conversation keeps its own history, and only you can see it."
+      // Says plainly that administrators can read what is sent. The earlier
+      // wording ("only you can see it") stopped being true the moment the
+      // request log shipped, and a privacy promise the product does not keep
+      // is worse than no promise at all.
+      description="Ask anything. Each conversation keeps its own history and is private from other users. Administrators can review the requests sent to the model."
     >
       <AiChatWorkspace page={page} />
     </PortalPage>
