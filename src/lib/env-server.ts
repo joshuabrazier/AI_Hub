@@ -44,6 +44,54 @@ const serverEnvSchema = z.object({
     .default("false")
     .transform((value) => value === "true"),
 
+  // -----------------------------------------------------------------
+  // Jira timesheet sync (see docs/timesheet-sync.md).
+  //
+  // All optional, so the app boots without them and the sync endpoint simply
+  // reports itself unconfigured rather than the whole process failing to
+  // start over a feature not everyone runs.
+  //
+  // JIRA_EMAIL / JIRA_API_TOKEN must belong to a DEDICATED service account,
+  // never a person's own login. A personal token stops working the day that
+  // account is deactivated, and the failure mode is billing quietly stopping
+  // rather than anything visibly breaking.
+  // -----------------------------------------------------------------
+  JIRA_BASE_URL: z.string().url().optional(),
+  JIRA_EMAIL: z.string().email().optional(),
+  JIRA_API_TOKEN: z.string().min(1).optional(),
+
+  // Custom field ids ("customfield_10050"). Jira exposes custom fields by id,
+  // not by name, and the ids differ per site - so they are configuration, not
+  // constants. Without them the sync still runs and those attributes come
+  // back empty, which surfaces as audit findings rather than as a crash.
+  JIRA_FIELD_BILLABLE: z.string().optional(),
+  JIRA_FIELD_CATEGORY: z.string().optional(),
+  JIRA_FIELD_BASELINE_ESTIMATE: z.string().optional(),
+
+  // Bearer token the sync trigger endpoint requires. The endpoint is inert
+  // (503) until it is set, exactly like the retention job.
+  JIRA_SYNC_SECRET: z.string().min(16).optional(),
+
+  // Master switch. While "false" (default) the sync runs read-only against
+  // Jira and reports what it WOULD write, changing nothing in the read model.
+  // Deploying therefore never starts rewriting the read model on its own.
+  JIRA_SYNC_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+
+  // How far back to re-read on every run, to cover clock skew between this
+  // app and Jira. Overlap is free because worklog_fact is keyed on Jira's
+  // worklog id; a gap loses billable time silently. Err upward.
+  JIRA_SYNC_OVERLAP_MINUTES: z.coerce.number().int().nonnegative().default(10),
+
+  // Where a first-ever run starts from, 'YYYY-MM-DD'. Only used when no
+  // watermark exists yet.
+  JIRA_SYNC_START_DATE: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "JIRA_SYNC_START_DATE must be YYYY-MM-DD")
+    .optional(),
+
   // Activity/audit log retention. The monthly job deletes audit_logs older than
   // this many days. Defaults to 180. Set to 0 to disable purging (keep forever).
   // Unlike the de-identification switch this defaults ON, because it is routine

@@ -778,6 +778,119 @@ export type AuditLog = Selectable<AuditLogs>;
 export type NewAuditLog = Insertable<AuditLogs>;
 
 // -------------------------------------------------------------------
+// Billable Status
+// What an issue declares about whether its time can be invoiced. NULL is a
+// third state and a meaningful one: nobody has said. It must never be quietly
+// read as non-billable, because that writes off hours in silence.
+// -------------------------------------------------------------------
+export const BILLABLE_STATUS = {
+  BILLABLE: "Billable",
+  NON_BILLABLE: "Non-billable",
+} as const;
+
+export type BillableStatus = (typeof BILLABLE_STATUS)[keyof typeof BILLABLE_STATUS];
+
+// -------------------------------------------------------------------
+// Where a worklog's billable status came from. An inherited value bills
+// exactly the same, but it changes silently when an item is re-parented,
+// which is why the source is recorded rather than just the value.
+// -------------------------------------------------------------------
+export const BILLABLE_SOURCES = {
+  ISSUE: "issue",
+  PARENT: "parent",
+  UNSET: "unset",
+} as const;
+
+export type BillableSource = (typeof BILLABLE_SOURCES)[keyof typeof BILLABLE_SOURCES];
+
+// -------------------------------------------------------------------
+// Jira Issues
+// The issue cache behind the facts. `billable` here is what the issue ITSELF
+// declares and is often null; the resolved value, plus which level it came
+// from, is recorded per worklog.
+//
+// Estimates are seconds, matching Jira's own unit. See the note in
+// migrations/001 on why nothing in the read model is NUMERIC.
+// -------------------------------------------------------------------
+export interface JiraIssues {
+  issueKey: string;
+  parentKey: string | null;
+  projectKey: string;
+  issueType: string | null;
+  summary: string;
+  description: string | null;
+  category: string | null;
+  billable: string | null;
+  baselineEstimateSeconds: number | null;
+  currentEstimateSeconds: number | null;
+  status: string | null;
+  jiraUpdatedAt: Date | null;
+  syncedAt: Generated<Date>;
+}
+
+export type JiraIssue = Selectable<JiraIssues>;
+export type NewJiraIssue = Insertable<JiraIssues>;
+export type UpdateJiraIssue = Updateable<JiraIssues>;
+
+// -------------------------------------------------------------------
+// Worklog Facts
+// One row per Jira worklog. The primary key is Jira's own worklog id, which
+// is what makes a re-sync overwrite rather than duplicate.
+//
+// `workDate` is a DATE and therefore arrives as a 'YYYY-MM-DD' string (see
+// kysely-database-client.ts), Adelaide-local. Compare it lexicographically;
+// never turn it into a Date to compare it.
+//
+// `hasNarrative` is GENERATED ALWAYS in Postgres, so it is select-only: the
+// `never` insert and update types make writing to it a compile error rather
+// than a runtime one.
+// -------------------------------------------------------------------
+export interface WorklogFacts {
+  worklogId: string;
+  issueKey: string;
+  parentKey: string | null;
+  projectKey: string;
+  category: string | null;
+  personId: string;
+  personName: string | null;
+  workDate: string;
+  startSecond: number | null;
+  timeSpentSeconds: number;
+  billable: string | null;
+  billableSource: Generated<string>;
+  narrative: string | null;
+  hasNarrative: ColumnType<boolean, never, never>;
+  jiraUpdatedAt: Date | null;
+  syncedAt: Generated<Date>;
+}
+
+export type WorklogFact = Selectable<WorklogFacts>;
+export type NewWorklogFact = Insertable<WorklogFacts>;
+export type UpdateWorklogFact = Updateable<WorklogFacts>;
+
+// -------------------------------------------------------------------
+// Sync Watermarks
+// Where the last successful run of a sync job reached. Advanced last, inside
+// the same transaction as the writes it describes, so a crash repeats a
+// window rather than skipping one.
+// -------------------------------------------------------------------
+export interface SyncWatermarks {
+  jobName: string;
+  lastSyncedAt: Date;
+  lastRunAt: Date | null;
+  lastSuccessAt: Date | null;
+  lastError: string | null;
+  lastUpdatedCount: Generated<number>;
+  lastDeletedCount: Generated<number>;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type SyncWatermark = Selectable<SyncWatermarks>;
+export type NewSyncWatermark = Insertable<SyncWatermarks>;
+export type UpdateSyncWatermark = Updateable<SyncWatermarks>;
+
+// -------------------------------------------------------------------
 // Database
 // -------------------------------------------------------------------
 export interface Database {
@@ -806,4 +919,8 @@ export interface Database {
   enquiryCategories: EnquiryCategories;
   enquirySubmissions: EnquirySubmissions;
   auditLogs: AuditLogs;
+  // Timesheet read model, derived from Jira and rebuildable from it.
+  jiraIssue: JiraIssues;
+  worklogFact: WorklogFacts;
+  syncWatermark: SyncWatermarks;
 }
