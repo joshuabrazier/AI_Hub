@@ -1,6 +1,4 @@
 import {
-  Bell,
-  Files,
   FileText,
   House,
   LayoutPanelLeft,
@@ -38,8 +36,6 @@ export type NavLink = {
   href: string;
   icon: LucideIcon;
   tooltip: string;
-  /** Show a small unread/attention dot on this item. */
-  badge?: "notifications";
 };
 
 /** A collapsible group of related links. */
@@ -84,18 +80,6 @@ const ADMIN_NAV: NavGroup[] = [
           { label: "Teams", href: ROUTES.ADMIN_TEAMS, icon: LayoutPanelLeft, tooltip: "Teams and their members" },
         ],
       },
-    ],
-  },
-  {
-    label: "Communication",
-    items: [
-      {
-        label: "Notifications",
-        href: ROUTES.ADMIN_NOTIFICATIONS,
-        icon: Bell,
-        tooltip: "Send notifications",
-      },
-      { label: "Documents", href: ROUTES.ADMIN_DOCUMENTS, icon: Files, tooltip: "Who has signed what" },
     ],
   },
   {
@@ -150,12 +134,6 @@ const MANAGER_NAV: NavGroup[] = [
     label: "Your teams",
     items: [
       { label: "Teams", href: ROUTES.MANAGE_TEAMS, icon: LayoutPanelLeft, tooltip: "Teams you manage" },
-      {
-        label: "Notifications",
-        href: ROUTES.MANAGE_NOTIFICATIONS,
-        icon: Bell,
-        tooltip: "Message your teams",
-      },
     ],
   },
 ];
@@ -169,14 +147,6 @@ const MEMBER_NAV: NavGroup[] = [
     items: [
       { label: "Home", href: ROUTES.PORTAL, icon: House, tooltip: "Home" },
       { label: "AI chat", href: ROUTES.PORTAL_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
-      {
-        label: "Notifications",
-        href: ROUTES.PORTAL_NOTIFICATIONS,
-        icon: Bell,
-        tooltip: "Messages for you",
-        badge: "notifications",
-      },
-      { label: "Documents", href: ROUTES.PORTAL_DOCUMENTS, icon: Files, tooltip: "Documents to read and sign" },
       { label: "Account", href: ROUTES.PORTAL_ACCOUNT, icon: UserCircle, tooltip: "Your details" },
     ],
   },

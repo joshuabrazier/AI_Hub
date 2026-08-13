@@ -10,7 +10,7 @@ export type PickerOption = { id: string; label: string; sublabel: string | null 
 
 // -------------------------------------------------------------------
 // A scrollable, optionally-searchable checkbox list for multi-selecting
-// records by id (e.g. notification recipients, members to add). Search
+// records by id (e.g. members to add to a team). Search
 // matches the label and sublabel.
 // -------------------------------------------------------------------
 export function CheckboxPicker({

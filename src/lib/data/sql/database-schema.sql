@@ -9,12 +9,6 @@ DROP TABLE IF EXISTS schema_migrations;
 DROP TABLE IF EXISTS enquiry_submissions;
 DROP TABLE IF EXISTS enquiry_categories;
 DROP TABLE IF EXISTS audit_logs;
-DROP TABLE IF EXISTS document_signatures;
-DROP TABLE IF EXISTS documents;
-DROP TABLE IF EXISTS notifications;
-DROP TABLE IF EXISTS notification_broadcasts;
-DROP TABLE IF EXISTS notification_templates;
-DROP TABLE IF EXISTS notification_types;
 DROP TABLE IF EXISTS site_content;
 DROP TABLE IF EXISTS two_factor;
 DROP TABLE IF EXISTS accounts;
@@ -117,8 +111,8 @@ CREATE TYPE ai_chat_attachment_kind AS ENUM (
 ---------------------------------------------------------------------
 -- Users Table
 -- The centre of the model: every person is a user. Better Auth owns the
--- authentication columns; the app adds role, is_active and the small
--- profile block (phone, notification preferences).
+-- authentication columns; the app adds role, is_active and a small profile
+-- block.
 ---------------------------------------------------------------------
 CREATE TABLE users (
     id TEXT NOT NULL PRIMARY KEY,
@@ -134,9 +128,6 @@ CREATE TABLE users (
     ban_expires TIMESTAMPTZ NULL,
     two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     phone_number TEXT NULL,
-    -- Per-notification-type email preferences, keyed by the notification
-    -- type's key. An absent key means enabled (opt-out model).
-    notification_preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
     -- Data retention: set when this person's personal data has been
     -- de-identified (irreversible). NULL = still identifiable.
     deidentified_at TIMESTAMPTZ NULL,
@@ -296,136 +287,6 @@ CREATE TABLE site_content (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
----------------------------------------------------------------------
--- Documents Table
--- The signable documents, as data rather than a hardcoded enum, so a
--- project can add one without a schema or code change. `content_key` names
--- the site_content row holding the wording; bump `version` when a change
--- should force everyone to re-sign.
----------------------------------------------------------------------
-CREATE TABLE documents (
-    id          TEXT NOT NULL PRIMARY KEY,
-    key         TEXT NOT NULL UNIQUE,
-    title       TEXT NOT NULL,
-    version     TEXT NOT NULL DEFAULT '1.0',
-    content_key TEXT NOT NULL,
-    -- Whether every member must sign it before using the portal.
-    is_required BOOLEAN NOT NULL DEFAULT TRUE,
-    order_by    INT NOT NULL DEFAULT 1,
-    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
----------------------------------------------------------------------
--- Document Signatures Table
--- One immutable record per document a user signs. The exact title, version
--- and text signed are snapshotted so later edits never change what was
--- already signed. document_key is snapshotted too, so history survives the
--- document row being renamed or deleted. signer_name and signature_image
--- are encrypted at the application layer (field-level).
----------------------------------------------------------------------
-CREATE TABLE document_signatures (
-    id               TEXT NOT NULL PRIMARY KEY,
-    user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    document_id      TEXT NULL REFERENCES documents(id) ON DELETE SET NULL,
-    document_key     TEXT NOT NULL,
-    document_version TEXT NOT NULL,
-    document_title   TEXT NOT NULL,
-    document_content TEXT NOT NULL,
-    signer_name      TEXT NOT NULL,
-    signature_image  TEXT NOT NULL,
-    signed_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    ip_address       TEXT NULL,
-    user_agent       TEXT NULL,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_document_signatures_user     ON document_signatures(user_id);
-CREATE INDEX idx_document_signatures_user_key ON document_signatures(user_id, document_key);
-
----------------------------------------------------------------------
--- Notification Types Table
--- Admin-managed list of notification categories for the send/template
--- pickers. `key` is the stable value stored on notifications, broadcasts
--- and templates; `name` is the label. Deactivating a type hides it from the
--- pickers without touching history.
----------------------------------------------------------------------
-CREATE TABLE notification_types (
-    id          TEXT NOT NULL PRIMARY KEY,
-    key         TEXT NOT NULL UNIQUE,
-    name        TEXT NOT NULL,
-    description TEXT NULL,
-    order_by    INT NOT NULL DEFAULT 1,
-    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
----------------------------------------------------------------------
--- Notification Templates Table
--- Reusable content an admin can fill the compose form from, or save the
--- current draft into. Holds type/title/body only - the audience is always
--- chosen at send time.
----------------------------------------------------------------------
-CREATE TABLE notification_templates (
-    id         TEXT NOT NULL PRIMARY KEY,
-    created_by TEXT NULL REFERENCES users(id) ON DELETE SET NULL,
-    name       TEXT NOT NULL,
-    type       TEXT NOT NULL,
-    title      TEXT NOT NULL,
-    body       TEXT NULL,
-    -- System templates (fixed ids) back a built-in feature and can't be
-    -- deleted; looked up by id, not by name.
-    is_system  BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
----------------------------------------------------------------------
--- Notification Broadcasts Table
--- The message a staff member sends. Each recipient gets their own row in
--- `notifications` referencing the broadcast.
----------------------------------------------------------------------
-CREATE TABLE notification_broadcasts (
-    id             TEXT NOT NULL PRIMARY KEY,
-    created_by     TEXT NULL REFERENCES users(id) ON DELETE SET NULL,
-    type           TEXT NOT NULL,
-    -- Who it was addressed to: 'everyone' | 'teams' | 'users'.
-    -- audience_label is a denormalised human summary for display.
-    audience_type  TEXT NOT NULL DEFAULT 'everyone',
-    audience_label TEXT NULL,
-    title          TEXT NOT NULL,
-    body           TEXT NULL,
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
----------------------------------------------------------------------
--- Notifications Table
--- One row per recipient. Backs the portal's Notifications tab, the unread
--- badge in the nav, and the staff notifications view. `broadcast_id` links
--- a recipient's copy to the broadcast it came from; NULL for standalone or
--- system notifications. `read_at` is NULL until the recipient reads it -
--- that is what drives the unread count and the nav dot.
----------------------------------------------------------------------
-CREATE TABLE notifications (
-    id           TEXT NOT NULL PRIMARY KEY,
-    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    broadcast_id TEXT NULL REFERENCES notification_broadcasts(id) ON DELETE CASCADE,
-    type         TEXT NOT NULL,
-    title        TEXT NOT NULL,
-    body         TEXT NULL,
-    read_at      TIMESTAMPTZ NULL,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_notifications_user      ON notifications(user_id, created_at DESC);
-CREATE INDEX idx_notifications_broadcast ON notifications(broadcast_id);
--- Partial index: the unread badge asks "any unread for me?" on every
--- navigation, and only unread rows are ever in the answer.
-CREATE INDEX idx_notifications_unread ON notifications(user_id) WHERE read_at IS NULL;
 
 ---------------------------------------------------------------------
 -- Enquiry Categories Table

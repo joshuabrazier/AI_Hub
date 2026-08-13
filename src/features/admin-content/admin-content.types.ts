@@ -21,7 +21,6 @@ export const SITE_CONTENT_LABELS: Record<SiteContentKey, string> = {
   [SITE_CONTENT_KEYS.CONTACT]: "Contact details",
   [SITE_CONTENT_KEYS.PRIVACY_POLICY]: "Privacy Policy",
   [SITE_CONTENT_KEYS.TERMS_AND_CONDITIONS]: "Terms and Conditions",
-  [SITE_CONTENT_KEYS.MEDIA_CONSENT]: "Media consent",
   [SITE_CONTENT_KEYS.LANDING_HERO]: "Home page: hero",
   [SITE_CONTENT_KEYS.LANDING_HIGHLIGHTS]: "Home page: highlights",
   [SITE_CONTENT_KEYS.LANDING_FEATURES]: "Home page: features",

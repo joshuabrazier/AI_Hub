@@ -16,21 +16,9 @@ export type PortalTeamDTO = {
   isActive: boolean;
 };
 
-// A notification addressed to this member. The body is deliberately absent:
-// the home page shows titles only, so no stored HTML reaches this page.
-export type PortalNotificationDTO = {
-  id: string;
-  title: string;
-  type: string;
-  createdAt: Date;
-  isUnread: boolean;
-};
-
 export type PortalHomeDTO = {
   // What to greet them by, from the session. Null when their account has no
   // usable name.
   firstName: string | null;
   teams: PortalTeamDTO[];
-  notifications: PortalNotificationDTO[];
-  unreadNotificationCount: number;
 };

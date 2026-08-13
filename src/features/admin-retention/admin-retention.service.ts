@@ -226,7 +226,6 @@ export async function deidentifyInactiveUsersService({ dryRun }: { dryRun: boole
               email_verified = FALSE,
               image = NULL,
               phone_number = NULL,
-              notification_preferences = '{}'::jsonb,
               two_factor_enabled = FALSE,
               is_active = FALSE,
               deidentified_at = now(),
@@ -260,7 +259,7 @@ export async function deidentifyInactiveUsersService({ dryRun }: { dryRun: boole
         subjectUserId: userId,
         summary: `De-identified a dormant account (retention: ${RETENTION_INACTIVE_MONTHS} months)`,
         changes: {
-          fields: ["name", "preferredName", "email", "phoneNumber", "image", "notificationPreferences"],
+          fields: ["name", "preferredName", "email", "phoneNumber", "image"],
           revoked: ["sessions", "credentials", "twoFactor"],
         },
         // There is no session behind the job, so the actor is stated rather

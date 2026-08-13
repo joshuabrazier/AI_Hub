@@ -2,7 +2,7 @@
 
 This is a **reusable portal base**, not a finished product. It ships the parts
 every internal portal needs - authentication, two-factor, invitations,
-role-based access, teams, notifications, document signing, an audit trail and a
+role-based access, teams, an audit trail and a
 data-retention job - so a new project starts from a working, secured
 application rather than from nothing.
 
@@ -47,10 +47,9 @@ role decides what they can do inside a team they belong to. An admin assigns a
 manager to a team by creating a `team_members` row with `team_role = 'manager'`.
 
 That is the whole domain. Everything else is cross-cutting: `user_invitations`,
-`documents` and `document_signatures`, `notifications` (+ types, templates,
-broadcasts), `site_content`, `enquiry_categories` / `enquiry_submissions`,
-`audit_logs`, plus Better Auth's `sessions` / `accounts` / `verifications` /
-`two_factor`.
+`site_content`, `enquiry_categories` / `enquiry_submissions`, `audit_logs`, the
+`ai_chat_*` tables, plus Better Auth's `sessions` / `accounts` /
+`verifications` / `two_factor`.
 
 **Adding a domain.** A new project's own tables go alongside these, not inside
 them. The pattern to copy is `admin-teams`: a table, a `*.repository.ts`, a
@@ -158,7 +157,7 @@ neither is load-bearing on its own.
 - **Dates are strings.** Postgres `DATE` columns come back as `'YYYY-MM-DD'` (a pg type-parser override), not `Date`. This is deliberate: a `Date` is a UTC timestamp that day-shifts across timezones and is not a valid React child. Calendar dates stay strings end to end and compare lexicographically. `TIME` columns are `'HH:MM:SS'` strings. Timestamps stay `Date`.
 - **The app timezone** is `NEXT_PUBLIC_APP_TIME_ZONE`, read once in `src/lib/timezone.ts`. Never use `new Date()` to decide what day it is.
 - **`updated_at` has no database trigger**, so every update that spreads a patch sets it explicitly, and strips `id` first so a caller-supplied `id` cannot rewrite the primary key.
-- **Field-level encryption** (`src/lib/crypto/field-encryption.ts`, key `FIELD_ENCRYPTION_KEY`) protects document signer names and signature images. The member read path swallows a decrypt failure; the staff path does not hide one.
+- **Field-level encryption** (`src/lib/crypto/field-encryption.ts`, key `FIELD_ENCRYPTION_KEY`) is available for any field a project needs encrypted at the application layer, on top of the database's own encryption at rest. It has no callers in the base itself - its only user was the signable-documents feature, removed from this repo - and is kept because it is domain-neutral, tested, and the first thing a project storing anything sensitive will reach for. It is unrelated to 2FA, which Better Auth encrypts under `BETTER_AUTH_SECRET`.
 - **Rich text is sanitized** server-side before rendering with `dangerouslySetInnerHTML`.
 - **Error handling.** Repositories and services wrap with `handleError`; actions return a typed `ServerApiResponse` via `handleServerApiError`. Both call `unstable_rethrow` first so Next's `redirect()` and `notFound()` escape the catch.
 

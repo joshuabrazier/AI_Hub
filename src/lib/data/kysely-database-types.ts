@@ -137,33 +137,6 @@ export type AiChatAttachmentKind =
   (typeof AI_CHAT_ATTACHMENT_KINDS)[keyof typeof AI_CHAT_ATTACHMENT_KINDS];
 
 // -------------------------------------------------------------------
-// Notification audience
-// Who a staff member can address a broadcast to. Managers are restricted to
-// teams they manage - that is enforced in the service, not here.
-// -------------------------------------------------------------------
-export const NOTIFICATION_AUDIENCE_TYPES = {
-  EVERYONE: "everyone",
-  TEAMS: "teams",
-  USERS: "users",
-} as const;
-
-export type NotificationAudienceType =
-  (typeof NOTIFICATION_AUDIENCE_TYPES)[keyof typeof NOTIFICATION_AUDIENCE_TYPES];
-
-export const NOTIFICATION_AUDIENCE_LABELS: Record<NotificationAudienceType, string> = {
-  [NOTIFICATION_AUDIENCE_TYPES.EVERYONE]: "Everyone",
-  [NOTIFICATION_AUDIENCE_TYPES.TEAMS]: "Specific teams",
-  [NOTIFICATION_AUDIENCE_TYPES.USERS]: "Specific people",
-};
-
-// Fallback notification categories, used only when the admin-managed
-// notification_types table is empty (a fresh database).
-export const DEFAULT_NOTIFICATION_TYPE_KEYS = {
-  GENERAL: "general",
-  ACCOUNT: "account",
-} as const;
-
-// -------------------------------------------------------------------
 // Site Content
 // Admin-editable content for the public site. One row per key.
 //
@@ -176,8 +149,6 @@ export const SITE_CONTENT_KEYS = {
   CONTACT: "contact",
   PRIVACY_POLICY: "privacy_policy",
   TERMS_AND_CONDITIONS: "terms_and_conditions",
-  // Not a public page - the wording signed as the media consent document.
-  MEDIA_CONSENT: "media_consent",
   // Home page blocks, each stored as JSON.
   LANDING_HERO: "landing_hero",
   LANDING_HIGHLIGHTS: "landing_highlights",
@@ -195,7 +166,6 @@ export const SITE_CONTENT_SHAPES = {
   [SITE_CONTENT_KEYS.CONTACT]: "json",
   [SITE_CONTENT_KEYS.PRIVACY_POLICY]: "html",
   [SITE_CONTENT_KEYS.TERMS_AND_CONDITIONS]: "html",
-  [SITE_CONTENT_KEYS.MEDIA_CONSENT]: "html",
   [SITE_CONTENT_KEYS.LANDING_HERO]: "json",
   [SITE_CONTENT_KEYS.LANDING_HIGHLIGHTS]: "json",
   [SITE_CONTENT_KEYS.LANDING_FEATURES]: "json",
@@ -229,9 +199,6 @@ export interface Users {
   // better-auth two-factor plugin: true once a TOTP setup has been verified.
   twoFactorEnabled: Generated<boolean>;
   phoneNumber: string | null;
-  // Per-notification-type email preferences, keyed by the type's key. An absent
-  // key means enabled (opt-out). Selected as an object, inserted as JSON text.
-  notificationPreferences: ColumnType<Record<string, boolean>, string, string>;
   // Data retention: set once this person's data has been de-identified
   // (irreversible). NULL = still identifiable.
   deidentifiedAt: Date | null;
@@ -399,142 +366,6 @@ export type SiteContent = Selectable<SiteContentTable>;
 export type NewSiteContent = Insertable<SiteContentTable>;
 export type UpdateSiteContent = Updateable<SiteContentTable>;
 
-// -------------------------------------------------------------------
-// Documents Table
-// The signable documents, as data rather than a hardcoded enum, so a project
-// can add one without a schema or code change. contentKey names the
-// site_content row holding the wording; bump `version` only when a change
-// should force everyone to re-sign.
-// -------------------------------------------------------------------
-export interface Documents {
-  id: string;
-  key: string;
-  title: string;
-  version: string;
-  contentKey: SiteContentKey;
-  isRequired: boolean;
-  orderBy: number;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type DocumentRecord = Selectable<Documents>;
-export type NewDocumentRecord = Insertable<Documents>;
-export type UpdateDocumentRecord = Updateable<Documents>;
-
-// -------------------------------------------------------------------
-// Document Signatures Table
-// One immutable record per document a user signs. The exact key, title,
-// version and text signed are snapshotted so later edits never change what
-// was already signed, and so history survives the document row being renamed
-// or deleted. signerName and signatureImage are field-encrypted.
-// -------------------------------------------------------------------
-export interface DocumentSignatures {
-  id: string;
-  userId: string;
-  documentId: string | null;
-  documentKey: string;
-  documentVersion: string;
-  documentTitle: string;
-  documentContent: string;
-  signerName: string;
-  signatureImage: string;
-  signedAt: Date;
-  ipAddress: string | null;
-  userAgent: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type DocumentSignature = Selectable<DocumentSignatures>;
-export type NewDocumentSignature = Insertable<DocumentSignatures>;
-export type UpdateDocumentSignature = Updateable<DocumentSignatures>;
-
-// -------------------------------------------------------------------
-// Notification Types - admin-managed list of categories. `key` is the stable
-// value stored on notifications, broadcasts and templates; `name` is the
-// label. Row types are suffixed "Record" to avoid clashing with the
-// NotificationType string union used elsewhere.
-// -------------------------------------------------------------------
-export interface NotificationTypes {
-  id: string;
-  key: string;
-  name: string;
-  description: string | null;
-  isActive: boolean;
-  orderBy: number;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type NotificationTypeRecord = Selectable<NotificationTypes>;
-export type NewNotificationTypeRecord = Insertable<NotificationTypes>;
-export type UpdateNotificationTypeRecord = Updateable<NotificationTypes>;
-
-// -------------------------------------------------------------------
-// Notification Templates
-// Reusable content a staff member can fill the compose form from, or save the
-// current draft into. Holds type/title/body only - the audience is chosen at
-// send time. System templates (fixed ids) back a built-in feature and cannot
-// be deleted.
-// -------------------------------------------------------------------
-export interface NotificationTemplates {
-  id: string;
-  createdBy: string | null;
-  name: string;
-  type: string;
-  title: string;
-  body: string | null;
-  isSystem: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type NotificationTemplate = Selectable<NotificationTemplates>;
-export type NewNotificationTemplate = Insertable<NotificationTemplates>;
-export type UpdateNotificationTemplate = Updateable<NotificationTemplates>;
-
-// -------------------------------------------------------------------
-// Notification Broadcasts
-// The message a staff member sends. Each recipient gets their own row in
-// `notifications` referencing the broadcast.
-// -------------------------------------------------------------------
-export interface NotificationBroadcasts {
-  id: string;
-  createdBy: string | null;
-  type: string;
-  audienceType: NotificationAudienceType;
-  audienceLabel: string | null;
-  title: string;
-  body: string | null;
-  createdAt: Date;
-}
-
-export type NotificationBroadcast = Selectable<NotificationBroadcasts>;
-export type NewNotificationBroadcast = Insertable<NotificationBroadcasts>;
-export type UpdateNotificationBroadcast = Updateable<NotificationBroadcasts>;
-
-// -------------------------------------------------------------------
-// Notifications
-// One row per recipient. Backs the portal's Notifications tab, the unread
-// badge in the nav, and the staff view. `readAt` is NULL until the recipient
-// reads it, and is what drives the unread count (served by a partial index).
-// -------------------------------------------------------------------
-export interface Notifications {
-  id: string;
-  userId: string;
-  broadcastId: string | null;
-  type: string;
-  title: string;
-  body: string | null;
-  readAt: Date | null;
-  createdAt: Date;
-}
-
-export type Notification = Selectable<Notifications>;
-export type NewNotification = Insertable<Notifications>;
-export type UpdateNotification = Updateable<Notifications>;
 
 // -------------------------------------------------------------------
 // Enquiry Categories - admin-managed options for the public enquiry form.
@@ -760,12 +591,6 @@ export interface Database {
   teamMembers: TeamMembers;
   userInvitations: UserInvitations;
   siteContent: SiteContentTable;
-  documents: Documents;
-  documentSignatures: DocumentSignatures;
-  notificationTypes: NotificationTypes;
-  notificationTemplates: NotificationTemplates;
-  notificationBroadcasts: NotificationBroadcasts;
-  notifications: Notifications;
   enquiryCategories: EnquiryCategories;
   enquirySubmissions: EnquirySubmissions;
   aiChatSubjects: AiChatSubjects;

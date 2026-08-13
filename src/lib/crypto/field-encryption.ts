@@ -6,11 +6,22 @@ import { envServer } from "../env-server";
 // -------------------------------------------------------------------
 // Field-level encryption
 //
-// Encrypts sensitive fields (e.g. signatures) before they're written to
-// the database, on top of the database's own encryption-at-rest. Uses
-// AES-256-GCM with a random IV per value plus an auth tag so tampering is
-// detected on decrypt. The key comes from FIELD_ENCRYPTION_KEY (base64,
-// 32 bytes). Never log the plaintext or the key.
+// Encrypts a sensitive field before it is written to the database, on top
+// of the database's own encryption-at-rest. AES-256-GCM with a random IV
+// per value plus an auth tag, so tampering is detected on decrypt. The key
+// comes from FIELD_ENCRYPTION_KEY (base64, 32 bytes). Never log the
+// plaintext or the key.
+//
+// NO CURRENT CALLERS. Its only user was the signable-documents feature,
+// which encrypted signature images and has since been removed. It is kept
+// deliberately rather than deleted with it: this is a reusable base, the
+// utility is domain-neutral and covered by its own tests, and a project
+// that stores anything sensitive will want it on day one. Deleting it
+// would also mean dropping FIELD_ENCRYPTION_KEY from the environment,
+// which is a breaking change for any deployment already carrying one.
+//
+// It is NOT related to two-factor authentication - Better Auth encrypts
+// the TOTP secret and backup codes itself, under BETTER_AUTH_SECRET.
 // -------------------------------------------------------------------
 
 const ALGORITHM = "aes-256-gcm";

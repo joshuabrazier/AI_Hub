@@ -1,13 +1,12 @@
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
-import { ArrowRight, Bell, LayoutPanelLeft, type LucideIcon } from "lucide-react";
+import { ArrowRight, LayoutPanelLeft, type LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader } from "@/components/ui/card";
 import { ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
-import type { DashboardBroadcastDTO, DashboardTeamDTO } from "./admin-dashboard.types";
+import type { DashboardTeamDTO } from "./admin-dashboard.types";
 
 // -------------------------------------------------------------------
 // Dashboard primitives
@@ -205,42 +204,6 @@ export function TeamsCard({ teams, totalTeams }: { teams: DashboardTeamDTO[]; to
             </p>
           )}
         </>
-      )}
-    </DashboardCard>
-  );
-}
-
-// -------------------------------------------------------------------
-// Recent broadcasts
-//
-// Titles and audiences only. The stored body is rich text and is rendered
-// (sanitised) on the notifications page, so none of it is put on this one.
-// -------------------------------------------------------------------
-export function RecentBroadcastsCard({ broadcasts }: { broadcasts: DashboardBroadcastDTO[] }) {
-  return (
-    <DashboardCard
-      icon={Bell}
-      title="Recent notifications"
-      action={<ViewAllButton href={ROUTES.ADMIN_NOTIFICATIONS} label="View all" />}
-    >
-      {broadcasts.length === 0 ? (
-        <EmptyState icon={Bell} title="Nothing sent yet" subtitle="Messages you send appear here" />
-      ) : (
-        <ul className="space-y-3">
-          {broadcasts.map((broadcast) => (
-            <li key={broadcast.id} className="flex items-start gap-3">
-              <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <Bell size={16} aria-hidden="true" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">{broadcast.title}</p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {broadcast.audienceLabel} · {formatDistanceToNow(broadcast.createdAt, { addSuffix: true })}
-                </p>
-              </div>
-            </li>
-          ))}
-        </ul>
       )}
     </DashboardCard>
   );

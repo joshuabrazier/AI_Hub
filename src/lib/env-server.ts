@@ -19,7 +19,8 @@ const serverEnvSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
 
   // Base64-encoded 32-byte key for field-level encryption of sensitive data
-  // (e.g. signatures). Generate with: openssl rand -base64 32
+  // at the application layer. No callers in the base - see field-encryption.ts.
+  // Generate with: openssl rand -base64 32
   FIELD_ENCRYPTION_KEY: z.string().min(44),
 
   EMAIL_FROM_ADDRESS: z.string().email(),

@@ -1,19 +1,6 @@
-import type { NotificationTypeRecord, User } from "@/lib/data/kysely-database-types";
+import type { User } from "@/lib/data/kysely-database-types";
 
-import type { NotificationPreferenceOptionDTO, PortalAccountResponseDTO } from "./portal-account.types";
-
-// -------------------------------------------------------------------
-// Map an admin-managed notification type to the toggle the member sees.
-// -------------------------------------------------------------------
-export function mapDBNotificationTypeToPreferenceOptionDTO(
-  notificationType: NotificationTypeRecord,
-): NotificationPreferenceOptionDTO {
-  return {
-    key: notificationType.key,
-    name: notificationType.name,
-    description: notificationType.description,
-  };
-}
+import type { PortalAccountResponseDTO } from "./portal-account.types";
 
 // -------------------------------------------------------------------
 // Map the signed-in member's own user row to the account DTO.
@@ -26,16 +13,11 @@ export function mapDBNotificationTypeToPreferenceOptionDTO(
 // the auth columns stay on the server - none of them is editable here, so
 // sending them would only invite a client to try.
 // -------------------------------------------------------------------
-export function mapDBUserToPortalAccountResponseDTO(
-  user: User,
-  notificationTypes: NotificationTypeRecord[],
-): PortalAccountResponseDTO {
+export function mapDBUserToPortalAccountResponseDTO(user: User): PortalAccountResponseDTO {
   return {
     name: user.name,
     preferredName: user.preferredName ?? "",
     email: user.email,
     phoneNumber: user.phoneNumber ?? "",
-    notificationPreferences: user.notificationPreferences ?? {},
-    notificationTypes: notificationTypes.map(mapDBNotificationTypeToPreferenceOptionDTO),
   };
 }

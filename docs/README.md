@@ -30,6 +30,6 @@ contributor and agent quick reference.
    set `AZURE_WEBAPP_NAME`.
 
 Then add the project's own domain. The base carries none: users, teams,
-invitations, notifications, documents, audit and retention are all
+invitations, audit and retention are all
 domain-neutral, and nothing above them presumes what the project delivers. See
 "Adding a domain" in [architecture.md](architecture.md) for the shape to follow.

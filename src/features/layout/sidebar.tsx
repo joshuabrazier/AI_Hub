@@ -14,28 +14,22 @@ import { cn } from "@/lib/utils";
 
 // -------------------------------------------------------------------
 // A single top-level link row.
-//
-// `alert` draws the attention dot. NavLink.badge marks WHICH item it belongs
-// to ("notifications"); the provider that supplies the unread count lands in a
-// later stage, so nothing switches it on yet.
 // -------------------------------------------------------------------
 function NavLinkRow({
   entry,
   collapsed,
   active,
-  alert = false,
 }: {
   entry: NavLinkEntry;
   collapsed: boolean;
   active: boolean;
-  alert?: boolean;
 }) {
   const Icon = entry.icon;
 
   const link = (
     <Link
       href={entry.href}
-      aria-label={alert ? `${entry.label} (action needed)` : entry.label}
+      aria-label={entry.label}
       aria-current={active ? "page" : undefined}
       className={cn(
         "group flex h-10 items-center rounded-md px-3 transition-all duration-200",
@@ -45,9 +39,6 @@ function NavLinkRow({
     >
       <div className="relative flex size-10 shrink-0 items-center justify-center">
         <Icon size={20} aria-hidden="true" />
-        {alert && (
-          <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-red-500 ring-2 ring-primary dark:ring-sidebar" />
-        )}
       </div>
       {!collapsed && <span className="ml-2 text-sm font-medium whitespace-nowrap">{entry.label}</span>}
       <NavigationPendingReporter />

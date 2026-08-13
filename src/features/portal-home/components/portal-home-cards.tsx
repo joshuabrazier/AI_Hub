@@ -1,15 +1,13 @@
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
-import { ArrowRight, Bell, Files, LayoutPanelLeft, type LucideIcon, UserCircle } from "lucide-react";
+import { ArrowRight, LayoutPanelLeft, type LucideIcon, Sparkles, UserCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader } from "@/components/ui/card";
 import { TEAM_ROLE_LABELS } from "@/lib/data/kysely-database-types";
 import { ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
-import type { PortalNotificationDTO, PortalTeamDTO } from "../portal-home.types";
+import type { PortalTeamDTO } from "../portal-home.types";
 
 // The brand chip used on card headers, matching the staff dashboard so both
 // areas read as one product.
@@ -100,90 +98,14 @@ export function YourTeamsCard({ teams }: { teams: PortalTeamDTO[] }) {
 }
 
 // -------------------------------------------------------------------
-// Recent notifications
-//
-// Titles only. The stored body is rich text and is rendered on the
-// notifications page, which sanitises it; nothing here needs it.
-// -------------------------------------------------------------------
-export function RecentNotificationsCard({
-  notifications,
-  unreadCount,
-}: {
-  notifications: PortalNotificationDTO[];
-  unreadCount: number;
-}) {
-  return (
-    <Card className="shadow-sm">
-      <CardHeaderRow
-        icon={Bell}
-        title="Notifications"
-        subtitle={unreadCount > 0 ? `${unreadCount} unread` : "All caught up"}
-        action={
-          <Button variant="outline" size="sm" asChild>
-            <Link href={ROUTES.PORTAL_NOTIFICATIONS}>View all</Link>
-          </Button>
-        }
-      />
-
-      <CardContent>
-        {notifications.length === 0 ? (
-          <EmptyState icon={Bell} title="Nothing yet" subtitle="Messages for you appear here" />
-        ) : (
-          <ul className="space-y-3">
-            {notifications.map((notification) => (
-              <li key={notification.id} className="flex items-start gap-3">
-                <span
-                  className={cn(
-                    "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full",
-                    notification.isUnread
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-primary/10 text-primary",
-                  )}
-                >
-                  <Bell size={16} aria-hidden="true" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p
-                    className={cn(
-                      "truncate text-sm text-foreground",
-                      notification.isUnread ? "font-semibold" : "font-medium",
-                    )}
-                  >
-                    {notification.title}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {formatDistanceToNow(notification.createdAt, { addSuffix: true })}
-                  </p>
-                </div>
-                {notification.isUnread && (
-                  <Badge variant="success" className="shrink-0">
-                    New
-                  </Badge>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// -------------------------------------------------------------------
 // Quick links
 // -------------------------------------------------------------------
 const QUICK_LINKS: { label: string; description: string; href: string; icon: LucideIcon }[] = [
   {
-    label: "Notifications",
-    description: "Messages waiting for you",
-    href: ROUTES.PORTAL_NOTIFICATIONS,
-    icon: Bell,
-  },
-  {
-    label: "Documents",
-    description: "Read and sign what is outstanding",
-    href: ROUTES.PORTAL_DOCUMENTS,
-    icon: Files,
+    label: "AI chat",
+    description: "Ask a question and get an answer",
+    href: ROUTES.PORTAL_AI_CHAT,
+    icon: Sparkles,
   },
   {
     label: "Account",

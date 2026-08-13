@@ -1,6 +1,6 @@
 import PortalPage from "@/features/layout/portal-page";
 
-import { QuickLinksCard, RecentNotificationsCard, YourTeamsCard } from "./components/portal-home-cards";
+import { QuickLinksCard, YourTeamsCard } from "./components/portal-home-cards";
 import { getPortalHomeService } from "./portal-home.service";
 
 // -------------------------------------------------------------------
@@ -20,14 +20,7 @@ export default async function PortalHomePage() {
       description="Your teams and anything waiting for you."
     >
       <div className="grid items-start gap-6 lg:grid-cols-2">
-        <RecentNotificationsCard
-          notifications={home.notifications}
-          unreadCount={home.unreadNotificationCount}
-        />
         <YourTeamsCard teams={home.teams} />
-      </div>
-
-      <div className="mt-6">
         <QuickLinksCard />
       </div>
     </PortalPage>

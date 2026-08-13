@@ -61,7 +61,7 @@ Set these once on the App Service - the workflow does not manage them:
 ## CRITICAL: never rotate these on a live app
 
 `BETTER_AUTH_SECRET` and `FIELD_ENCRYPTION_KEY` decrypt existing encrypted fields
-(document signer names and signature images) and enrolled 2FA secrets. If you
+and enrolled 2FA secrets. If you
 change either in Azure, that data can no longer be decrypted and 2FA breaks.
 Treat them as permanent once real data exists.
 

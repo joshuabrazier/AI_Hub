@@ -134,7 +134,7 @@ precompiled and stable, then shuts it down when the run finishes.
 - Install the browser once: `pnpm exec playwright install chromium`
 - Stop `pnpm dev` first - the built server uses the same port.
 - The runner REFUSES to start against a non-local database. The suite creates
-  and deletes users, teams and notifications in whatever `.env` points at, so copying a
+  and deletes users and teams in whatever `.env` points at, so copying a
   production `.env` in would write to live data. Override with
   `E2E_ALLOW_REMOTE_DB=true` only for a database you are certain is disposable.
 - Run: `pnpm test:e2e` (routes through `tests/run-e2e.mjs`, which forces plain, non-animated output so Windows terminals do not garble it).

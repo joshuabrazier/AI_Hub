@@ -1,13 +1,10 @@
 import { EmailMessage } from "@azure/communication-email";
-import { ROUTES } from "@/lib/routes";
-import { envClient } from "../env-client";
 import { envServer } from "../env-server";
 import { handleError } from "../handle-errors";
 import { getEmailClient } from "./email-client";
 import { AdminUserInvitationEmailTemplate } from "./templates/admin-user-invitation-email-template";
 import { EmailChangeNotificationEmailTemplate } from "./templates/email-change-notification-email-template";
 import { EnquiryEmailData, EnquiryEmailTemplate } from "./templates/enquiry-email-template";
-import { NotificationEmailTemplate } from "./templates/notification-email-template";
 import { PasswordResetEmailTemplate } from "./templates/password-reset-email-template";
 import { TwoFactorOtpEmailTemplate } from "./templates/two-factor-otp-email-template";
 import { VerifyEmailTemplate } from "./templates/verify-email-template";
@@ -135,26 +132,6 @@ export async function sendTwoFactorOtpEmail({ toAddress, otp, validMinutes }: Se
     throw handleError("sendTwoFactorOtpEmail", error);
   }
 }
-
-type SendNotificationEmailParams = {
-  toAddress: string;
-  title: string;
-  bodyHtml: string | null;
-};
-
-export async function sendNotificationEmail({ toAddress, title, bodyHtml }: SendNotificationEmailParams) {
-  try {
-    const portalUrl = new URL(ROUTES.PORTAL, envClient.NEXT_PUBLIC_APP_URL).toString();
-    return await sendEmail({
-      toAddress,
-      subject: title,
-      html: NotificationEmailTemplate({ title, bodyHtml, portalUrl }),
-    });
-  } catch (error) {
-    throw handleError("sendNotificationEmail", error);
-  }
-}
-
 
 type SendEnquiryEmailParams = {
   toAddress: string;

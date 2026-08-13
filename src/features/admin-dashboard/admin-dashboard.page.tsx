@@ -6,7 +6,7 @@ import { USER_ROLES, USER_ROLE_LABELS } from "@/lib/data/kysely-database-types";
 import { ROUTES } from "@/lib/routes";
 
 import { getAdminDashboardService } from "./admin-dashboard.service";
-import { RecentBroadcastsCard, StatTile, TeamsCard } from "./dashboard-cards";
+import { StatTile, TeamsCard } from "./dashboard-cards";
 
 // -------------------------------------------------------------------
 // Admin dashboard
@@ -57,9 +57,8 @@ export default async function AdminDashboardPage() {
         />
       </div>
 
-      <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
+      <div className="mt-6 grid items-start gap-6">
         <TeamsCard teams={dashboard.teams} totalTeams={dashboard.stats.activeTeams} />
-        <RecentBroadcastsCard broadcasts={dashboard.broadcasts} />
       </div>
     </PortalPage>
   );

@@ -6,7 +6,7 @@ detail is in `docs/`.
 ## What this is
 
 A **reusable portal base**: Next.js 16 (App Router) with authentication,
-role-based access, teams and notifications already built. Projects are started
+role-based access and teams already built. Projects are started
 FROM this repo rather than from scratch.
 
 It is deliberately a **blank canvas** below that line: there is no delivery or
@@ -52,8 +52,7 @@ team_members   (team_id, user_id, team_role)  MANY-TO-MANY and optional
 - `/manage` managers, scoped to the teams an admin assigned them
 - `/portal` members, their own data. **No id in the URL** - the session is the identity.
 
-Everything else is cross-cutting and domain-neutral: invitations, notifications
-(types, templates, broadcasts, per-person preferences), signable documents, site
+Everything else is cross-cutting and domain-neutral: invitations, site
 content, enquiry categories, the audit log and the retention job.
 
 **AI chat** is the one feature with its own data:
@@ -133,7 +132,8 @@ serving bytes, so the actions rule never applied to it.)
 - **With prompt caching on, `inputTokens` is only the UNCACHED remainder.** Total input is `inputTokens + cacheReadTokens + cacheWriteTokens`. Measured live: a cached turn reported `inputTokens: 3` for a request that actually sent 8,207. Use `totalInputTokens` off the DTO; reading `inputTokens` alone is how a working cache gets mistaken for a broken counter.
 - **The chat cache point goes LAST in the request**, so the cached prefix is the whole conversation. Opus 4.6 needs 4,096 tokens minimum (below that it silently does not cache, which is fine) and has a **5-minute TTL with no 1-hour option** - that short TTL is why compaction exists alongside caching.
 - **Anthropic's server-side compaction is not reachable over Bedrock Converse** - it is a Messages-API beta needing an `anthropic-beta` header, and Converse cannot send one. `compactIfNeeded` in the chat service is the client-side equivalent. Compaction only changes what is SENT; the original turns stay in the database and stay readable.
-- **Never change `BETTER_AUTH_SECRET` or `FIELD_ENCRYPTION_KEY` on a live environment** - it breaks decryption and 2FA. `NEXT_PUBLIC_APP_TITLE` is the TOTP issuer, so changing it relabels every enrolled authenticator.
+- **Never change `BETTER_AUTH_SECRET` on a live environment** - it invalidates sessions and breaks enrolled 2FA, which Better Auth encrypts under it. `NEXT_PUBLIC_APP_TITLE` is the TOTP issuer, so changing it relabels every enrolled authenticator.
+- **`FIELD_ENCRYPTION_KEY` has no callers in the base** (`src/lib/crypto/field-encryption.ts` is kept as domain-neutral, tested infrastructure - its only user was signable documents, removed). It is unrelated to 2FA. The moment a project encrypts its first value with it, it becomes permanent: rotating it makes that value unreadable.
 
 ## Writing style
 

@@ -30,9 +30,6 @@ export const AUDIT_ACTIONS = {
   TEAM_MEMBER_ROLE_CHANGED: "team.member_role_changed",
   TEAM_MEMBER_REMOVED: "team.member_removed",
 
-  // Documents
-  DOCUMENT_SIGNED: "document.signed",
-
   // AI chat. Reading somebody's request payload means reading their private
   // conversation, so the act is recorded with both parties named.
   AI_CHAT_REQUEST_VIEWED: "ai_chat.request_viewed",
@@ -51,7 +48,6 @@ export const AUDIT_ENTITY_TYPES = {
   USER: "user",
   TEAM: "team",
   TEAM_MEMBER: "team_member",
-  DOCUMENT: "document",
   AI_CHAT_REQUEST: "ai_chat_request",
   AUTH: "auth",
 } as const;

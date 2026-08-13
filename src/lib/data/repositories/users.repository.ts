@@ -125,51 +125,6 @@ export async function getUsersByIdsRepo(userIds: string[], db: DBClient = databa
 }
 
 // -------------------------------------------------------------------
-// The per-type email preferences for a set of users, keyed by user id. A
-// user opts out of a notification type by setting that type's key to false;
-// an absent key means opted in, so a user with no preferences saved still
-// receives everything. Used to drop recipients who muted the type being sent.
-// -------------------------------------------------------------------
-export async function getNotificationPreferencesByUserIdsRepo(
-  userIds: string[],
-  db: DBClient = database,
-): Promise<Map<string, Record<string, boolean>>> {
-  try {
-    if (userIds.length === 0) return new Map();
-
-    const rows = await db
-      .selectFrom("users")
-      .select(["id", "notificationPreferences"])
-      .where("id", "in", userIds)
-      .execute();
-
-    return new Map(rows.map((row) => [row.id, row.notificationPreferences ?? {}]));
-  } catch (error) {
-    throw handleError("getNotificationPreferencesByUserIdsRepo", error);
-  }
-}
-
-// -------------------------------------------------------------------
-// Replace a user's notification preferences. The column is JSONB, so the
-// serialisation is done here rather than at each call site.
-// -------------------------------------------------------------------
-export async function updateUserNotificationPreferencesRepo(
-  id: string,
-  notificationPreferences: Record<string, boolean>,
-  db: DBClient = database,
-): Promise<void> {
-  try {
-    await db
-      .updateTable("users")
-      .set({ notificationPreferences: JSON.stringify(notificationPreferences), updatedAt: new Date() })
-      .where("id", "=", id)
-      .execute();
-  } catch (error) {
-    throw handleError("updateUserNotificationPreferencesRepo", error);
-  }
-}
-
-// -------------------------------------------------------------------
 // Update a user by id. Undefined if the id does not exist.
 //
 // `role` and `isActive` are server-assigned: they may only be set from a

@@ -61,9 +61,6 @@ export const AUDIT_ACTION_META: Record<string, { label: string; category: string
   [AUDIT_ACTIONS.TEAM_UPDATED]: { label: "Team updated", category: "Teams" },
   [AUDIT_ACTIONS.TEAM_STATUS_CHANGED]: { label: "Team enabled/disabled", category: "Teams" },
 
-  // Documents
-  [AUDIT_ACTIONS.DOCUMENT_SIGNED]: { label: "Document signed", category: "Documents" },
-
   // AI chat. Filed under Access rather than a category of its own: what it
   // records is one person reading another's private content, which is the
   // same question an admin is asking when they filter to Access.

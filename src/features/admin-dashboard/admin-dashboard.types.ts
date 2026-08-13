@@ -29,18 +29,6 @@ export type DashboardTeamDTO = {
   memberCount: number;
 };
 
-// A message that has been sent. Titles only: the stored body is rich text and
-// is rendered (sanitised) on the notifications page, so none of it reaches
-// this one.
-export type DashboardBroadcastDTO = {
-  id: string;
-  title: string;
-  // Who it went to. Broadcasts store a display label; when one is missing the
-  // audience type's own label stands in, so this is never blank.
-  audienceLabel: string;
-  createdAt: Date;
-};
-
 export type AdminDashboardDTO = {
   // What to greet the admin by, taken from the session. Null when their
   // account has no usable name.
@@ -48,5 +36,4 @@ export type AdminDashboardDTO = {
   stats: DashboardStatsDTO;
   // Capped for display; `stats.activeTeams` is the true total.
   teams: DashboardTeamDTO[];
-  broadcasts: DashboardBroadcastDTO[];
 };

@@ -1,7 +1,6 @@
 import { AdminUserInvitationEmailTemplate } from "@/lib/email/templates/admin-user-invitation-email-template";
 import { EmailChangeNotificationEmailTemplate } from "@/lib/email/templates/email-change-notification-email-template";
 import { EnquiryEmailTemplate } from "@/lib/email/templates/enquiry-email-template";
-import { NotificationEmailTemplate } from "@/lib/email/templates/notification-email-template";
 import { PasswordResetEmailTemplate } from "@/lib/email/templates/password-reset-email-template";
 import { TwoFactorOtpEmailTemplate } from "@/lib/email/templates/two-factor-otp-email-template";
 import { VerifyEmailTemplate } from "@/lib/email/templates/verify-email-template";
@@ -26,9 +25,6 @@ const SAMPLE = {
   verifyUrl: "https://portal.example/verify-email?token=sample-token",
   portalUrl: "https://portal.example/portal",
 };
-
-const NOTIFICATION_BODY =
-  "<p>Hi there,</p><p>We have added a document to your portal that needs your signature. It only takes a moment, and you can read it in full before you sign.</p><p>Thanks!</p>";
 
 // -------------------------------------------------------------------
 // Build every email preview from its real template, so this gallery always
@@ -95,18 +91,6 @@ export function buildEmailPreviews(): EmailPreview[] {
       trigger: "When an email change is requested, sent to the old address as a security heads-up.",
       subject: "Your account email is being changed",
       html: EmailChangeNotificationEmailTemplate("new.address@example.com"),
-    },
-    {
-      key: "notification",
-      name: "Notification",
-      audience: "Whoever a notification was addressed to",
-      trigger: "When staff send a notification, to each recipient who has not muted that type.",
-      subject: "Thursday's session is cancelled",
-      html: NotificationEmailTemplate({
-        title: "Thursday's session is cancelled",
-        bodyHtml: NOTIFICATION_BODY,
-        portalUrl: SAMPLE.portalUrl,
-      }),
     },
     {
       key: "new-enquiry",

@@ -6,7 +6,7 @@ import { USER_ROLES, type UserRole } from "@/lib/data/kysely-database-types";
 // Three authenticated areas, each with its own layout and nav:
 //   /admin   - admins. Everything.
 //   /manage  - managers. Scoped to the teams they have been assigned to.
-//   /portal  - members. Their own teams, documents, messages and account.
+//   /portal  - members. Their own teams, AI chat and account.
 //
 // The member portal deliberately carries NO id in its path. The previous
 // design namespaced it as /client/[clientId], which had to be checked against
@@ -42,8 +42,6 @@ export const ROUTES = {
   ADMIN_USERS: "/admin/users",
   ADMIN_TEAMS: "/admin/teams",
   ADMIN_AI_CHAT: "/admin/ai-chat",
-  ADMIN_NOTIFICATIONS: "/admin/notifications",
-  ADMIN_DOCUMENTS: "/admin/documents",
   ADMIN_CONTENT: "/admin/content",
   ADMIN_HOME_PAGE: "/admin/home-page",
   ADMIN_EMAILS: "/admin/emails",
@@ -58,14 +56,11 @@ export const ROUTES = {
   MANAGE: "/manage",
   MANAGE_TEAMS: "/manage/teams",
   MANAGE_AI_CHAT: "/manage/ai-chat",
-  MANAGE_NOTIFICATIONS: "/manage/notifications",
   manageTeam: (teamId: string) => `/manage/teams/${teamId}`,
 
   // Member portal
   PORTAL: "/portal",
   PORTAL_AI_CHAT: "/portal/ai-chat",
-  PORTAL_NOTIFICATIONS: "/portal/notifications",
-  PORTAL_DOCUMENTS: "/portal/documents",
   PORTAL_ACCOUNT: "/portal/account",
 
   // Errors

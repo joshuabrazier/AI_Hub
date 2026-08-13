@@ -18,9 +18,8 @@ export async function getAllSiteContentRepo(db: DBClient = database): Promise<Si
 // -------------------------------------------------------------------
 // Get a single content row by its key. Returns undefined if not found.
 //
-// `db` matters here: the signing flow snapshots the wording this returns into
-// the immutable document_signatures row, so the read has to be able to join
-// the signing transaction and see the same text the insert records.
+// `db` is injectable so a caller inside a transaction reads the same text its
+// own writes will record, rather than a value that changed underneath it.
 // -------------------------------------------------------------------
 export async function getSiteContentByKeyRepo(
   contentName: SiteContentKey,

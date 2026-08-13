@@ -7,12 +7,12 @@ outside the repo, the known findings and follow-ups, and incident response.
 ## What we are protecting
 
 As shipped, the base holds account data (names, email addresses, phone numbers),
-team membership - which is what every authorization decision turns on - signed
-documents including the signature image, and **AI chat transcripts and their
-attachments**, which can contain anything a user chose to type, paste or upload.
-It is written to be subject to the Australian Privacy Principles. The security model assumes an authenticated
-attacker (a stolen or shared session) as well as an anonymous one, and treats
-credentials and signatures as the crown jewels.
+team membership - which is what every authorization decision turns on - and
+**AI chat transcripts and their attachments**, which can contain anything a user
+chose to type, paste or upload. It is written to be subject to the Australian
+Privacy Principles. The security model assumes an authenticated attacker (a
+stolen or shared session) as well as an anonymous one, and treats credentials
+and chat content as the crown jewels.
 
 **A project that adds more sensitive data than this must revisit this document.**
 Health, financial or children's data raises the stakes on encryption, retention
@@ -84,12 +84,15 @@ Configured in `src/lib/auth/auth.ts` (Better Auth), backed by Postgres.
 
 ## Data protection
 
-- **Field-level encryption**: document signer names and signature images are
-  encrypted at rest with **AES-256-GCM** (`src/lib/crypto/field-encryption.ts`),
-  a fresh random 12-byte IV per value and a pinned 128-bit auth tag so tampered
-  or truncated ciphertext is rejected. The key is `FIELD_ENCRYPTION_KEY`. Values
-  are decrypted server-side only. A value that cannot be decrypted is never
-  silently overwritten with a blank.
+- **Field-level encryption** is available for any field a project needs
+  encrypted at the application layer, on top of the database's own encryption at
+  rest: **AES-256-GCM** (`src/lib/crypto/field-encryption.ts`), a fresh random
+  12-byte IV per value and a pinned 128-bit auth tag so tampered or truncated
+  ciphertext is rejected. The key is `FIELD_ENCRYPTION_KEY`. It has **no callers
+  in the base itself** - its only user was the signable-documents feature, since
+  removed - and is kept because it is domain-neutral, tested, and the first
+  thing a project storing anything sensitive will reach for. It is unrelated to
+  2FA, which Better Auth encrypts under `BETTER_AUTH_SECRET`.
 - **Rich text is sanitized**: admin-authored HTML (TipTap) is sanitized on the
   server (`src/lib/sanitize-rich-text.ts`) before any `dangerouslySetInnerHTML`,
   preventing stored XSS from editable content.
@@ -187,7 +190,6 @@ in production; in development it also allows localhost, LAN ranges, and
   invitation sent and cancelled, and de-identification.
 - Team membership changes, which are authorization changes and are recorded as
   carefully as a role change.
-- Document signing.
 
 When a project audits a field that is sensitive or encrypted, record only *that*
 it changed, never the value - otherwise the trail becomes a plaintext copy of
@@ -206,15 +208,16 @@ below), default 180 days.
 - `BETTER_AUTH_SECRET` can be rotated, but doing so forces every user to sign in
   again.
 - **`FIELD_ENCRYPTION_KEY` must never change** once data is encrypted with it.
-  Rotating it makes every existing signature, and anything else a project has
-  field-encrypted, permanently unreadable. A rotation would require a
-  decrypt-with-old / re-encrypt-with-new
-  migration. Treat it as permanent once real data exists. The same caution applies
-  to enrolled 2FA secrets under `BETTER_AUTH_SECRET`.
+  Nothing in the base encrypts anything today, so on a fresh deployment it is
+  free to set - but the moment a project field-encrypts its first value,
+  rotating the key makes that value permanently unreadable, and a rotation then
+  requires a decrypt-with-old / re-encrypt-with-new migration. Treat it as
+  permanent once real data exists. The same caution applies to enrolled 2FA
+  secrets, which sit under `BETTER_AUTH_SECRET` rather than this key.
 
 ## Data retention and privacy
 
-Personal data and signed documents are governed by a retention and
+Personal data is governed by a retention and
 de-identification policy (APP 11.2). A gated monthly job de-identifies dormant
 accounts and prunes the audit log.
 
@@ -278,7 +281,6 @@ security program. Status reflects the current code.
   `import "server-only"`; every module holding a secret is guarded.
 - Update paths strip `id` before spreading a caller-supplied patch, so a supplied
   `id` cannot rewrite a primary key.
-- Notification recipient queries deduplicate in the repository, so a person in two
   addressed teams receives one message rather than two.
 - The end-to-end runner refuses to run against a non-local database.
 

@@ -53,7 +53,7 @@ export type EmailLayoutOptions = {
   intro: string;
   // Optional pre-sanitised rich-text HTML, inserted verbatim after the intro.
   // The caller MUST have already run this through sanitizeRichText - it is the
-  // one slot in this layout that is not escaped (used for notification bodies).
+  // one slot in this layout that is not escaped. No template currently uses it.
   bodyHtml?: string;
   // Optional "label / value" details panel (e.g. who invited you)
   info?: EmailInfoRow[];

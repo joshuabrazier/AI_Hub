@@ -2,7 +2,6 @@ import "server-only";
 
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
-import { getNotificationBroadcastsRepo } from "@/lib/data/repositories/notification-broadcasts.repository";
 import { getTeamMemberCountsRepo } from "@/lib/data/repositories/team-members.repository";
 import { getActiveTeamsRepo } from "@/lib/data/repositories/teams.repository";
 import {
@@ -12,16 +11,12 @@ import {
 import { getActiveStaffUsersRepo, getMemberUsersRepo } from "@/lib/data/repositories/users.repository";
 import { handleError } from "@/lib/handle-errors";
 
-import {
-  mapDBBroadcastToDashboardBroadcastDTO,
-  mapDBTeamToDashboardTeamDTO,
-} from "./admin-dashboard.mappers";
+import { mapDBTeamToDashboardTeamDTO } from "./admin-dashboard.mappers";
 import { AdminDashboardDTO } from "./admin-dashboard.types";
 
 // How much of each list the dashboard shows. The full lists have their own
-// pages; these bounds keep the landing page a summary.
+// pages; this bound keeps the landing page a summary.
 const MAX_TEAMS_SHOWN = 6;
-const MAX_BROADCASTS = 5;
 
 // -------------------------------------------------------------------
 // Admin dashboard service
@@ -42,19 +37,14 @@ export async function getAdminDashboardService(): Promise<AdminDashboardDTO> {
   try {
     const user = await requireUserRole([USER_ROLES.ADMIN]);
 
-    const [teams, teamMemberCounts, members, staff, staffInvitations, memberInvitations, broadcasts] =
-      await Promise.all([
-        getActiveTeamsRepo(),
-        getTeamMemberCountsRepo(),
-        getMemberUsersRepo(),
-        getActiveStaffUsersRepo(),
-        getPendingStaffUserInvitationsRepo(),
-        getPendingMemberUserInvitationsRepo(),
-        // No `createdBy` filter, deliberately: an admin sees what the whole
-        // organisation has sent. A manager's sent history is scoped to their own
-        // messages, and that scoping belongs to the manager's own service.
-        getNotificationBroadcastsRepo({ limit: MAX_BROADCASTS }),
-      ]);
+    const [teams, teamMemberCounts, members, staff, staffInvitations, memberInvitations] = await Promise.all([
+      getActiveTeamsRepo(),
+      getTeamMemberCountsRepo(),
+      getMemberUsersRepo(),
+      getActiveStaffUsersRepo(),
+      getPendingStaffUserInvitationsRepo(),
+      getPendingMemberUserInvitationsRepo(),
+    ]);
 
     // Teams with no members are absent from the counts, so a miss is zero.
     const countByTeamId = new Map(teamMemberCounts.map((row) => [row.teamId, row.count]));
@@ -76,7 +66,6 @@ export async function getAdminDashboardService(): Promise<AdminDashboardDTO> {
         pendingInvitations: staffInvitations.length + memberInvitations.length,
       },
       teams: teamSummaries.slice(0, MAX_TEAMS_SHOWN),
-      broadcasts: broadcasts.map(mapDBBroadcastToDashboardBroadcastDTO),
     };
   } catch (error) {
     throw handleError("getAdminDashboardService", error);
