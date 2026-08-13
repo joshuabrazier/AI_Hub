@@ -21,6 +21,7 @@ import {
   type AiChatSubjectDetailDTO,
 } from "../ai-chat.types";
 import { AiChatAttachmentList } from "./ai-chat-attachment-list";
+import { AiChatMarkdown } from "./ai-chat-markdown";
 
 // -------------------------------------------------------------------
 // AiChatThread
@@ -448,10 +449,15 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
 // -------------------------------------------------------------------
 // One turn.
 //
-// `content` is rendered as a TEXT NODE, never as HTML. Both halves of a
-// conversation are untrusted: the user's because they typed it, the model's
-// because a model repeats back whatever it was given. `whitespace-pre-wrap`
-// preserves the line breaks and indentation without giving up that escaping.
+// Neither half is ever rendered as HTML. Both are untrusted: the user's
+// because they typed it, the model's because a model repeats back whatever
+// it was given.
+//
+// The user's turn is a TEXT NODE with `whitespace-pre-wrap`, which keeps
+// their line breaks and indentation without giving up React's escaping.
+// The model's turn is markdown, rendered to React elements rather than to
+// an HTML string - see AiChatMarkdown, where that distinction is the whole
+// argument for why this is still safe.
 // -------------------------------------------------------------------
 function MessageRow({ message, isStreaming = false }: { message: AiChatMessageDTO; isStreaming?: boolean }) {
   const isUser = message.role === AI_CHAT_ROLES.USER;
@@ -476,8 +482,19 @@ function MessageRow({ message, isStreaming = false }: { message: AiChatMessageDT
           <p className="mt-1 text-sm text-muted-foreground" role="status">
             Thinking...
           </p>
-        ) : (
+        ) : isUser ? (
+          // The user's own words, exactly as typed. Deliberately NOT
+          // markdown: somebody who writes **stars** meant stars, and
+          // reformatting a person's own message is both surprising and a
+          // way to make two different inputs render identically. Still a
+          // text node, so it is escaped by React as it always was.
           <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{message.content}</p>
+        ) : (
+          // The model's half, rendered as markdown - which is the format it
+          // writes in. Renders to React elements, never to an HTML string;
+          // see the note in AiChatMarkdown for why that distinction is the
+          // whole security argument.
+          <AiChatMarkdown content={message.content} className="mt-1" />
         )}
 
         {/* What was sent with this turn. No remove handler: once a file is

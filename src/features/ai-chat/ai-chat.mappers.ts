@@ -25,9 +25,13 @@ export function mapDBAiChatSubjectToDTO(subject: AiChatSubjectWithCount): AiChat
 // NOT sanitised here and must never be rendered with
 // dangerouslySetInnerHTML: both halves of a conversation are untrusted
 // text - the user's half because they typed it, the model's half because a
-// model will repeat back whatever it was given - so it is rendered as a
-// text node and the browser escapes it. That is why there is no rich-text
-// path in this feature at all.
+// model will repeat back whatever it was given.
+//
+// The user's half renders as a text node. The model's half goes through
+// AiChatMarkdown, which is NOT an exception to that: it parses to an AST
+// and renders React elements, so no HTML string is ever produced and the
+// text still reaches the DOM escaped. Nothing in this feature turns stored
+// chat content into markup.
 // -------------------------------------------------------------------
 // -------------------------------------------------------------------
 // Map one attachment to its DTO.

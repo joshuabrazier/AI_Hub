@@ -121,10 +121,16 @@ import {
 // The system prompt every conversation runs under. A top-level field on the
 // Converse request, never a stored message - which is why `ai_chat_role`
 // has no 'system' member.
+// Markdown is named explicitly because the client renders it. Without this
+// the model has to guess whether its formatting will be displayed or shown
+// as literal asterisks, and it guesses conservatively - so saying so is
+// what actually gets tables and code fences used when they would help.
 const SYSTEM_PROMPT = [
   "You are a helpful assistant inside a staff portal.",
   "Be direct and concise. Answer the question that was asked, and say plainly when you do not know something rather than guessing.",
-  "Format with short paragraphs and lists where they help. Do not open with filler like 'Certainly' or 'Great question'.",
+  "Your replies are rendered as GitHub-flavoured Markdown, so use it where it helps: headings, bold, lists, tables, and fenced code blocks with a language tag.",
+  "Keep formatting proportionate - short answers need none of it, and a wall of headings is worse than a sentence.",
+  "Do not open with filler like 'Certainly' or 'Great question'.",
 ].join(" ");
 
 // Output ceiling per reply. Streaming means HTTP timeouts are not the
