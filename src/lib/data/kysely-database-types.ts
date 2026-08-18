@@ -460,10 +460,10 @@ export type NewAiChatMessage = Insertable<AiChatMessages>;
 // AI Chat Attachments
 // A file attached to a turn, replayed to the model with the text.
 //
-// `bytes` is a Buffer both ways - node-postgres maps BYTEA to a Buffer on
-// read and accepts one on write, so no encoding step belongs here. Select
-// it deliberately: `selectAll()` on this table pulls every file's content
-// into memory, which is the wrong default for a list.
+// The file itself is NOT here: `storageKey` points at a blob in Azure
+// Storage. That means a Postgres cascade removes the row and leaves the
+// file behind, so every delete path has to clear the blob first - see
+// src/lib/storage/attachment-storage.ts.
 //
 // `messageId` is NULL while the file is staged - uploaded from the composer
 // but not yet sent - and is set to the user turn that carried it on send.
@@ -484,16 +484,18 @@ export interface AiChatAttachments {
   // Parsed from the image header at upload; NULL on documents.
   width: number | null;
   height: number | null;
-  bytes: Buffer;
+  // 'ai-chat/{subjectId}/{id}' - the blob holding the actual file.
+  storageKey: string;
   createdAt: Date;
 }
 
 export type AiChatAttachment = Selectable<AiChatAttachments>;
 export type NewAiChatAttachment = Insertable<AiChatAttachments>;
 
-// The same row without its content, which is what every read outside the
-// send path wants: listing what is attached must not load the files.
-export type AiChatAttachmentMeta = Omit<AiChatAttachment, "bytes">;
+// The same row without its storage pointer, which is what every surface
+// that only renders names and sizes wants. Keeping the key off this shape
+// means a component or DTO cannot leak the blob path by accident.
+export type AiChatAttachmentMeta = Omit<AiChatAttachment, "storageKey">;
 
 // -------------------------------------------------------------------
 // AI Chat Request Logs

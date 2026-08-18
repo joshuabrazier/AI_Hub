@@ -16,12 +16,11 @@ import {
 // here takes it and puts it in the WHERE clause. The one exception is the
 // retention sweep at the bottom, which has no session by design.
 //
-// TWO SHAPES, DELIBERATELY. `bytes` is a BYTEA column holding up to 4.5 MB,
-// so `selectAll()` on a list of them would pull every file a conversation
-// has ever carried into memory to render a row of filenames. The metadata
-// reads below name their columns and leave the content behind; only the
-// send path and the download route ever ask for `bytes`, and both do it one
-// conversation or one file at a time.
+// TWO SHAPES, DELIBERATELY. The file content is not in this table at all -
+// `storage_key` points at a blob - but the split is still worth keeping:
+// the metadata reads below leave the key behind, so a surface that only
+// renders names and sizes cannot leak a storage path into a DTO or a
+// component. Only the send path and the download route ask for the key.
 // -------------------------------------------------------------------
 
 // Every column except the content. Listed once so the two metadata reads
@@ -42,6 +41,10 @@ const META_COLUMNS = [
   "createdAt",
 ] as const;
 
+// Metadata plus the blob pointer, for the two callers that need to reach
+// the file itself.
+const META_WITH_KEY_COLUMNS = [...META_COLUMNS, "storageKey"] as const;
+
 // -------------------------------------------------------------------
 // Store an uploaded file. Always staged (messageId null) - nothing else
 // creates a row, so an attachment cannot appear already attached to a turn
@@ -55,8 +58,7 @@ export async function addAiChatAttachmentRepo(
     return await db
       .insertInto("aiChatAttachments")
       .values(newAttachment)
-      // Returns the metadata rather than everything, so an insert does not
-      // hand the bytes straight back for no reason.
+      // Metadata only - the caller already holds the key it just wrote.
       .returning(META_COLUMNS)
       .executeTakeFirstOrThrow();
   } catch (error) {
@@ -116,11 +118,12 @@ export async function getStagedAiChatAttachmentsRepo(
 }
 
 // -------------------------------------------------------------------
-// The content of every attachment on one conversation, for the send.
+// Every attachment on one conversation WITH its blob key, for the send.
 //
-// The only read that loads bytes in bulk, and it is bounded by the same
-// caps the composer enforces: at most 20 images and 5 documents can be
-// live on a conversation at once. Scoped to the owner like everything else.
+// The send then fetches each file from storage. Bounded by the same caps
+// the composer enforces - at most 20 images and 5 documents live on a
+// conversation at once - so this is never an unbounded fan-out. Scoped to
+// the owner like everything else.
 // -------------------------------------------------------------------
 export async function getAiChatAttachmentBytesForSubjectRepo(
   subjectId: string,
@@ -130,7 +133,7 @@ export async function getAiChatAttachmentBytesForSubjectRepo(
   try {
     return await db
       .selectFrom("aiChatAttachments")
-      .selectAll()
+      .select(META_WITH_KEY_COLUMNS)
       .where("subjectId", "=", subjectId)
       .where("userId", "=", userId)
       .orderBy("createdAt")
@@ -142,8 +145,9 @@ export async function getAiChatAttachmentBytesForSubjectRepo(
 }
 
 // -------------------------------------------------------------------
-// One file, with its content, for the download route. Undefined when it is
-// not the caller's - the same answer a missing id gets.
+// One file WITH its blob key, for the download route. Undefined when it is
+// not the caller's - the same answer a missing id gets, so a guessed id
+// cannot confirm somebody else's file exists.
 // -------------------------------------------------------------------
 export async function getAiChatAttachmentForUserRepo(
   attachmentId: string,
@@ -153,7 +157,7 @@ export async function getAiChatAttachmentForUserRepo(
   try {
     return await db
       .selectFrom("aiChatAttachments")
-      .selectAll()
+      .select(META_WITH_KEY_COLUMNS)
       .where("id", "=", attachmentId)
       .where("userId", "=", userId)
       .executeTakeFirst();
@@ -195,23 +199,26 @@ export async function claimStagedAiChatAttachmentsRepo(
 //
 // Restricted to staged rows on purpose: once a file has been sent it is
 // part of the transcript, and deleting it would leave the conversation
-// referring to something the model can no longer be shown. Deleting the
-// message or the conversation still removes it, by cascade.
+// referring to something the model can no longer be shown.
+//
+// Returns the storage key of what it removed, because the caller has to
+// delete the blob too - the row going does not take the file with it.
 // -------------------------------------------------------------------
 export async function deleteStagedAiChatAttachmentRepo(
   attachmentId: string,
   userId: string,
   db: DBClient = database,
-): Promise<number> {
+): Promise<string | undefined> {
   try {
-    const result = await db
+    const deleted = await db
       .deleteFrom("aiChatAttachments")
       .where("id", "=", attachmentId)
       .where("userId", "=", userId)
       .where("messageId", "is", null)
+      .returning("storageKey")
       .executeTakeFirst();
 
-    return Number(result.numDeletedRows ?? 0);
+    return deleted?.storageKey;
   } catch (error) {
     throw handleError("deleteStagedAiChatAttachmentRepo", error);
   }
@@ -231,16 +238,41 @@ export async function deleteStagedAiChatAttachmentRepo(
 export async function deleteStagedAiChatAttachmentsOlderThanRepo(
   cutoff: Date,
   db: DBClient = database,
-): Promise<number> {
+): Promise<string[]> {
   try {
-    const result = await db
+    const deleted = await db
       .deleteFrom("aiChatAttachments")
       .where("messageId", "is", null)
       .where("createdAt", "<", cutoff)
-      .executeTakeFirst();
+      // The keys come back so the job can remove the blobs as well. A row
+      // deleted without its file is the orphan this whole design has to
+      // avoid.
+      .returning("storageKey")
+      .execute();
 
-    return Number(result.numDeletedRows ?? 0);
+    return deleted.map((row) => row.storageKey);
   } catch (error) {
     throw handleError("deleteStagedAiChatAttachmentsOlderThanRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Every storage key the database still claims.
+//
+// Read by the monthly reconciliation sweep, which lists the container and
+// deletes whatever appears there but not here. That sweep is the ONLY
+// thing that catches files orphaned by a Postgres cascade - deleting a
+// user takes their conversations, messages and attachment rows with it,
+// and nothing in that chain can reach into blob storage.
+//
+// Unscoped by user, like the other retention functions here.
+// -------------------------------------------------------------------
+export async function getAllAiChatAttachmentKeysRepo(db: DBClient = database): Promise<string[]> {
+  try {
+    const rows = await db.selectFrom("aiChatAttachments").select("storageKey").execute();
+
+    return rows.map((row) => row.storageKey);
+  } catch (error) {
+    throw handleError("getAllAiChatAttachmentKeysRepo", error);
   }
 }

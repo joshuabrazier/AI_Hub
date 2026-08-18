@@ -97,6 +97,63 @@ const serverEnvSchema = z.object({
   // accumulate as bytes nobody will read. Set to 0 to keep them forever,
   // which is only sensible while debugging.
   AI_CHAT_STAGED_ATTACHMENT_HOURS: z.coerce.number().int().nonnegative().default(24),
+
+  // -------------------------------------------------------------------
+  // Attachment storage (Azure Blob)
+  //
+  // Where chat attachment BYTES live. Optional: with it unset the chat
+  // still works and the composer simply does not offer the paperclip,
+  // rather than accepting a file it has nowhere to put.
+  //
+  // The container is created on first use and is PRIVATE. Never enable
+  // anonymous read on it - the access check that protects these files is
+  // in the download route, and a public container routes around it.
+  //
+  // Locally this points at Azurite, whose connection string is a
+  // well-known constant with a published key; that is fine because it is
+  // an emulator on localhost, and it must never appear in a real
+  // environment. See docs/setup.md.
+  // -------------------------------------------------------------------
+  AZURE_STORAGE_CONNECTION_STRING: z.string().min(1).optional(),
+  AZURE_STORAGE_ATTACHMENT_CONTAINER: z.string().min(3).max(63).default("ai-chat-attachments"),
+
+  // -------------------------------------------------------------------
+  // Microsoft sign-in (Entra ID)
+  //
+  // Optional. With these unset the app is email-and-password only and the
+  // "Continue with Microsoft" button does not render, so a project that
+  // does not use Entra is unaffected.
+  //
+  // TENANT_ID should be the organisation's own tenant GUID, never
+  // "common" - "common" lets ANY Microsoft account in the world reach the
+  // callback, leaving the domain allowlist below as the only thing
+  // standing between a personal outlook.com account and your app.
+  // -------------------------------------------------------------------
+  MICROSOFT_CLIENT_ID: z.string().min(1).optional(),
+  MICROSOFT_CLIENT_SECRET: z.string().min(1).optional(),
+  MICROSOFT_TENANT_ID: z.string().min(1).optional(),
+
+  // -------------------------------------------------------------------
+  // Email domain allowlist
+  //
+  // Comma-separated bare domains, e.g. "example.com,example.org". An
+  // account can only be CREATED with an address on this list, whichever
+  // sign-in method created it.
+  //
+  // Deliberately configurable rather than hardcoded: this is a reusable
+  // base, and a company's domain is exactly the kind of thing that must
+  // not be baked into it. Unset means no restriction, which is the right
+  // default for a base but almost never right for a deployment - set it.
+  // -------------------------------------------------------------------
+  AUTH_ALLOWED_EMAIL_DOMAINS: z
+    .string()
+    .optional()
+    .transform((value) =>
+      (value ?? "")
+        .split(",")
+        .map((domain) => domain.trim().toLowerCase().replace(/^@/, ""))
+        .filter(Boolean),
+    ),
 });
 
 export const envServer = serverEnvSchema.parse({
@@ -127,4 +184,12 @@ export const envServer = serverEnvSchema.parse({
   AI_CHAT_RETENTION_DAYS: process.env.AI_CHAT_RETENTION_DAYS,
   AI_CHAT_LOG_RETENTION_DAYS: process.env.AI_CHAT_LOG_RETENTION_DAYS,
   AI_CHAT_STAGED_ATTACHMENT_HOURS: process.env.AI_CHAT_STAGED_ATTACHMENT_HOURS,
+
+  AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING,
+  AZURE_STORAGE_ATTACHMENT_CONTAINER: process.env.AZURE_STORAGE_ATTACHMENT_CONTAINER,
+
+  MICROSOFT_CLIENT_ID: process.env.MICROSOFT_CLIENT_ID,
+  MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,
+  MICROSOFT_TENANT_ID: process.env.MICROSOFT_TENANT_ID,
+  AUTH_ALLOWED_EMAIL_DOMAINS: process.env.AUTH_ALLOWED_EMAIL_DOMAINS,
 });

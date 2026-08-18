@@ -250,9 +250,19 @@ the user's own content on a window they can see.
 | `AI_CHAT_LOG_RETENTION_DAYS` | 30 | Request-log rows. Much shorter on purpose: the table duplicates private content that admins can read, and grows with the **square** of thread length. |
 | `AI_CHAT_STAGED_ATTACHMENT_HOURS` | 24 | Files uploaded but never sent. Nothing else collects these - the cascades only reach a file once it belongs to a turn. |
 
-Attachment bytes are stored in Postgres (`ai_chat_attachments.bytes`), capped by
-Bedrock at 3.75 MB per image and 4.5 MB per document. Watch that table's size
-alongside the request log before widening any of the windows above.
+Attachment BYTES live in Azure Blob, not Postgres - the database holds
+metadata and a `storage_key`. That means a Postgres cascade removes the row and
+**cannot touch the file**, so the job does three things for attachments rather
+than one: it clears an expiring conversation's blobs before deleting its rows,
+deletes the blobs behind swept staged uploads, and finally runs a
+**reconciliation sweep** that removes any blob the database no longer claims.
+
+That last pass is not belt-and-braces. De-identifying a dormant user cascades
+through their conversations to their attachment rows without the chat code being
+involved at all, so it is the only thing standing between that and files paid for
+forever. A steadily non-zero `aiChatOrphanedBlobsPurged` in the job log means
+something is deleting rows without clearing files first, and is worth
+investigating rather than tolerating.
 
 ## Supply chain and CI
 

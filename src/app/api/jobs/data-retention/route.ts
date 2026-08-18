@@ -73,6 +73,7 @@ export async function POST(request: Request): Promise<Response> {
       `aiChatsPurged=${aiChats.purgedSubjects} (>${aiChats.retentionDays}d) ` +
       `aiChatLogsPurged=${aiChats.purgedRequestLogs} (>${aiChats.logRetentionDays}d) ` +
       `aiChatStagedFilesPurged=${aiChats.purgedStagedAttachments} (>${aiChats.stagedAttachmentHours}h) ` +
+      `aiChatOrphanedBlobsPurged=${aiChats.purgedOrphanedBlobs} ` +
       `dryRun=${deidentify.dryRun} candidates=${deidentify.candidateCount} processed=${deidentify.processedCount}`,
   );
 

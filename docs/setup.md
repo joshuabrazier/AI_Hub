@@ -145,3 +145,23 @@ precompiled and stable, then shuts it down when the run finishes.
 `next.config.ts` allows dev origins from `*.trycloudflare.com` and LAN ranges,
 and Better Auth trusts the same in non-production. So you can expose `pnpm dev`
 through a Cloudflare quick tunnel or a LAN IP to test on a phone over HTTPS.
+
+## File attachments in local development
+
+Chat file attachments need blob storage. Locally that is **Azurite**, the
+official emulator, already a dev dependency:
+
+```bash
+pnpm dev:storage   # in a second terminal, alongside pnpm dev
+```
+
+Then uncomment `AZURE_STORAGE_CONNECTION_STRING` in `.env` using the emulator
+line from `.env.example`. That account key is a published constant that ships
+with Azurite - safe on localhost, and it must never appear in a real
+environment.
+
+Leave it unset and everything else still works; the composer just does not offer
+the paperclip.
+
+Emulator data lands in `.azurite/`, which is git-ignored. Delete the directory to
+start clean.

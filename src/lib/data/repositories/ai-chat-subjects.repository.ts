@@ -184,6 +184,34 @@ export async function deleteAiChatSubjectForUserRepo(
 // session. It is the only function here without a userId, and it is
 // reachable only from the bearer-authenticated retention route.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// The conversations retention is about to delete, by id.
+//
+// Read BEFORE the delete because their attachment blobs have to go first:
+// the cascade removes attachment rows and cannot touch storage, so once
+// these rows are gone there is nothing left that knows which files to
+// remove. Same predicate as the delete below, deliberately - if the two
+// ever drift, files are orphaned silently.
+//
+// Unscoped by user: this is the monthly job, which has no session.
+// -------------------------------------------------------------------
+export async function getAiChatSubjectIdsInactiveSinceRepo(
+  cutoff: Date,
+  db: DBClient = database,
+): Promise<string[]> {
+  try {
+    const rows = await db
+      .selectFrom("aiChatSubjects")
+      .select("id")
+      .where((eb) => eb(eb.fn.coalesce("lastMessageAt", "createdAt"), "<", cutoff))
+      .execute();
+
+    return rows.map((row) => row.id);
+  } catch (error) {
+    throw handleError("getAiChatSubjectIdsInactiveSinceRepo", error);
+  }
+}
+
 export async function deleteAiChatSubjectsInactiveSinceRepo(
   cutoff: Date,
   db: DBClient = database,

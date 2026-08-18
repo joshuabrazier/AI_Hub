@@ -25,6 +25,14 @@ import {
   getBedrockClient,
   isBedrockConfigured,
 } from "@/lib/ai/bedrock-client";
+import {
+  attachmentStorageKey,
+  deleteAttachment,
+  deleteAttachmentsForSubject,
+  getAttachment,
+  isAttachmentStorageConfigured,
+  putAttachment,
+} from "@/lib/storage/attachment-storage";
 import { requireUser } from "@/lib/auth/session-auth-server";
 import {
   AI_CHAT_ATTACHMENT_KINDS,
@@ -188,7 +196,12 @@ export async function getAiChatPageService(subjectId?: string): Promise<AiChatPa
     const target = requested ?? subjects[0];
 
     if (!target) {
-      return { isConfigured: isBedrockConfigured(), subjects, active: null };
+      return {
+        isConfigured: isBedrockConfigured(),
+        canAttachFiles: isAttachmentStorageConfigured(),
+        subjects,
+        active: null,
+      };
     }
 
     // The row, for the summary cursor - the sidebar DTO does not carry it,
@@ -231,7 +244,12 @@ export async function getAiChatPageService(subjectId?: string): Promise<AiChatPa
           : null,
     };
 
-    return { isConfigured: isBedrockConfigured(), subjects, active };
+    return {
+      isConfigured: isBedrockConfigured(),
+      canAttachFiles: isAttachmentStorageConfigured(),
+      subjects,
+      active,
+    };
   } catch (error) {
     throw handleError("getAiChatPageService", error);
   }
@@ -298,6 +316,19 @@ export async function deleteAiChatSubjectService(
   try {
     const user = await requireUser();
 
+    // Ownership is resolved BEFORE anything is removed, because the blob
+    // cleanup below works off the conversation id and must not run for a
+    // conversation the caller does not own.
+    await requireOwnedSubject(requestDTO.subjectId, user.id);
+
+    // Files first. The row delete cascades to attachment rows and cannot
+    // touch storage, so once those rows are gone nothing knows the blobs
+    // exist. Doing it in this order means a failure here leaves the
+    // conversation intact and retryable, rather than orphaning files.
+    if (isAttachmentStorageConfigured()) {
+      await deleteAttachmentsForSubject(requestDTO.subjectId);
+    }
+
     // Scoped delete, so a conversation that is not the caller's removes
     // nothing. Zero rows is reported as "no longer exists" - the same
     // answer a real id that was already deleted gets.
@@ -336,6 +367,10 @@ export async function uploadAiChatAttachmentService(
   try {
     const user = await requireUser();
 
+    if (!isAttachmentStorageConfigured()) {
+      throw new DisplayErrorMessage("File attachments are not configured on this environment.");
+    }
+
     const subject = await requireOwnedSubject(requestDTO.subjectId, user.id);
 
     const inspection = inspectAttachment(file.bytes, file.fileName);
@@ -364,8 +399,17 @@ export async function uploadAiChatAttachmentService(
       throw new DisplayErrorMessage("Those files are too large to send together. Remove one and try again.");
     }
 
+    const attachmentId = generateId();
+    const storageKey = attachmentStorageKey(subject.id, attachmentId);
+
+    // The blob goes FIRST, then the row. That order is deliberate: a blob
+    // with no row is invisible but collectable - the monthly reconciliation
+    // sweep removes it - whereas a row with no blob is a broken attachment
+    // the user can see and nothing will ever repair.
+    await putAttachment(storageKey, file.bytes, inspection.mediaType);
+
     const stored = await addAiChatAttachmentRepo({
-      id: generateId(),
+      id: attachmentId,
       userId: user.id,
       subjectId: subject.id,
       // Staged. The send claims it; nothing else sets this column.
@@ -379,7 +423,7 @@ export async function uploadAiChatAttachmentService(
       byteSize: file.bytes.length,
       width: inspection.width,
       height: inspection.height,
-      bytes: file.bytes,
+      storageKey,
       createdAt: new Date(),
     });
 
@@ -405,11 +449,16 @@ export async function removeAiChatAttachmentService(
   try {
     const user = await requireUser();
 
-    const removed = await deleteStagedAiChatAttachmentRepo(requestDTO.attachmentId, user.id);
+    const removedKey = await deleteStagedAiChatAttachmentRepo(requestDTO.attachmentId, user.id);
 
-    if (removed === 0) {
+    if (!removedKey) {
       throw new DisplayErrorMessage("That attachment has already been sent or removed.");
     }
+
+    // The row is gone, so nothing else knows this file exists. If the blob
+    // delete fails the reconciliation sweep collects it, which is why this
+    // does not need to be transactional - but it does need to happen.
+    await deleteAttachment(removedKey);
 
     revalidateAiChatViews();
   } catch (error) {
@@ -429,13 +478,37 @@ export async function removeAiChatAttachmentService(
 async function loadAttachmentsByMessage(
   subjectId: string,
   userId: string,
-): Promise<Map<string, AiChatAttachment[]>> {
+): Promise<Map<string, LoadedAttachment[]>> {
   const rows = await getAiChatAttachmentBytesForSubjectRepo(subjectId, userId);
 
-  const grouped = new Map<string, AiChatAttachment[]>();
+  const sent = rows.filter((row) => row.messageId !== null);
 
-  for (const row of rows) {
-    if (!row.messageId) continue;
+  if (sent.length === 0) return new Map();
+
+  // Fetched in parallel: these are independent blob reads and the count is
+  // bounded by the per-request caps the composer enforces, so this is a
+  // handful of requests rather than an unbounded fan-out.
+  const loaded = await Promise.all(
+    sent.map(async (row) => {
+      const bytes = await getAttachment(row.storageKey);
+
+      // A row whose blob is missing is skipped rather than fatal. Retention
+      // or a half-finished delete can leave one behind, and a send is not
+      // the place to discover it - the model is told the file is no longer
+      // available by the same eviction note that covers a budget drop.
+      if (!bytes) {
+        console.warn(`loadAttachmentsByMessage: blob missing for attachment ${row.id} (${row.storageKey})`);
+        return null;
+      }
+
+      return { ...row, bytes };
+    }),
+  );
+
+  const grouped = new Map<string, LoadedAttachment[]>();
+
+  for (const row of loaded) {
+    if (!row?.messageId) continue;
 
     const list = grouped.get(row.messageId);
     if (list) list.push(row);
@@ -502,17 +575,22 @@ type ConverseRequest = {
 // 20 images at 3.75 MB is 75 MB, which would blow the 20 MB payload cap
 // long before the image count ran out.
 // -------------------------------------------------------------------
+// An attachment row with its file fetched from storage. Only ever built
+// inside the send path - nothing else needs the bytes, and nothing else
+// should be able to hold them.
+type LoadedAttachment = AiChatAttachment & { bytes: Buffer };
+
 type AttachmentSelection = {
-  admitted: Map<string, AiChatAttachment[]>;
+  admitted: Map<string, LoadedAttachment[]>;
   droppedByMessage: Map<string, number>;
   droppedTotal: number;
 };
 
 function selectAttachments(
   kept: AiChatMessage[],
-  attachmentsByMessage: Map<string, AiChatAttachment[]>,
+  attachmentsByMessage: Map<string, LoadedAttachment[]>,
 ): AttachmentSelection {
-  const admitted = new Map<string, AiChatAttachment[]>();
+  const admitted = new Map<string, LoadedAttachment[]>();
   const droppedByMessage = new Map<string, number>();
 
   let images = 0;
@@ -565,7 +643,7 @@ function selectAttachments(
 // unnameable file distinguishable ("Document 3"), which is why the counter
 // is threaded through rather than reset per message.
 // -------------------------------------------------------------------
-function attachmentBlocks(files: AiChatAttachment[], documentPosition: { next: number }): ContentBlock[] {
+function attachmentBlocks(files: LoadedAttachment[], documentPosition: { next: number }): ContentBlock[] {
   return files.map((file) => {
     if (file.kind === AI_CHAT_ATTACHMENT_KINDS.IMAGE) {
       return {
@@ -593,7 +671,7 @@ function buildConverseRequest(
   transcript: AiChatMessage[],
   summary: string | null,
   summaryThroughMessageId: string | null,
-  attachmentsByMessage: Map<string, AiChatAttachment[]>,
+  attachmentsByMessage: Map<string, LoadedAttachment[]>,
 ): ConverseRequest {
   // Everything after the summarised cursor. A cursor matching no row (a
   // summary written against turns since removed) degrades to "the summary
@@ -833,7 +911,7 @@ async function compactIfNeeded(
   subject: AiChatSubject,
   transcript: AiChatMessage[],
   userId: string,
-  attachmentsByMessage: Map<string, AiChatAttachment[]>,
+  attachmentsByMessage: Map<string, LoadedAttachment[]>,
 ): Promise<{ summary: string | null; summaryThroughMessageId: string | null }> {
   const current = {
     summary: subject.summary,

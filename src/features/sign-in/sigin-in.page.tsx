@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { AuthMethodDivider, MicrosoftSignInButton } from "@/components/auth/microsoft-sign-in-button";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -22,9 +23,14 @@ import { MESSAGES } from "@/lib/constants";
 type SignInPageProps = {
   // Shown after a user confirms an email change (they're signed out and sent here)
   emailChanged?: boolean;
+  // Whether Entra is configured. Comes from the server route rather than a
+  // NEXT_PUBLIC variable, so nothing about the provider's configuration has
+  // to be duplicated into the client bundle to decide whether to show a
+  // button.
+  microsoftEnabled?: boolean;
 };
 
-export function SignInPage({ emailChanged = false }: SignInPageProps) {
+export function SignInPage({ emailChanged = false, microsoftEnabled = false }: SignInPageProps) {
   const [isPending, setIsPending] = useState<boolean>(false);
 
   const form = useForm<SignInForm>({
@@ -150,7 +156,17 @@ export function SignInPage({ emailChanged = false }: SignInPageProps) {
         </p>
       )}
 
-      <form onSubmit={form.handleSubmit(onSubmit)} className="mt-8 space-y-5">
+      {/* Microsoft first: for an organisation using Entra it is the path
+          almost everyone takes, and the password form below is the fallback
+          for accounts not yet linked to a Microsoft identity. */}
+      {microsoftEnabled && (
+        <div className="mt-8 space-y-5">
+          <MicrosoftSignInButton />
+          <AuthMethodDivider />
+        </div>
+      )}
+
+      <form onSubmit={form.handleSubmit(onSubmit)} className={microsoftEnabled ? "space-y-5" : "mt-8 space-y-5"}>
         <FormInputField
           control={form.control}
           name="email"

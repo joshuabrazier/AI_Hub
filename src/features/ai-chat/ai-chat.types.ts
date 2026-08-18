@@ -164,6 +164,12 @@ export type AiChatSubjectDetailDTO = {
 // -------------------------------------------------------------------
 export type AiChatPageDTO = {
   isConfigured: boolean;
+  // Whether attachment storage is set up. Separate from `isConfigured`
+  // because the two fail independently: an environment can have a working
+  // model and no blob container, in which case chat still works and the
+  // composer simply does not offer the paperclip - rather than accepting a
+  // file it has nowhere to put.
+  canAttachFiles: boolean;
   subjects: AiChatSubjectDTO[];
   // Null when the user has no conversations yet, or asked for one that is
   // not theirs (which is answered as "no such conversation").

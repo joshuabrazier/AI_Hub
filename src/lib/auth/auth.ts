@@ -11,6 +11,7 @@ import { sendPasswordResetEmail, sendTwoFactorOtpEmail, sendVerificationEmail } 
 import { deleteSessionsByUserIdRepo } from "../data/repositories/sessions.repository";
 import { getUserByUserIdRepo } from "../data/repositories/users.repository";
 import { accessControl, impersonatorOnly } from "./auth-permissions";
+import { canCreateAccountFor } from "./account-creation-policy";
 import { recordAuthAuditEvent } from "../audit/auth-audit";
 import { AUDIT_ACTIONS } from "../audit/audit-log.types";
 
@@ -131,6 +132,51 @@ export const auth = betterAuth({
     }),
     nextCookies(), // must remain the last plugin
   ],
+
+  // -------------------------------------------------------------------
+  // Microsoft sign-in (Entra ID)
+  //
+  // Only registered when the three MICROSOFT_* variables are set, so a
+  // deployment without Entra is unchanged and the button does not render.
+  //
+  // TENANT_ID IS NOT OPTIONAL IN PRACTICE. Better Auth defaults it to
+  // "common", which accepts any Microsoft account in the world - including
+  // personal outlook.com ones. Passing the organisation's own tenant makes
+  // Entra itself the first gate, and the domain allowlist the second.
+  //
+  // `mapProfileToUser` is where a GUEST is turned away. A single-tenant app
+  // still authenticates B2B guests, who are in your directory with their own
+  // external addresses; `acct` is 0 for a member of the tenant and 1 for a
+  // guest, so this is a precise check rather than an inference from the
+  // address. The domain allowlist would catch most of them anyway - this
+  // catches a guest who happens to share the domain too.
+  // -------------------------------------------------------------------
+  socialProviders:
+    envServer.MICROSOFT_CLIENT_ID && envServer.MICROSOFT_CLIENT_SECRET && envServer.MICROSOFT_TENANT_ID
+      ? {
+          microsoft: {
+            clientId: envServer.MICROSOFT_CLIENT_ID,
+            clientSecret: envServer.MICROSOFT_CLIENT_SECRET,
+            tenantId: envServer.MICROSOFT_TENANT_ID,
+            // The photo fetch is an extra Graph call per sign-in for an
+            // avatar this app does not display.
+            disableProfilePhoto: true,
+            mapProfileToUser: (profile) => {
+              if (profile.acct === 1) {
+                throw new APIError("FORBIDDEN", {
+                  message: "Guest accounts cannot be used to sign in to this application.",
+                });
+              }
+
+              // `email` is not always present on an Entra token; the UPN is,
+              // and for a member of the tenant it is their address.
+              const email = (profile.email ?? profile.preferred_username ?? "").toLowerCase();
+
+              return { email, name: profile.name };
+            },
+          },
+        }
+      : undefined,
 
   // -------------------------------------------------------------------
   // Email and Password
@@ -306,6 +352,42 @@ export const auth = betterAuth({
   },
 
   databaseHooks: {
+    // -------------------------------------------------------------------
+    // The single gate on account creation.
+    //
+    // Runs for EVERY path that creates a user - the invite form, Microsoft
+    // sign-in, anything added later - because it sits at the database layer
+    // rather than in a page. This is what keeps the app invite-only now that
+    // a social provider exists: adding Entra without it would quietly turn
+    // "an admin decides who has an account" into "anyone in the tenant
+    // does". See src/lib/auth/account-creation-policy.ts.
+    //
+    // Throwing rather than returning false: a false return makes Better Auth
+    // hand back a null user, which surfaces as an unexplained failure. An
+    // APIError produces a message the person can act on.
+    // -------------------------------------------------------------------
+    user: {
+      create: {
+        before: async (user) => {
+          const decision = await canCreateAccountFor(user.email);
+
+          if (!decision.allowed) {
+            // Logged with the reason, answered without it: telling the
+            // browser "no invitation" versus "wrong domain" would let
+            // somebody map who has been invited.
+            console.warn(`[auth] refused account creation for ${user.email}: ${decision.reason}`);
+
+            throw new APIError("FORBIDDEN", {
+              message:
+                "This account cannot be created. Access is by invitation only - ask an administrator to invite you.",
+            });
+          }
+
+          return { data: user };
+        },
+      },
+    },
+
     session: {
       create: {
         before: async (session) => {

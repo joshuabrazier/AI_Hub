@@ -3,11 +3,22 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Archive, CircleStop, Loader2, Paperclip, SendHorizontal, Sparkles, UserRound } from "lucide-react";
+import {
+  Archive,
+  CircleStop,
+  Loader2,
+  Paperclip,
+  SendHorizontal,
+  Sparkles,
+  UserRound,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { AI_CHAT_ACCEPTED_SUMMARY, AI_CHAT_ACCEPT_ATTRIBUTE } from "@/lib/ai/attachment-formats";
+import {
+  AI_CHAT_ACCEPTED_SUMMARY,
+  AI_CHAT_ACCEPT_ATTRIBUTE,
+} from "@/lib/ai/attachment-formats";
 import { MESSAGES } from "@/lib/constants";
 import { AI_CHAT_ROLES } from "@/lib/data/kysely-database-types";
 import { formatDateTime } from "@/lib/format";
@@ -36,7 +47,13 @@ import { AiChatMarkdown } from "./ai-chat-markdown";
 // Mounted with a key on the conversation id (see AiChatWorkspace), so all
 // of the state below is per conversation and switching threads resets it.
 // -------------------------------------------------------------------
-export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
+export function AiChatThread({
+  detail,
+  canAttachFiles,
+}: {
+  detail: AiChatSubjectDetailDTO;
+  canAttachFiles: boolean;
+}) {
   const router = useRouter();
 
   // Seeded from the server and then advanced locally while a reply streams.
@@ -93,7 +110,10 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
         body.append("file", file);
 
         try {
-          const response = await fetch("/api/ai-chat/attachments", { method: "POST", body });
+          const response = await fetch("/api/ai-chat/attachments", {
+            method: "POST",
+            body,
+          });
           const payload = await response.json().catch(() => null);
 
           if (!response.ok) {
@@ -101,7 +121,10 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
             continue;
           }
 
-          setStaged((current) => [...current, payload.attachment as AiChatAttachmentDTO]);
+          setStaged((current) => [
+            ...current,
+            payload.attachment as AiChatAttachmentDTO,
+          ]);
         } catch (error) {
           console.error(error);
           toast.error(MESSAGES.SOMETHING_WENT_WRONG);
@@ -129,7 +152,9 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
       return;
     }
 
-    setStaged((current) => current.filter((attachment) => attachment.id !== attachmentId));
+    setStaged((current) =>
+      current.filter((attachment) => attachment.id !== attachmentId),
+    );
   };
 
   // Keep the newest text in view as it arrives. `instant` rather than smooth
@@ -212,7 +237,8 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
     } catch (error) {
       // An abort is the Stop button, not a failure - whatever arrived is
       // kept, and the server has persisted it too.
-      const aborted = error instanceof DOMException && error.name === "AbortError";
+      const aborted =
+        error instanceof DOMException && error.name === "AbortError";
       if (!aborted) {
         console.error(error);
         toast.error(MESSAGES.SOMETHING_WENT_WRONG);
@@ -256,9 +282,12 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
             <span className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Sparkles size={22} aria-hidden="true" />
             </span>
-            <p className="mt-3 text-sm font-medium text-foreground">Ask the first question</p>
+            <p className="mt-3 text-sm font-medium text-foreground">
+              Ask the first question
+            </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              The whole conversation is sent each time, so you can build on your earlier questions.
+              The whole conversation is sent each time, so you can build on your
+              earlier questions.
             </p>
           </div>
         ) : (
@@ -273,7 +302,10 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
                     are still here and still readable, the model just sees a
                     summary of them now. */}
                 {message.id === detail.summarizedThroughMessageId && (
-                  <li className="flex items-center gap-3 py-1" aria-hidden="false">
+                  <li
+                    className="flex items-center gap-3 py-1"
+                    aria-hidden="false"
+                  >
                     <span className="h-px flex-1 bg-border" />
                     <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Archive size={12} aria-hidden="true" />
@@ -311,11 +343,17 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
       {/* Composer. Doubles as the drop zone, so a file can be dragged
           anywhere over it rather than onto a small target. */}
       <div
-        className={cn("border-t border-border p-3 transition-colors", isDropTarget && "bg-primary/5")}
+        className={cn(
+          "border-t border-border p-3 transition-colors",
+          isDropTarget && "bg-primary/5",
+        )}
         onDragEnter={(event) => {
           // Only react to an actual file drag; dragging selected text over
-          // the composer should do nothing.
-          if (!event.dataTransfer.types.includes("Files")) return;
+          // the composer should do nothing. And with no storage configured
+          // there is nowhere to put a dropped file, so it should not look
+          // like a target at all.
+          if (!canAttachFiles || !event.dataTransfer.types.includes("Files"))
+            return;
 
           dragDepth.current += 1;
           setIsDropTarget(true);
@@ -331,7 +369,8 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
           if (dragDepth.current === 0) setIsDropTarget(false);
         }}
         onDrop={(event) => {
-          if (!event.dataTransfer.types.includes("Files")) return;
+          if (!canAttachFiles || !event.dataTransfer.types.includes("Files"))
+            return;
 
           event.preventDefault();
           dragDepth.current = 0;
@@ -342,12 +381,24 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
       >
         {(staged.length > 0 || isUploading) && (
           <div className="mb-2">
-            <AiChatAttachmentList attachments={staged} onRemove={(id) => void remove(id)} removingId={removingId} />
+            <AiChatAttachmentList
+              attachments={staged}
+              onRemove={(id) => void remove(id)}
+              removingId={removingId}
+            />
 
             {isUploading && (
-              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
-                <Loader2 size={12} className="animate-spin" aria-hidden="true" />
-                Uploading {uploadingCount} file{uploadingCount === 1 ? "" : "s"}...
+              <p
+                className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+                role="status"
+              >
+                <Loader2
+                  size={12}
+                  className="animate-spin"
+                  aria-hidden="true"
+                />
+                Uploading {uploadingCount} file{uploadingCount === 1 ? "" : "s"}
+                ...
               </p>
             )}
           </div>
@@ -357,45 +408,55 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
           {/* The real input stays off-screen and the button drives it, so the
               control matches the rest of the UI while keeping a native file
               picker and its keyboard behaviour. */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={AI_CHAT_ACCEPT_ATTRIBUTE}
-            className="sr-only"
-            tabIndex={-1}
-            onChange={(event) => {
-              void upload(Array.from(event.target.files ?? []));
-              // Cleared so choosing the same file twice in a row still
-              // fires a change event.
-              event.target.value = "";
-            }}
-          />
+          {canAttachFiles && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={AI_CHAT_ACCEPT_ATTRIBUTE}
+                className="sr-only"
+                tabIndex={-1}
+                onChange={(event) => {
+                  void upload(Array.from(event.target.files ?? []));
+                  // Cleared so choosing the same file twice in a row still
+                  // fires a change event.
+                  event.target.value = "";
+                }}
+              />
 
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            disabled={isStreaming || isUploading}
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach files"
-            title={`Attach files - ${AI_CHAT_ACCEPTED_SUMMARY}`}
-          >
-            <Paperclip size={16} aria-hidden="true" />
-          </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                disabled={isStreaming || isUploading}
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="Attach files"
+                title={`Attach files - ${AI_CHAT_ACCEPTED_SUMMARY}`}
+              >
+                <Paperclip size={16} aria-hidden="true" />
+              </Button>
+            </>
+          )}
 
           <Textarea
             aria-label="Message"
             value={draft}
             maxLength={MAX_MESSAGE_CHARS}
             rows={2}
-            placeholder={staged.length > 0 ? "Ask about the attached files..." : "Ask anything..."}
+            placeholder={
+              staged.length > 0
+                ? "Ask about the attached files..."
+                : "Ask anything..."
+            }
             disabled={isStreaming}
             onChange={(event) => setDraft(event.target.value)}
             onPaste={(event) => {
               // Pasting a screenshot is the fastest way to attach one, and
               // the clipboard carries it as a file item. Text pastes have no
               // file items and fall through to the default handler.
+              if (!canAttachFiles) return;
+
               const files = Array.from(event.clipboardData.files);
               if (files.length === 0) return;
 
@@ -407,7 +468,11 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
               // for a chat composer. Guarded on the IME composition flag so
               // Enter to accept a candidate in a Japanese or Chinese input
               // does not fire a send.
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
                 event.preventDefault();
                 void send();
               }
@@ -438,8 +503,8 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
         </div>
 
         <p className="mt-2 text-xs text-muted-foreground">
-          Enter to send, Shift + Enter for a new line. Attach, paste or drop files - {AI_CHAT_ACCEPTED_SUMMARY}
-          . Replies can be wrong - check anything that matters.
+          Enter to send, Shift + Enter for a new line.
+          {canAttachFiles ? " Attach, paste or drop files" : ""}
         </p>
       </div>
     </div>
@@ -459,7 +524,13 @@ export function AiChatThread({ detail }: { detail: AiChatSubjectDetailDTO }) {
 // an HTML string - see AiChatMarkdown, where that distinction is the whole
 // argument for why this is still safe.
 // -------------------------------------------------------------------
-function MessageRow({ message, isStreaming = false }: { message: AiChatMessageDTO; isStreaming?: boolean }) {
+function MessageRow({
+  message,
+  isStreaming = false,
+}: {
+  message: AiChatMessageDTO;
+  isStreaming?: boolean;
+}) {
   const isUser = message.role === AI_CHAT_ROLES.USER;
 
   return (
@@ -467,10 +538,16 @@ function MessageRow({ message, isStreaming = false }: { message: AiChatMessageDT
       <span
         className={cn(
           "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full",
-          isUser ? "bg-muted text-muted-foreground" : "bg-primary text-primary-foreground",
+          isUser
+            ? "bg-muted text-muted-foreground"
+            : "bg-primary text-primary-foreground",
         )}
       >
-        {isUser ? <UserRound size={16} aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
+        {isUser ? (
+          <UserRound size={16} aria-hidden="true" />
+        ) : (
+          <Sparkles size={16} aria-hidden="true" />
+        )}
       </span>
 
       <div className="min-w-0 flex-1">
@@ -488,7 +565,9 @@ function MessageRow({ message, isStreaming = false }: { message: AiChatMessageDT
           // reformatting a person's own message is both surprising and a
           // way to make two different inputs render identically. Still a
           // text node, so it is escaped by React as it always was.
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{message.content}</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">
+            {message.content}
+          </p>
         ) : (
           // The model's half, rendered as markdown - which is the format it
           // writes in. Renders to React elements, never to an HTML string;
@@ -500,18 +579,19 @@ function MessageRow({ message, isStreaming = false }: { message: AiChatMessageDT
         {/* What was sent with this turn. No remove handler: once a file is
             part of the transcript it stays, because the model was shown it
             and the answer above may depend on it. */}
-        <AiChatAttachmentList attachments={message.attachments} className="mt-2" />
+        <AiChatAttachmentList
+          attachments={message.attachments}
+          className="mt-2"
+        />
 
-        {/* Cost per answer, once the reply has landed and been persisted.
-            `totalInputTokens` rather than `inputTokens`: with caching on the
-            latter is only the uncached remainder, so showing it alone would
-            report a fraction of what was sent and make a working cache look
-            like a broken counter. The cached share is called out separately,
-            because that is the part billed at roughly a tenth of the rate. */}
+        {/* When the reply landed. The `outputTokens` check is the test for
+            "this reply completed and was persisted" - a stream the reader
+            stopped part-way has no usage recorded, and stamping a time on it
+            would suggest a finished answer. Token counts used to sit here and
+            were removed from the UI; they are still stored per turn, and the
+            admin AI-requests screen is where spend is reviewed. */}
         {!isStreaming && message.outputTokens !== null && (
-          <p className="mt-1.5 font-mono text-xs tabular-nums text-muted-foreground">
-            {message.totalInputTokens ?? 0} in / {message.outputTokens} out
-            {message.cacheReadTokens ? ` (${message.cacheReadTokens} cached)` : ""} &middot;{" "}
+          <p className="mt-1.5 text-xs text-muted-foreground">
             {formatDateTime(message.createdAt)}
           </p>
         )}

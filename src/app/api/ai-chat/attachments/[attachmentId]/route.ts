@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { AI_CHAT_ATTACHMENT_KINDS } from "@/lib/data/kysely-database-types";
 import { getSession } from "@/lib/auth/session-auth-server";
 import { getAiChatAttachmentForUserRepo } from "@/lib/data/repositories/ai-chat-attachments.repository";
+import { getAttachment } from "@/lib/storage/attachment-storage";
 import { MESSAGES } from "@/lib/constants";
 
 // Reads BYTEA from Postgres, so Node; and a private file must never be
@@ -19,6 +20,14 @@ export const dynamic = "force-dynamic";
 // A route handler because it returns bytes: there is no server-action shape
 // for "here is a file", and this is a read rather than a mutation, so the
 // actions rule does not apply to it in the first place.
+//
+// The file lives in Azure Blob and is streamed through this handler rather
+// than handed to the browser as a signed URL. That is deliberate: a SAS URL
+// is a bearer token, and one that leaked into browser history, a proxy log
+// or a screenshot would read that file for anybody holding it, outliving
+// the session check that produced it. Proxying costs bandwidth and keeps
+// the rule that the ONLY way to read an attachment is a live session that
+// owns it.
 //
 // AUTHORIZATION is the repository predicate. The query is keyed on
 // `(id, user_id)`, so an id belonging to somebody else's conversation
@@ -65,13 +74,26 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // The row is authorization; the blob is just bytes. Fetched only AFTER
+  // the ownership check above has passed, so an id that is not the
+  // caller's never reaches storage at all.
+  const bytes = await getAttachment(attachment.storageKey);
+
+  // A row pointing at a blob that is gone. Answered as 404 rather than 500:
+  // from the reader's side the file is simply not there, and this is a
+  // recoverable state that retention or a partial delete can produce.
+  if (!bytes) {
+    console.warn(`[GET attachment] blob missing for ${attachment.id} (${attachment.storageKey})`);
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   // Images render in the transcript; everything else downloads. A document
   // is never displayed by this app, so it never gets the chance to be
   // interpreted as markup on this origin.
   const isImage = attachment.kind === AI_CHAT_ATTACHMENT_KINDS.IMAGE;
   const disposition = isImage ? "inline" : "attachment";
 
-  return new Response(new Uint8Array(attachment.bytes), {
+  return new Response(new Uint8Array(bytes), {
     headers: {
       "Content-Type": attachment.mediaType,
       "Content-Length": String(attachment.byteSize),

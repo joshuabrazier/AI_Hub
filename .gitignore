@@ -51,3 +51,6 @@ next-env.d.ts
 # local-only docs (kept out of the repo)
 /tests/docs/conventions.md
 docs/data-retention.md
+
+# Azurite (local blob emulator) data
+.azurite/

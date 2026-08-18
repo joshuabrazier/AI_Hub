@@ -1,6 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { AuthMethodDivider, MicrosoftSignInButton } from "@/components/auth/microsoft-sign-in-button";
 import { Button } from "@/components/ui/button";
 import { FormInputField } from "@/components/form/form-input-field";
 import { useTransition } from "react";
@@ -15,6 +16,8 @@ import { MESSAGES } from "@/lib/constants";
 import { roleHome } from "@/lib/routes";
 
 type AcceptInviteSignInProps = {
+  // Whether Entra is configured on this deployment.
+  microsoftEnabled?: boolean;
   inviteToken: string;
   name: string;
   email: string;
@@ -26,7 +29,13 @@ type FormValues = AcceptInviteAndSignUpRequestDTO;
 // -------------------------------------------------------------------
 // Accept Invite Sign In
 // -------------------------------------------------------------------
-export function AcceptInviteSignIn({ inviteToken, name, email, role }: AcceptInviteSignInProps) {
+export function AcceptInviteSignIn({
+  inviteToken,
+  name,
+  email,
+  role,
+  microsoftEnabled = false,
+}: AcceptInviteSignInProps) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -98,7 +107,23 @@ export function AcceptInviteSignIn({ inviteToken, name, email, role }: AcceptInv
         {email}
       </p>
 
-      <form onSubmit={form.handleSubmit(onSubmit)} className="mt-8 space-y-5">
+      {/* Accepting the invitation with Microsoft. The invitation is still
+          the gate: this button completes an Entra sign-in, and the account
+          is only created if the address Microsoft asserts has a usable
+          invitation of its own. Somebody cannot accept a colleague's invite
+          with their own Microsoft account, because the check is against the
+          verified address rather than the token in the link. */}
+      {microsoftEnabled && (
+        <div className="mt-8 space-y-5">
+          <MicrosoftSignInButton />
+          <AuthMethodDivider />
+        </div>
+      )}
+
+      <form
+        onSubmit={form.handleSubmit(onSubmit)}
+        className={microsoftEnabled ? "space-y-5" : "mt-8 space-y-5"}
+      >
         {/* Password */}
         <FormInputField
           control={form.control}

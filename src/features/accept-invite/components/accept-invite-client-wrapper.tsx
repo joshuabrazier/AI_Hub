@@ -4,7 +4,13 @@ import { useEffect, useState } from "react";
 import { validateInviteAction } from "../accept-invite.actions";
 import { AcceptInviteSignIn } from "./accept-invite-sigin-in";
 
-export function AcceptInviteClientWrapper({ inviteToken }: { inviteToken: string }) {
+export function AcceptInviteClientWrapper({
+  inviteToken,
+  microsoftEnabled,
+}: {
+  inviteToken: string;
+  microsoftEnabled: boolean;
+}) {
   const [isValidating, setIsValidating] = useState(true);
   const [inviteData, setInviteData] = useState<{ name: string; email: string; role: string } | null>(null);
 
@@ -48,6 +54,7 @@ export function AcceptInviteClientWrapper({ inviteToken }: { inviteToken: string
 
   return (
     <AcceptInviteSignIn
+      microsoftEnabled={microsoftEnabled}
       inviteToken={inviteToken}
       name={inviteData.name}
       email={inviteData.email}

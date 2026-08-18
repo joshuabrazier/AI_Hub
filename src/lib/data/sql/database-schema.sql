@@ -406,14 +406,22 @@ CREATE INDEX idx_ai_chat_messages_subject ON ai_chat_messages(subject_id, create
 -- Files a user attached to a turn - photos and documents - stored as bytes
 -- and replayed to the model alongside the text on every send.
 --
--- WHY THE BYTES LIVE IN POSTGRES. The Converse API takes file content
--- inline in the request, so the bytes have to be readable at send time.
--- There is no object store in this base repo, and adding one would put a
--- second stateful dependency (plus its credentials, lifecycle and its own
--- access-control surface) behind a chat feature. Keeping them here means
--- one backup, one restore, one retention policy, and deletion that cannot
--- silently leave orphaned objects paid for in a bucket. Revisit only if a
--- project starts storing files far larger than the caps below.
+-- THE BYTES ARE NOT HERE. This table is metadata plus a pointer; the file
+-- itself lives in Azure Blob under `storage_key`. Two reasons, and the
+-- second matters more than the first:
+--
+--   1. Steady state is roughly one file per user per day against the
+--      365-day window, so hundreds of GB at a few hundred users - and
+--      Azure Postgres storage CANNOT BE SHRUNK, so that becomes a
+--      permanent bill even once retention has deleted the files.
+--   2. Serving a 4.5 MB file out of BYTEA holds a Postgres connection for
+--      the whole transfer, competing with auth and page queries on one
+--      instance's pool.
+--
+-- THE PRICE OF THAT: a cascade below removes the ROW and cannot touch the
+-- blob. Every delete path clears blobs FIRST, and the monthly job runs a
+-- reconciliation sweep for anything a cascade removed behind its back.
+-- See src/lib/storage/attachment-storage.ts.
 --
 -- STAGING. `message_id` is NULL between "uploaded" and "sent": the composer
 -- uploads a file as soon as it is chosen, and the turn it belongs to does
@@ -461,7 +469,11 @@ CREATE TABLE ai_chat_attachments (
     -- the user has waited for a send. NULL on documents.
     width      INT NULL,
     height     INT NULL,
-    bytes      BYTEA NOT NULL,
+    -- Where the file actually is: 'ai-chat/{subject_id}/{id}'. The subject
+    -- prefix is load-bearing - it lets a whole conversation's files be
+    -- listed and removed without the rows that name them, which is what
+    -- the delete paths and the orphan sweep both rely on.
+    storage_key TEXT NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

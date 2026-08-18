@@ -10,6 +10,10 @@ export default defineConfig(({ mode }) => ({
     // Mirror the "@/* -> src/*" path alias from tsconfig.json
     alias: {
       "@": path.resolve(process.cwd(), "src"),
+      // `import "server-only"` has no resolvable module outside a bundler,
+      // so without this every service and repository is untestable. See the
+      // note in the stub.
+      "server-only": path.resolve(process.cwd(), "src/lib/test/server-only-stub.ts"),
     },
   },
   test: {
