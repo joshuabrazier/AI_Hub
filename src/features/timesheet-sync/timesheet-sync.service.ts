@@ -9,11 +9,12 @@ import {
   getSyncWatermarkRepo,
   recordSyncFailureRepo,
   upsertJiraIssuesRepo,
+  upsertJiraProjectsRepo,
   upsertWorklogFactsRepo,
 } from "@/lib/data/repositories/timesheet.repository";
 import { envServer } from "@/lib/env-server";
 import { handleError } from "@/lib/handle-errors";
-import { createJiraClient, JiraIssueResponse } from "@/lib/timesheet/jira-client";
+import { createJiraClient, ISSUE_FIELDS, JiraIssueResponse } from "@/lib/timesheet/jira-client";
 import {
   hoursFieldToSeconds,
   normaliseText,
@@ -52,6 +53,20 @@ const MILLISECONDS_PER_MINUTE = 60000;
 // Low enough not to trip Jira's rate limiter.
 const ISSUE_FETCH_CONCURRENCY = 5;
 
+// -------------------------------------------------------------------
+// The whole book of work is synced, not just what has time booked to it.
+//
+// This app replaces a job-and-timesheet system, so a job with no hours yet is
+// not noise - it is the job nobody has started, and leaving it out means the
+// list silently disagrees with Jira. The same reasoning covers a project
+// category with nothing against it.
+//
+// JQL must carry a restriction: Jira rejects an unbounded query outright.
+// Filtering on the two hierarchy levels that matter is that restriction, and
+// it also keeps sub-tasks out of the job list.
+// -------------------------------------------------------------------
+const JOB_LEVEL_JQL = 'issuetype in ("Project", "Deliverable") ORDER BY key ASC';
+
 export interface SyncResult {
   ok: boolean;
   // True when the job ran against Jira but wrote nothing, because
@@ -65,6 +80,7 @@ export interface SyncResult {
   worklogsWritten: number;
   worklogsDeleted: number;
   issuesWritten: number;
+  projectsWritten: number;
   orphanedIssueIds: string[];
   error: string | null;
 }
@@ -80,6 +96,7 @@ function emptyResult(overrides: Partial<SyncResult>): SyncResult {
     worklogsWritten: 0,
     worklogsDeleted: 0,
     issuesWritten: 0,
+    projectsWritten: 0,
     orphanedIssueIds: [],
     error: null,
     ...overrides,
@@ -117,27 +134,31 @@ async function resolveSince(jobName: string): Promise<Date> {
 // -------------------------------------------------------------------
 // A Jira issue payload to a read-model row.
 //
-// On estimates: Jira's `timeoriginalestimate` is the original estimate and
-// `timeestimate` is the REMAINING estimate, not a revised total. Treating
-// remaining as "current" would make a nearly finished item look nearly
-// unbudgeted, so it is not used. Current falls back to the original unless a
-// custom field says otherwise.
+// On category: Internal vs External is NOT a custom field. It is the Jira
+// project category, which arrives on every issue at
+// fields.project.projectCategory.name. The name is read rather than the id,
+// because the ids are per-site and mean nothing to anyone reading a report.
 //
-// Confirm against how the team actually uses these fields before the first
-// budget report goes to anyone.
+// On estimates: both come from custom fields holding HOURS. Jira's built-in
+// timeoriginalestimate is the fallback when those are not configured.
+// Jira's `timeestimate` is deliberately never used: it is the REMAINING
+// estimate, not a revised total, and treating remaining as "current" would
+// make a nearly finished item look nearly unbudgeted.
 // -------------------------------------------------------------------
 function toIssueRow(issue: JiraIssueResponse): NewJiraIssue {
   const fields = issue.fields ?? {};
 
   const parent = fields.parent as { key?: string } | undefined;
-  const project = fields.project as { key?: string } | undefined;
+  const project = fields.project as { key?: string; projectCategory?: { name?: string } } | undefined;
   const issueType = fields.issuetype as { name?: string } | undefined;
   const status = fields.status as { name?: string } | undefined;
 
   const billableField = envServer.JIRA_FIELD_BILLABLE ? fields[envServer.JIRA_FIELD_BILLABLE] : undefined;
-  const categoryField = envServer.JIRA_FIELD_CATEGORY ? fields[envServer.JIRA_FIELD_CATEGORY] : undefined;
   const baselineField = envServer.JIRA_FIELD_BASELINE_ESTIMATE
     ? fields[envServer.JIRA_FIELD_BASELINE_ESTIMATE]
+    : undefined;
+  const currentField = envServer.JIRA_FIELD_CURRENT_ESTIMATE
+    ? fields[envServer.JIRA_FIELD_CURRENT_ESTIMATE]
     : undefined;
 
   const originalEstimate = typeof fields.timeoriginalestimate === "number" ? fields.timeoriginalestimate : null;
@@ -151,10 +172,10 @@ function toIssueRow(issue: JiraIssueResponse): NewJiraIssue {
     issueType: normaliseText(issueType?.name),
     summary: normaliseText(fields.summary) ?? issue.key,
     description: normaliseText(fields.description),
-    category: readCustomFieldValue(categoryField),
+    category: normaliseText(project?.projectCategory?.name),
     billable: readCustomFieldValue(billableField),
     baselineEstimateSeconds: hoursFieldToSeconds(baselineField) ?? originalEstimate,
-    currentEstimateSeconds: originalEstimate,
+    currentEstimateSeconds: hoursFieldToSeconds(currentField) ?? originalEstimate,
     status: normaliseText(status?.name),
     jiraUpdatedAt: typeof fields.updated === "string" ? new Date(fields.updated) : null,
   };
@@ -219,55 +240,73 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
     const liveWorklogs = worklogs.filter((worklog) => !deletedSet.has(String(worklog.id)));
 
     // ---------------------------------------------------------------
-    // 5. The issues behind those worklogs.
+    // 5. The whole book of work, and the project list.
     //
-    // worklog/list identifies an issue by numeric id, not by key, so the
-    // issue has to be fetched to learn its key, its parent and its billable
-    // status. Issues already cached are re-fetched too, because the fields
-    // that decide billing may have changed since - that is cheap at this
-    // volume and wrong to skip.
+    // Every job and deliverable is swept, not only the ones a worklog points
+    // at. A job with no hours booked to it is not noise in a system that
+    // replaces a job-and-timesheet tool - it is the job nobody has started,
+    // and omitting it makes the list quietly disagree with Jira.
+    //
+    // This also replaces what used to be one HTTP call per issue. Two requests
+    // now cover every issue and every project, and the billable fields are
+    // re-read on each run because a value that decides invoicing must never be
+    // served from a stale cache.
     // ---------------------------------------------------------------
-    const issueIds = [...new Set(liveWorklogs.map((worklog) => String(worklog.issueId)).filter(Boolean))];
+    const searchFields = [
+      ...ISSUE_FIELDS,
+      envServer.JIRA_FIELD_BILLABLE,
+      envServer.JIRA_FIELD_BASELINE_ESTIMATE,
+      envServer.JIRA_FIELD_CURRENT_ESTIMATE,
+    ].filter((field): field is string => Boolean(field));
 
-    const fetchedIssues = await mapWithConcurrency(issueIds, ISSUE_FETCH_CONCURRENCY, (issueId) =>
-      client.issue(issueId),
-    );
+    const [allIssues, allProjects] = await Promise.all([
+      client.searchIssues(JOB_LEVEL_JQL, searchFields),
+      client.projects(),
+    ]);
 
     const issuesById = new Map<string, JiraIssueResponse>();
-    const orphanedIssueIds: string[] = [];
-
-    fetchedIssues.forEach((issue, index) => {
-      if (issue) issuesById.set(String(issue.id), issue);
-      // Deleted in Jira between the worklog feed and now. Its worklogs stay,
-      // and the audit reports them as orphans rather than the sync failing.
-      else orphanedIssueIds.push(issueIds[index]);
-    });
-
-    // Parents, for the billable status a deliverable inherits. Only the ones
-    // not already fetched in this run - anything else already cached is read
-    // from the read model below.
-    const fetchedKeys = new Set([...issuesById.values()].map((issue) => issue.key));
-
-    const parentKeys = [
-      ...new Set(
-        [...issuesById.values()]
-          .map((issue) => (issue.fields?.parent as { key?: string } | undefined)?.key)
-          .filter((key): key is string => Boolean(key))
-          .filter((key) => !fetchedKeys.has(key)),
-      ),
-    ];
-
-    const fetchedParents = await mapWithConcurrency(parentKeys, ISSUE_FETCH_CONCURRENCY, (key) => client.issue(key));
-
     const issuesByKey = new Map<string, JiraIssueResponse>();
-    for (const issue of [...issuesById.values(), ...fetchedParents.filter((issue) => issue !== null)]) {
+    for (const issue of allIssues) {
+      issuesById.set(String(issue.id), issue);
       issuesByKey.set(issue.key, issue);
     }
 
-    // Parents already in the cache still need their billable status to
-    // resolve inheritance for the rows about to be written.
+    // A worklog booked to an issue type outside the sweep (a Task, a Bug, a
+    // sub-task) still has to be attributable, so those are fetched
+    // individually. Normally this list is empty.
+    const missingIssueIds = [
+      ...new Set(liveWorklogs.map((worklog) => String(worklog.issueId)).filter((id) => id && !issuesById.has(id))),
+    ];
+
+    const orphanedIssueIds: string[] = [];
+
+    if (missingIssueIds.length > 0) {
+      const extras = await mapWithConcurrency(missingIssueIds, ISSUE_FETCH_CONCURRENCY, (id) => client.issue(id));
+
+      extras.forEach((issue, index) => {
+        if (issue) {
+          issuesById.set(String(issue.id), issue);
+          issuesByKey.set(issue.key, issue);
+        } else {
+          // Deleted in Jira between the worklog feed and now. Its worklogs
+          // stay, and the audit reports them as orphans rather than the sync
+          // failing on them.
+          orphanedIssueIds.push(missingIssueIds[index]);
+        }
+      });
+    }
+
+    // Parents already cached but outside this sweep still need their billable
+    // status, to resolve what a deliverable inherits.
     const cachedIssues = await getJiraIssuesRepo();
     const cachedByKey = new Map(cachedIssues.map((issue) => [issue.issueKey, issue]));
+
+    const projectRows = allProjects.map((project) => ({
+      projectKey: project.key,
+      name: project.name,
+      category: normaliseText(project.projectCategory?.name),
+      projectType: normaliseText(project.projectTypeKey),
+    }));
 
     // ---------------------------------------------------------------
     // Build the rows.
@@ -333,6 +372,7 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
       worklogsWritten: factRows.length,
       worklogsDeleted: deletedIds.length,
       issuesWritten: issueRows.length,
+      projectsWritten: projectRows.length,
       orphanedIssueIds,
       error: null,
     };
@@ -346,6 +386,7 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
     // rolls the whole thing back, and the next run re-reads the same window.
     // ---------------------------------------------------------------
     await database.transaction().execute(async (trx) => {
+      await upsertJiraProjectsRepo(projectRows, trx);
       await upsertJiraIssuesRepo(issueRows, trx);
       await upsertWorklogFactsRepo(factRows, trx);
       await deleteWorklogFactsRepo(deletedIds, trx);

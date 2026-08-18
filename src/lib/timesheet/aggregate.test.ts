@@ -476,6 +476,57 @@ describe("rollUpBudget", () => {
     expect(byKey.get("DS-1")?.varianceSeconds).toBeNull();
     expect(byKey.get("DS-1")?.consumedRatio).toBeNull();
   });
+
+  // -----------------------------------------------------------------
+  // The job list. This is what replaces a job-and-timesheet tool, so the
+  // guarantee is that EVERY job appears - including the ones nobody has
+  // started. A job list that hides unstarted jobs is not a job list.
+  // -----------------------------------------------------------------
+  it("carries the category onto every job, including one with no time", () => {
+    expect(byKey.get("TSSS-1")?.category).toBe("External");
+    // RDP-1 has a budget and not a single worklog, and still knows what it is.
+    expect(byKey.get("RDP-1")?.category).toBe("Internal");
+    expect(byKey.get("RDP-1")?.worklogCount).toBe(0);
+  });
+
+  it("carries the job's own billable status, which its deliverables inherit", () => {
+    expect(byKey.get("TSSS-1")?.billable).toBe("Billable");
+    expect(byKey.get("DS-1")?.billable).toBe("Non-billable");
+  });
+
+  it("splits the time booked to each job", () => {
+    // TSSS-1: everything except w5, which is on DS-7.
+    expect(byKey.get("TSSS-1")?.split.billableSeconds).toBe(51300);
+    expect(byKey.get("TSSS-1")?.split.nonBillableSeconds).toBe(7200);
+    expect(byKey.get("TSSS-1")?.worklogCount).toBe(7);
+  });
+
+  it("gives an unstarted job an all-zero split rather than omitting it", () => {
+    const rdp = byKey.get("RDP-1");
+    expect(rdp?.split.billableSeconds).toBe(0);
+    expect(rdp?.split.nonBillableSeconds).toBe(0);
+    expect(rdp?.split.unsetSeconds).toBe(0);
+    // Null, not zero: no time logged is not "nought per cent billable".
+    expect(rdp?.split.billableRatio).toBeNull();
+  });
+
+  it("lists a job that has never been touched at all", () => {
+    // No estimates, no worklogs, but it is a parent, so it is a job.
+    const untouched = buildReport({
+      ...SNAPSHOT,
+      issues: [
+        ...ISSUES,
+        { issueKey: "NEW-1", parentKey: null, projectKey: "NEW", summary: "Not started", category: "Internal" },
+        { issueKey: "NEW-2", parentKey: "NEW-1", projectKey: "NEW", summary: "A deliverable" },
+      ],
+    });
+
+    const job = untouched.budget.find((row) => row.parentKey === "NEW-1");
+    expect(job).toBeDefined();
+    expect(job?.actualSeconds).toBe(0);
+    expect(job?.worklogCount).toBe(0);
+    expect(job?.parentSummary).toBe("Not started");
+  });
 });
 
 // -------------------------------------------------------------------

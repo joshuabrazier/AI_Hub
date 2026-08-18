@@ -64,9 +64,16 @@ const serverEnvSchema = z.object({
   // not by name, and the ids differ per site - so they are configuration, not
   // constants. Without them the sync still runs and those attributes come
   // back empty, which surfaces as audit findings rather than as a crash.
+  //
+  // There is deliberately no JIRA_FIELD_CATEGORY. Internal vs External is not
+  // a custom field, it is the Jira PROJECT CATEGORY, and it arrives on every
+  // issue at fields.project.projectCategory.name. Nothing to configure.
   JIRA_FIELD_BILLABLE: z.string().optional(),
-  JIRA_FIELD_CATEGORY: z.string().optional(),
   JIRA_FIELD_BASELINE_ESTIMATE: z.string().optional(),
+  JIRA_FIELD_CURRENT_ESTIMATE: z.string().optional(),
+
+  // A full working day, the denominator for utilisation.
+  WORKING_DAY_HOURS: z.coerce.number().positive().default(7.5),
 
   // Bearer token the sync trigger endpoint requires. The endpoint is inert
   // (503) until it is set, exactly like the retention job.
@@ -122,4 +129,23 @@ export const envServer = serverEnvSchema.parse({
   RETENTION_JOB_ENABLED: process.env.RETENTION_JOB_ENABLED,
 
   AUDIT_LOG_RETENTION_DAYS: process.env.AUDIT_LOG_RETENTION_DAYS,
+
+  // Every key the schema declares must be listed here too. Zod only ever sees
+  // this object, so a variable declared above and omitted below is silently
+  // undefined at runtime - which for an optional() field means no error and no
+  // clue, just a feature that reports itself unconfigured forever.
+  JIRA_BASE_URL: process.env.JIRA_BASE_URL,
+  JIRA_EMAIL: process.env.JIRA_EMAIL,
+  JIRA_API_TOKEN: process.env.JIRA_API_TOKEN,
+
+  JIRA_FIELD_BILLABLE: process.env.JIRA_FIELD_BILLABLE,
+  JIRA_FIELD_BASELINE_ESTIMATE: process.env.JIRA_FIELD_BASELINE_ESTIMATE,
+  JIRA_FIELD_CURRENT_ESTIMATE: process.env.JIRA_FIELD_CURRENT_ESTIMATE,
+
+  WORKING_DAY_HOURS: process.env.WORKING_DAY_HOURS,
+
+  JIRA_SYNC_SECRET: process.env.JIRA_SYNC_SECRET,
+  JIRA_SYNC_ENABLED: process.env.JIRA_SYNC_ENABLED,
+  JIRA_SYNC_OVERLAP_MINUTES: process.env.JIRA_SYNC_OVERLAP_MINUTES,
+  JIRA_SYNC_START_DATE: process.env.JIRA_SYNC_START_DATE,
 });

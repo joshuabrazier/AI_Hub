@@ -833,6 +833,27 @@ export type NewJiraIssue = Insertable<JiraIssues>;
 export type UpdateJiraIssue = Updateable<JiraIssues>;
 
 // -------------------------------------------------------------------
+// Jira Projects
+//
+// The project list with its category. Held so the Internal/External selector
+// can offer a category that has NO time logged against it: "Internal
+// Operations exists and has zero hours" and "there is no such thing as
+// Internal" look identical otherwise, and one of them means time is being
+// recorded somewhere other than Jira.
+// -------------------------------------------------------------------
+export interface JiraProjects {
+  projectKey: string;
+  name: string;
+  category: string | null;
+  projectType: string | null;
+  syncedAt: Generated<Date>;
+}
+
+export type JiraProject = Selectable<JiraProjects>;
+export type NewJiraProject = Insertable<JiraProjects>;
+export type UpdateJiraProject = Updateable<JiraProjects>;
+
+// -------------------------------------------------------------------
 // Worklog Facts
 // One row per Jira worklog. The primary key is Jira's own worklog id, which
 // is what makes a re-sync overwrite rather than duplicate.
@@ -920,6 +941,7 @@ export interface Database {
   enquirySubmissions: EnquirySubmissions;
   auditLogs: AuditLogs;
   // Timesheet read model, derived from Jira and rebuildable from it.
+  jiraProject: JiraProjects;
   jiraIssue: JiraIssues;
   worklogFact: WorklogFacts;
   syncWatermark: SyncWatermarks;

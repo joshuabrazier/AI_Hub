@@ -2,7 +2,15 @@ import "server-only";
 
 import { database, DBClient } from "@/lib/data/kysely-database-client";
 import { handleError } from "@/lib/handle-errors";
-import { JiraIssue, NewJiraIssue, NewWorklogFact, SyncWatermark, WorklogFact } from "../kysely-database-types";
+import {
+  JiraIssue,
+  JiraProject,
+  NewJiraIssue,
+  NewJiraProject,
+  NewWorklogFact,
+  SyncWatermark,
+  WorklogFact,
+} from "../kysely-database-types";
 
 // -------------------------------------------------------------------
 // Timesheet read-model repository
@@ -138,6 +146,44 @@ export async function upsertJiraIssuesRepo(rows: NewJiraIssue[], db: DBClient = 
 }
 
 // -------------------------------------------------------------------
+// Upsert the project list, keyed on project key.
+// -------------------------------------------------------------------
+export async function upsertJiraProjectsRepo(rows: NewJiraProject[], db: DBClient = database): Promise<number> {
+  try {
+    if (rows.length === 0) return 0;
+
+    await db
+      .insertInto("jiraProject")
+      .values(rows)
+      .onConflict((oc) =>
+        oc.column("projectKey").doUpdateSet((eb) => ({
+          name: eb.ref("excluded.name"),
+          category: eb.ref("excluded.category"),
+          projectType: eb.ref("excluded.projectType"),
+          syncedAt: new Date(),
+        })),
+      )
+      .execute();
+
+    return rows.length;
+  } catch (error) {
+    throw handleError("upsertJiraProjectsRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Every known project. Drives the Internal/External selector, including the
+// categories with no time logged against them.
+// -------------------------------------------------------------------
+export async function getJiraProjectsRepo(): Promise<JiraProject[]> {
+  try {
+    return await database.selectFrom("jiraProject").selectAll().orderBy("projectKey").execute();
+  } catch (error) {
+    throw handleError("getJiraProjectsRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
 // Facts within an inclusive date range ('YYYY-MM-DD'), for the aggregation.
 // Dates compare as strings; see kysely-database-client.ts.
 // -------------------------------------------------------------------
@@ -167,6 +213,28 @@ export async function getJiraIssuesRepo(): Promise<JiraIssue[]> {
     return await database.selectFrom("jiraIssue").selectAll().orderBy("issueKey").execute();
   } catch (error) {
     throw handleError("getJiraIssuesRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// How many facts exist in total, across every period.
+//
+// Used to tell "this month was quiet" apart from "nothing has ever synced".
+// Those look identical on an empty dashboard and mean completely different
+// things.
+// -------------------------------------------------------------------
+export async function countWorklogFactsRepo(): Promise<number> {
+  try {
+    const row = await database
+      .selectFrom("worklogFact")
+      .select((eb) => eb.fn.countAll<string>().as("total"))
+      .executeTakeFirst();
+
+    // count() comes back from Postgres as a bigint, which node-postgres hands
+    // over as a string. Number() it exactly once, here.
+    return Number(row?.total ?? 0);
+  } catch (error) {
+    throw handleError("countWorklogFactsRepo", error);
   }
 }
 

@@ -1,0 +1,1852 @@
+
+> portal-base@0.1.0 dev C:\dev\Template-PWA
+> next dev --webpack
+
+⚠ Port 3000 is in use by process 15780, using available port 3001 instead.
+▲ Next.js 16.2.10 (webpack)
+- Local:         http://localhost:3001
+- Network:       http://172.22.63.29:3001
+- Environments: .env
+✓ Ready in 850ms
+
+○ Compiling proxy ...
+Query executed :  {
+  durationMs: 37.4734000004828,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 90.63410000130534,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 31.30909999832511,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 75.60430000349879,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+○ Compiling /admin/timesheets ...
+ GET /admin/timesheets?month=2026-08&category=External&person=712020%3A1916ed76-9174-4ef0-8968-e0d72bb69d60 200 in 56s (next.js: 47s, proxy.ts: 7.2s, application-code: 1926ms)
+Query executed :  {
+  durationMs: 192.36540000140667,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 25.381300002336502,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 34.180399999022484,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 126.98409999907017,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 135.5093000009656,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 167.81729999929667,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 1361.69450000301,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 1371.2364999987185,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 1337.5185000002384,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 32.12709999829531,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 23.427600000053644,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 17.318299997597933,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 18.455099999904633,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 18.60579999908805,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 16.6266999989748,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 24.691199999302626,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 24.859400000423193,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 33.68570000305772,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 11.422100000083447,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-10', '2026-08-16' ]
+}
+Query executed :  {
+  durationMs: 135.61309999972582,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-10', '2026-08-16' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A1916ed76-9174-4ef0-8968-e0d72bb69d60 200 in 60s (next.js: 47s, proxy.ts: 7.1s, application-code: 6.0s)
+○ Compiling /manifest.webmanifest ...
+ GET /manifest.webmanifest 200 in 27.2s (next.js: 27.1s, application-code: 95ms)
+Query executed :  {
+  durationMs: 5.447200000286102,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.995999999344349,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 3.245200000703335,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.9912999980151653,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 11.667500000447035,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 17.80959999933839,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 11.737999998033047,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+ GET /api/auth/get-session 200 in 20.1s (next.js: 19.9s, application-code: 283ms)
+Query executed :  {
+  durationMs: 15.966899998486042,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 23.933299999684095,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 33.22860000282526,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 11.423000000417233,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 12.128700003027916,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 10.709199998527765,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 17.09059999883175,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 23.34510000050068,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 8.362900000065565,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 9.171599999070168,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 12.69199999794364,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 22.40769999846816,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 16.18979999795556,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+Query executed :  {
+  durationMs: 68.16409999877214,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 4.719099998474121,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A1916ed76-9174-4ef0-8968-e0d72bb69d60&week=2026-08-17 200 in 10.6s (next.js: 119ms, proxy.ts: 9.6s, application-code: 877ms)
+Query executed :  {
+  durationMs: 12.07320000231266,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 1.790099997073412,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A1916ed76-9174-4ef0-8968-e0d72bb69d60&week=2026-08-17 200 in 646ms (next.js: 9ms, proxy.ts: 37ms, application-code: 600ms)
+ GET /manifest.webmanifest 200 in 18ms (next.js: 7ms, application-code: 10ms)
+Query executed :  {
+  durationMs: 0.9913000017404556,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.3016999997198582,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 6.139299999922514,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 5.107300002127886,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 3.000500001013279,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 5.733600001782179,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  { durationMs: 1.3407000005245209, sql: 'begin', params: [] }
+Query executed :  {
+  durationMs: 11.9391999989748,
+  sql: 'insert into "jira_project" ("project_key", "name", "category", "project_type") values ($1, $2, $3, $4), ($5, $6, $7, $8), ($9, $10, $11, $12), ($13, $14, $15, $16) on conflict ("project_key") do update set "name" = "excluded"."name", "category" = "excluded"."category", "project_type" = "excluded"."project_type", "synced_at" = $17',
+  params: [
+    'BE',
+    'Bowhill Engineering',
+    'External',
+    'business',
+    'IO',
+    'Internal Operations',
+    'Internal',
+    'business',
+    'RDP',
+    'R&D Programme',
+    'Internal',
+    'business',
+    'TSSS',
+    'Trainer Suzie Swim School',
+    'External',
+    'business',
+    2026-08-18T06:42:03.406Z
+  ]
+}
+Query executed :  {
+  durationMs: 32.861700002104044,
+  sql: 'insert into "jira_issue" ("issue_key", "parent_key", "project_key", "issue_type", "summary", "description", "category", "billable", "baseline_estimate_seconds", "current_estimate_seconds", "status", "jira_updated_at") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12), ($13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24), ($25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36), ($37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48), ($49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60), ($61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72), ($73, $74, $75, $76, $77, $78, $79, $80, $81, $82, $83, $84), ($85, $86, $87, $88, $89, $90, $91, $92, $93, $94, $95, $96), ($97, $98, $99, $100, $101, $102, $103, $104, $105, $106, $107, $108), ($109, $110, $111, $112, $113, $114, $115, $116, $117, $118, $119, $120), ($121, $122, $123, $124, $125, $126, $127, $128, $129, $130, $131, $132), ($133, $134, $135, $136, $137, $138, $139, $140, $141, $142, $143, $144), ($145, $146, $147, $148, $149, $150, $151, $152, $153, $154, $155, $156), ($157, $158, $159, $160, $161, $162, $163, $164, $165, $166, $167, $168), ($169, $170, $171, $172, $173, $174, $175, $176, $177, $178, $179, $180), ($181, $182, $183, $184, $185, $186, $187, $188, $189, $190, $191, $192), ($193, $194, $195, $196, $197, $198, $199, $200, $201, $202, $203, $204), ($205, $206, $207, $208, $209, $210, $211, $212, $213, $214, $215, $216), ($217, $218, $219, $220, $221, $222, $223, $224, $225, $226, $227, $228), ($229, $230, $231, $232, $233, $234, $235, $236, $237, $238, $239, $240), ($241, $242, $243, $244, $245, $246, $247, $248, $249, $250, $251, $252), ($253, $254, $255, $256, $257, $258, $259, $260, $261, $262, $263, $264), ($265, $266, $267, $268, $269, $270, $271, $272, $273, $274, $275, $276), ($277, $278, $279, $280, $281, $282, $283, $284, $285, $286, $287, $288), ($289, $290, $291, $292, $293, $294, $295, $296, $297, $298, $299, $300), ($301, $302, $303, $304, $305, $306, $307, $308, $309, $310, $311, $312), ($313, $314, $315, $316, $317, $318, $319, $320, $321, $322, $323, $324), ($325, $326, $327, $328, $329, $330, $331, $332, $333, $334, $335, $336), ($337, $338, $339, $340, $341, $342, $343, $344, $345, $346, $347, $348), ($349, $350, $351, $352, $353, $354, $355, $356, $357, $358, $359, $360), ($361, $362, $363, $364, $365, $366, $367, $368, $369, $370, $371, $372), ($373, $374, $375, $376, $377, $378, $379, $380, $381, $382, $383, $384), ($385, $386, $387, $388, $389, $390, $391, $392, $393, $394, $395, $396), ($397, $398, $399, $400, $401, $402, $403, $404, $405, $406, $407, $408), ($409, $410, $411, $412, $413, $414, $415, $416, $417, $418, $419, $420), ($421, $422, $423, $424, $425, $426, $427, $428, $429, $430, $431, $432), ($433, $434, $435, $436, $437, $438, $439, $440, $441, $442, $443, $444), ($445, $446, $447, $448, $449, $450, $451, $452, $453, $454, $455, $456), ($457, $458, $459, $460, $461, $462, $463, $464, $465, $466, $467, $468), ($469, $470, $471, $472, $473, $474, $475, $476, $477, $478, $479, $480), ($481, $482, $483, $484, $485, $486, $487, $488, $489, $490, $491, $492), ($493, $494, $495, $496, $497, $498, $499, $500, $501, $502, $503, $504), ($505, $506, $507, $508, $509, $510, $511, $512, $513, $514, $515, $516), ($517, $518, $519, $520, $521, $522, $523, $524, $525, $526, $527, $528), ($529, $530, $531, $532, $533, $534, $535, $536, $537, $538, $539, $540), ($541, $542, $543, $544, $545, $546, $547, $548, $549, $550, $551, $552), ($553, $554, $555, $556, $557, $558, $559, $560, $561, $562, $563, $564), ($565, $566, $567, $568, $569, $570, $571, $572, $573, $574, $575, $576), ($577, $578, $579, $580, $581, $582, $583, $584, $585, $586, $587, $588), ($589, $590, $591, $592, $593, $594, $595, $596, $597, $598, $599, $600), ($601, $602, $603, $604, $605, $606, $607, $608, $609, $610, $611, $612), ($613, $614, $615, $616, $617, $618, $619, $620, $621, $622, $623, $624), ($625, $626, $627, $628, $629, $630, $631, $632, $633, $634, $635, $636), ($637, $638, $639, $640, $641, $642, $643, $644, $645, $646, $647, $648), ($649, $650, $651, $652, $653, $654, $655, $656, $657, $658, $659, $660), ($661, $662, $663, $664, $665, $666, $667, $668, $669, $670, $671, $672), ($673, $674, $675, $676, $677, $678, $679, $680, $681, $682, $683, $684), ($685, $686, $687, $688, $689, $690, $691, $692, $693, $694, $695, $696), ($697, $698, $699, $700, $701, $702, $703, $704, $705, $706, $707, $708), ($709, $710, $711, $712, $713, $714, $715, $716, $717, $718, $719, $720), ($721, $722, $723, $724, $725, $726, $727, $728, $729, $730, $731, $732), ($733, $734, $735, $736, $737, $738, $739, $740, $741, $742, $743, $744), ($745, $746, $747, $748, $749, $750, $751, $752, $753, $754, $755, $756), ($757, $758, $759, $760, $761, $762, $763, $764, $765, $766, $767, $768), ($769, $770, $771, $772, $773, $774, $775, $776, $777, $778, $779, $780), ($781, $782, $783, $784, $785, $786, $787, $788, $789, $790, $791, $792), ($793, $794, $795, $796, $797, $798, $799, $800, $801, $802, $803, $804), ($805, $806, $807, $808, $809, $810, $811, $812, $813, $814, $815, $816), ($817, $818, $819, $820, $821, $822, $823, $824, $825, $826, $827, $828), ($829, $830, $831, $832, $833, $834, $835, $836, $837, $838, $839, $840), ($841, $842, $843, $844, $845, $846, $847, $848, $849, $850, $851, $852), ($853, $854, $855, $856, $857, $858, $859, $860, $861, $862, $863, $864), ($865, $866, $867, $868, $869, $870, $871, $872, $873, $874, $875, $876), ($877, $878, $879, $880, $881, $882, $883, $884, $885, $886, $887, $888), ($889, $890, $891, $892, $893, $894, $895, $896, $897, $898, $899, $900), ($901, $902, $903, $904, $905, $906, $907, $908, $909, $910, $911, $912) on conflict ("issue_key") do update set "parent_key" = "excluded"."parent_key", "project_key" = "excluded"."project_key", "issue_type" = "excluded"."issue_type", "summary" = "excluded"."summary", "description" = "excluded"."description", "category" = "excluded"."category", "billable" = "excluded"."billable", "baseline_estimate_seconds" = "excluded"."baseline_estimate_seconds", "current_estimate_seconds" = "excluded"."current_estimate_seconds", "status" = "excluded"."status", "jira_updated_at" = "excluded"."jira_updated_at", "synced_at" = $913',
+  params: [
+    'IO-1',
+    null,
+    'IO',
+    'Project',
+    'Administration',
+    'Standing category. Internal admin time: internal meetings, team activities, general overhead. Never closes. No estimate, no baseline, no variance. Log time directly against this item.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-18T05:33:35.895Z,
+    'IO-2',
+    null,
+    'IO',
+    'Project',
+    'Training',
+    'Standing category. Time spent on training and professional development, whether attending or preparing. Never closes. No estimate, no baseline, no variance. Log time directly against this item.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-12T05:19:45.341Z,
+    'IO-3',
+    null,
+    'IO',
+    'Project',
+    'Coaching and Mentoring',
+    'Standing category. Time spent coaching or mentoring others, and time received as the person being mentored. Never closes. No estimate, no baseline, no variance. Log time directly against this item.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-12T05:20:01.969Z,
+    'IO-4',
+    null,
+    'IO',
+    'Project',
+    'Leave',
+    `Standing category. Annual leave, personal leave, public holidays. IMPORTANT: this is absence, not work. Carries the label "absence" so it can be excluded from utilisation calculations. Leave should reduce someone's available hours, not count against them as unproductive non-billable work. Any utilisation query should exclude it: labels != absence Never closes. No estimate, no baseline, no variance. Log time directly against this item.`,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-12T05:20:12.895Z,
+    'IO-5',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'Internal Meetings',
+    null,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-18T05:27:49.978Z,
+    'IO-6',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'PC Downtime',
+    null,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'To Do',
+    2026-08-18T05:25:14.512Z,
+    'IO-7',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'Quarterly Update',
+    'Quarterly update and other internal get together.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'To Do',
+    2026-08-12T06:01:59.944Z,
+    'IO-8',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'Team Activities',
+    null,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'To Do',
+    2026-08-12T06:02:21.535Z,
+    'IO-9',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    ... 813 more items
+  ]
+}
+Query executed :  {
+  durationMs: 30.336500000208616,
+  sql: 'insert into "worklog_fact" ("worklog_id", "issue_key", "parent_key", "project_key", "category", "person_id", "person_name", "work_date", "start_second", "time_spent_seconds", "billable", "billable_source", "narrative", "jira_updated_at") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14), ($15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28), ($29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42), ($43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56), ($57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70), ($71, $72, $73, $74, $75, $76, $77, $78, $79, $80, $81, $82, $83, $84), ($85, $86, $87, $88, $89, $90, $91, $92, $93, $94, $95, $96, $97, $98), ($99, $100, $101, $102, $103, $104, $105, $106, $107, $108, $109, $110, $111, $112), ($113, $114, $115, $116, $117, $118, $119, $120, $121, $122, $123, $124, $125, $126), ($127, $128, $129, $130, $131, $132, $133, $134, $135, $136, $137, $138, $139, $140), ($141, $142, $143, $144, $145, $146, $147, $148, $149, $150, $151, $152, $153, $154), ($155, $156, $157, $158, $159, $160, $161, $162, $163, $164, $165, $166, $167, $168), ($169, $170, $171, $172, $173, $174, $175, $176, $177, $178, $179, $180, $181, $182), ($183, $184, $185, $186, $187, $188, $189, $190, $191, $192, $193, $194, $195, $196), ($197, $198, $199, $200, $201, $202, $203, $204, $205, $206, $207, $208, $209, $210), ($211, $212, $213, $214, $215, $216, $217, $218, $219, $220, $221, $222, $223, $224), ($225, $226, $227, $228, $229, $230, $231, $232, $233, $234, $235, $236, $237, $238), ($239, $240, $241, $242, $243, $244, $245, $246, $247, $248, $249, $250, $251, $252), ($253, $254, $255, $256, $257, $258, $259, $260, $261, $262, $263, $264, $265, $266), ($267, $268, $269, $270, $271, $272, $273, $274, $275, $276, $277, $278, $279, $280), ($281, $282, $283, $284, $285, $286, $287, $288, $289, $290, $291, $292, $293, $294), ($295, $296, $297, $298, $299, $300, $301, $302, $303, $304, $305, $306, $307, $308), ($309, $310, $311, $312, $313, $314, $315, $316, $317, $318, $319, $320, $321, $322), ($323, $324, $325, $326, $327, $328, $329, $330, $331, $332, $333, $334, $335, $336), ($337, $338, $339, $340, $341, $342, $343, $344, $345, $346, $347, $348, $349, $350), ($351, $352, $353, $354, $355, $356, $357, $358, $359, $360, $361, $362, $363, $364), ($365, $366, $367, $368, $369, $370, $371, $372, $373, $374, $375, $376, $377, $378), ($379, $380, $381, $382, $383, $384, $385, $386, $387, $388, $389, $390, $391, $392), ($393, $394, $395, $396, $397, $398, $399, $400, $401, $402, $403, $404, $405, $406) on conflict ("worklog_id") do update set "issue_key" = "excluded"."issue_key", "parent_key" = "excluded"."parent_key", "project_key" = "excluded"."project_key", "category" = "excluded"."category", "person_id" = "excluded"."person_id", "person_name" = "excluded"."person_name", "work_date" = "excluded"."work_date", "start_second" = "excluded"."start_second", "time_spent_seconds" = "excluded"."time_spent_seconds", "billable" = "excluded"."billable", "billable_source" = "excluded"."billable_source", "narrative" = "excluded"."narrative", "jira_updated_at" = "excluded"."jira_updated_at", "synced_at" = $407',
+  params: [
+    '10046',
+    'TSSS-70',
+    'TSSS-1',
+    'TSSS',
+    'External',
+    '712020:1916ed76-9174-4ef0-8968-e0d72bb69d60',
+    "Louis D'Odorico",
+    '2026-08-18',
+    37500,
+    2100,
+    'Billable',
+    'parent',
+    'Wired SMS into the notification send path: per-recipient channel resolution, mobile numbers pulled with the recipient rows, one batched send per broadcast, and buildSmsBody trimming the rich-text body to a 160 character plain-text message with the school prefix. Family opt-out gates all three channels; Urgent bypasses preferences and goes SMS only.',
+    2026-08-18T03:01:48.995Z,
+    '10030',
+    'RDP-8',
+    'RDP-2',
+    'RDP',
+    'Internal',
+    '712020:1916ed76-9174-4ef0-8968-e0d72bb69d60',
+    "Louis D'Odorico",
+    '2026-08-13',
+    37800,
+    1800,
+    'Non-billable',
+    'issue',
+    'Creating the Trainer Suzie Swim School space under External, building the Notifications project and its eight deliverables from the web push specification, and setting the 22.5 hour estimates on them. Same-day reconstruction; start time within the day is nominal.',
+    2026-08-13T07:18:02.513Z,
+    '10038',
+    'TSSS-61',
+    'TSSS-59',
+    'TSSS',
+    'External',
+    '712020:1916ed76-9174-4ef0-8968-e0d72bb69d60',
+    "Louis D'Odorico",
+    '2026-08-13',
+    34800,
+    1200,
+    'Billable',
+    'parent',
+    'Swept 71 dashes across 35 files, updated the two affected test files, and re-ran the full suite to confirm nothing broke.',
+    2026-08-13T07:27:24.468Z,
+    '10053',
+    'IO-6',
+    'IO-1',
+    'IO',
+    'Internal',
+    '712020:6be5e0d5-b796-42bc-9b2b-e077bc05f01a',
+    'Philipp Rohlfshagen',
+    '2026-08-18',
+    35709,
+    18000,
+    'Non-billable',
+    'issue',
+    null,
+    2026-08-18T05:25:14.500Z,
+    '10027',
+    'RDP-5',
+    'RDP-2',
+    'RDP',
+    'Internal',
+    '712020:1916ed76-9174-4ef0-8968-e0d72bb69d60',
+    "Louis D'Odorico",
+    '2026-08-13',
+    33300,
+    900,
+    'Non-billable',
+    'issue',
+    'Setting up the Project, Deliverable and Sub-task hierarchy levels, and renaming the default Story type to Deliverable. Same-day reconstruction; start time within the day is nominal.',
+    2026-08-13T07:17:20.852Z,
+    '10033',
+    'RDP-11',
+    'RDP-2',
+    'RDP',
+    'Internal',
+    '712020:1916ed76-9174-4ef0-8968-e0d72bb69d60',
+    "Louis D'Odorico",
+    '2026-08-13',
+    42300,
+    1800,
+    'Non-billable',
+    'issue',
+    'Testing what Jira can report natively: configuring a shared filter, the default dashboard and its gadgets, and list view column defaults. Established the four limits that justify building the separate reporting application, including that grouping cannot be defaulted for the organisation and that JQL cannot compare two fields. Same-day reconstruction; start time within the day is nominal.',
+    2026-08-13T07:19:13.273Z,
+    '10048',
+    'TSSS-72',
+    'TSSS-1',
+    'TSSS',
+    'External',
+    '712020:1916ed76-9174-4ef0-8968-e0d72bb69d60',
+    "Louis D'Odorico",
+    '2026-08-18',
+    40800,
+    1200,
+    'Billable',
+    'parent',
+    'Recorded sent_email, sent_push and sent_sms per recipient row and surfaced them as channel badges in the sent-notifications read receipts, with an SMS count on the list item. Migration plus repository, DTO and view changes.',
+    2026-08-18T03:02:05.635Z,
+    '10036',
+    'RDP-14',
+    ... 307 more items
+  ]
+}
+Query executed :  {
+  durationMs: 1.9895000010728836,
+  sql: 'insert into "sync_watermark" ("job_name", "last_synced_at", "last_run_at", "last_success_at", "last_error", "last_updated_count", "last_deleted_count") values ($1, $2, $3, $4, $5, $6, $7) on conflict ("job_name") do update set "last_synced_at" = $8, "last_run_at" = $9, "last_success_at" = $10, "last_error" = $11, "last_updated_count" = $12, "last_deleted_count" = $13, "updated_at" = $14',
+  params: [
+    'jira-worklog',
+    2026-08-18T06:42:01.718Z,
+    2026-08-18T06:42:03.497Z,
+    2026-08-18T06:42:03.497Z,
+    null,
+    29,
+    0,
+    2026-08-18T06:42:01.718Z,
+    2026-08-18T06:42:03.497Z,
+    2026-08-18T06:42:03.497Z,
+    null,
+    29,
+    0,
+    2026-08-18T06:42:03.497Z
+  ]
+}
+Query executed :  { durationMs: 3.206300001591444, sql: 'commit', params: [] }
+Query executed :  {
+  durationMs: 15.103799998760223,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 16.50329999998212,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 21.349499996751547,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 23.96849999949336,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 7.430900000035763,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 13.360299997031689,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 15.556499999016523,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 13.192500002682209,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 23.752500001341105,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 2.6462000012397766,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+Query executed :  {
+  durationMs: 1.8283999972045422,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.6605000011622906,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 26.42449999973178,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 2.0103999972343445,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 53.4261000007391,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 9.28269999846816,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 10.543499998748302,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 11.880399998277426,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 21.05460000038147,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 21.27989999949932,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 27.63279999792576,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 3.031900003552437,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ POST /admin/timesheets?month=2026-08&person=712020%3A1916ed76-9174-4ef0-8968-e0d72bb69d60&week=2026-08-17 200 in 3.5s (next.js: 7ms, proxy.ts: 32ms, application-code: 3.4s)
+  └─ ƒ syncTimesheetsNowAction() in 1906ms ..//src/features/admin-timesheets/admin-timesheets.actions.ts
+ GET /admin/timesheets?month=2026-08&person=712020%3A1916ed76-9174-4ef0-8968-e0d72bb69d60&week=2026-08-17 200 in 599ms (next.js: 11ms, proxy.ts: 129ms, application-code: 459ms)
+ GET /manifest.webmanifest 200 in 19ms (next.js: 5ms, application-code: 14ms)
+Query executed :  {
+  durationMs: 5.284400001168251,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.301600001752377,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.08729999884963,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.883099999278784,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 7.618300002068281,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 6.34739999845624,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 3.030000001192093,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 7.531099997460842,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 5.7653999999165535,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 2.570600003004074,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A6be5e0d5-b796-42bc-9b2b-e077bc05f01a 200 in 386ms (next.js: 7ms, proxy.ts: 90ms, application-code: 290ms)
+ GET /manifest.webmanifest 200 in 19ms (next.js: 8ms, application-code: 11ms)
+Query executed :  {
+  durationMs: 9.298200000077486,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 7.853100001811981,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 6.76239999756217,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 5.11089999973774,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 9.039900001138449,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 6.880699999630451,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 8.532499998807907,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 6.3108000010252,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 2.9358000010252,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 5.79280000180006,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A89ea0146-746d-4f80-acbd-d06c045d3db4 200 in 833ms (next.js: 54ms, proxy.ts: 234ms, application-code: 545ms)
+ GET /manifest.webmanifest 200 in 28ms (next.js: 8ms, application-code: 20ms)
+Query executed :  {
+  durationMs: 1.535800002515316,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.374200001358986,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.9322999976575375,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 5.326200000941753,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.211500000208616,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 5.860199999064207,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 9.827099997550249,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 9.3918999992311,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 11.879200000315905,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 5.533100001513958,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A6be5e0d5-b796-42bc-9b2b-e077bc05f01a 200 in 212ms (next.js: 8ms, proxy.ts: 37ms, application-code: 167ms)
+ GET /manifest.webmanifest 200 in 38ms (next.js: 26ms, application-code: 12ms)
+Query executed :  {
+  durationMs: 1.5040999986231327,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.2802000008523464,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+○ Compiling /admin/timesheets/review ...
+Query executed :  {
+  durationMs: 6.274900000542402,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 8.697000000625849,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 8.033399999141693,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 4.756000000983477,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 6.8310999982059,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 9.92339999973774,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 3.7177000008523464,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 5.657999999821186,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets/review?month=2026-08&person=712020%3A6be5e0d5-b796-42bc-9b2b-e077bc05f01a 200 in 13.4s (next.js: 12.3s, proxy.ts: 40ms, application-code: 1079ms)
+ GET /manifest.webmanifest 200 in 39ms (next.js: 26ms, application-code: 13ms)
+Query executed :  {
+  durationMs: 5.754099998623133,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.341499999165535,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.424500003457069,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.727299999445677,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 7.358500000089407,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 6.139400001615286,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 7.823699999600649,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 5.792400002479553,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 4.117300000041723,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 7.003699999302626,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A6be5e0d5-b796-42bc-9b2b-e077bc05f01a 200 in 1287ms (next.js: 46ms, proxy.ts: 855ms, application-code: 386ms)
+ GET /manifest.webmanifest 200 in 15ms (next.js: 5ms, application-code: 10ms)
+Query executed :  {
+  durationMs: 1.539699997752905,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.6265999972820282,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 4.762600000947714,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.483899999409914,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 6.108500000089407,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 7.176699999719858,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 8.922200001776218,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 15.122099999338388,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 14.960300002247095,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 1.4492999985814095,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08 200 in 300ms (next.js: 7ms, proxy.ts: 33ms, application-code: 259ms)
+ GET /manifest.webmanifest 200 in 27ms (next.js: 16ms, application-code: 11ms)
+○ Compiling /api/auth/[...all] ...
+Query executed :  {
+  durationMs: 5.54109999909997,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.0898999981582165,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+ GET /api/auth/get-session 200 in 11.5s (next.js: 11.4s, application-code: 128ms)
+Query executed :  {
+  durationMs: 18.418800000101328,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.456199999898672,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+ GET /api/auth/get-session 200 in 193ms (next.js: 49ms, application-code: 145ms)
+Query executed :  {
+  durationMs: 5.513399999588728,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.906600002199411,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 4.9478999972343445,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.720100000500679,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 3.4587000012397766,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 11.9206000007689,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  { durationMs: 8.480399999767542, sql: 'begin', params: [] }
+Query executed :  {
+  durationMs: 4.201699998229742,
+  sql: 'insert into "jira_project" ("project_key", "name", "category", "project_type") values ($1, $2, $3, $4), ($5, $6, $7, $8), ($9, $10, $11, $12), ($13, $14, $15, $16) on conflict ("project_key") do update set "name" = "excluded"."name", "category" = "excluded"."category", "project_type" = "excluded"."project_type", "synced_at" = $17',
+  params: [
+    'BE',
+    'Bowhill Engineering',
+    'External',
+    'business',
+    'IO',
+    'Internal Operations',
+    'Internal',
+    'business',
+    'RDP',
+    'R&D Programme',
+    'Internal',
+    'business',
+    'TSSS',
+    'Trainer Suzie Swim School',
+    'External',
+    'business',
+    2026-08-18T06:53:05.430Z
+  ]
+}
+Query executed :  {
+  durationMs: 19.41660000011325,
+  sql: 'insert into "jira_issue" ("issue_key", "parent_key", "project_key", "issue_type", "summary", "description", "category", "billable", "baseline_estimate_seconds", "current_estimate_seconds", "status", "jira_updated_at") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12), ($13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24), ($25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36), ($37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48), ($49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60), ($61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72), ($73, $74, $75, $76, $77, $78, $79, $80, $81, $82, $83, $84), ($85, $86, $87, $88, $89, $90, $91, $92, $93, $94, $95, $96), ($97, $98, $99, $100, $101, $102, $103, $104, $105, $106, $107, $108), ($109, $110, $111, $112, $113, $114, $115, $116, $117, $118, $119, $120), ($121, $122, $123, $124, $125, $126, $127, $128, $129, $130, $131, $132), ($133, $134, $135, $136, $137, $138, $139, $140, $141, $142, $143, $144), ($145, $146, $147, $148, $149, $150, $151, $152, $153, $154, $155, $156), ($157, $158, $159, $160, $161, $162, $163, $164, $165, $166, $167, $168), ($169, $170, $171, $172, $173, $174, $175, $176, $177, $178, $179, $180), ($181, $182, $183, $184, $185, $186, $187, $188, $189, $190, $191, $192), ($193, $194, $195, $196, $197, $198, $199, $200, $201, $202, $203, $204), ($205, $206, $207, $208, $209, $210, $211, $212, $213, $214, $215, $216), ($217, $218, $219, $220, $221, $222, $223, $224, $225, $226, $227, $228), ($229, $230, $231, $232, $233, $234, $235, $236, $237, $238, $239, $240), ($241, $242, $243, $244, $245, $246, $247, $248, $249, $250, $251, $252), ($253, $254, $255, $256, $257, $258, $259, $260, $261, $262, $263, $264), ($265, $266, $267, $268, $269, $270, $271, $272, $273, $274, $275, $276), ($277, $278, $279, $280, $281, $282, $283, $284, $285, $286, $287, $288), ($289, $290, $291, $292, $293, $294, $295, $296, $297, $298, $299, $300), ($301, $302, $303, $304, $305, $306, $307, $308, $309, $310, $311, $312), ($313, $314, $315, $316, $317, $318, $319, $320, $321, $322, $323, $324), ($325, $326, $327, $328, $329, $330, $331, $332, $333, $334, $335, $336), ($337, $338, $339, $340, $341, $342, $343, $344, $345, $346, $347, $348), ($349, $350, $351, $352, $353, $354, $355, $356, $357, $358, $359, $360), ($361, $362, $363, $364, $365, $366, $367, $368, $369, $370, $371, $372), ($373, $374, $375, $376, $377, $378, $379, $380, $381, $382, $383, $384), ($385, $386, $387, $388, $389, $390, $391, $392, $393, $394, $395, $396), ($397, $398, $399, $400, $401, $402, $403, $404, $405, $406, $407, $408), ($409, $410, $411, $412, $413, $414, $415, $416, $417, $418, $419, $420), ($421, $422, $423, $424, $425, $426, $427, $428, $429, $430, $431, $432), ($433, $434, $435, $436, $437, $438, $439, $440, $441, $442, $443, $444), ($445, $446, $447, $448, $449, $450, $451, $452, $453, $454, $455, $456), ($457, $458, $459, $460, $461, $462, $463, $464, $465, $466, $467, $468), ($469, $470, $471, $472, $473, $474, $475, $476, $477, $478, $479, $480), ($481, $482, $483, $484, $485, $486, $487, $488, $489, $490, $491, $492), ($493, $494, $495, $496, $497, $498, $499, $500, $501, $502, $503, $504), ($505, $506, $507, $508, $509, $510, $511, $512, $513, $514, $515, $516), ($517, $518, $519, $520, $521, $522, $523, $524, $525, $526, $527, $528), ($529, $530, $531, $532, $533, $534, $535, $536, $537, $538, $539, $540), ($541, $542, $543, $544, $545, $546, $547, $548, $549, $550, $551, $552), ($553, $554, $555, $556, $557, $558, $559, $560, $561, $562, $563, $564), ($565, $566, $567, $568, $569, $570, $571, $572, $573, $574, $575, $576), ($577, $578, $579, $580, $581, $582, $583, $584, $585, $586, $587, $588), ($589, $590, $591, $592, $593, $594, $595, $596, $597, $598, $599, $600), ($601, $602, $603, $604, $605, $606, $607, $608, $609, $610, $611, $612), ($613, $614, $615, $616, $617, $618, $619, $620, $621, $622, $623, $624), ($625, $626, $627, $628, $629, $630, $631, $632, $633, $634, $635, $636), ($637, $638, $639, $640, $641, $642, $643, $644, $645, $646, $647, $648), ($649, $650, $651, $652, $653, $654, $655, $656, $657, $658, $659, $660), ($661, $662, $663, $664, $665, $666, $667, $668, $669, $670, $671, $672), ($673, $674, $675, $676, $677, $678, $679, $680, $681, $682, $683, $684), ($685, $686, $687, $688, $689, $690, $691, $692, $693, $694, $695, $696), ($697, $698, $699, $700, $701, $702, $703, $704, $705, $706, $707, $708), ($709, $710, $711, $712, $713, $714, $715, $716, $717, $718, $719, $720), ($721, $722, $723, $724, $725, $726, $727, $728, $729, $730, $731, $732), ($733, $734, $735, $736, $737, $738, $739, $740, $741, $742, $743, $744), ($745, $746, $747, $748, $749, $750, $751, $752, $753, $754, $755, $756), ($757, $758, $759, $760, $761, $762, $763, $764, $765, $766, $767, $768), ($769, $770, $771, $772, $773, $774, $775, $776, $777, $778, $779, $780), ($781, $782, $783, $784, $785, $786, $787, $788, $789, $790, $791, $792), ($793, $794, $795, $796, $797, $798, $799, $800, $801, $802, $803, $804), ($805, $806, $807, $808, $809, $810, $811, $812, $813, $814, $815, $816), ($817, $818, $819, $820, $821, $822, $823, $824, $825, $826, $827, $828), ($829, $830, $831, $832, $833, $834, $835, $836, $837, $838, $839, $840), ($841, $842, $843, $844, $845, $846, $847, $848, $849, $850, $851, $852), ($853, $854, $855, $856, $857, $858, $859, $860, $861, $862, $863, $864), ($865, $866, $867, $868, $869, $870, $871, $872, $873, $874, $875, $876), ($877, $878, $879, $880, $881, $882, $883, $884, $885, $886, $887, $888), ($889, $890, $891, $892, $893, $894, $895, $896, $897, $898, $899, $900), ($901, $902, $903, $904, $905, $906, $907, $908, $909, $910, $911, $912) on conflict ("issue_key") do update set "parent_key" = "excluded"."parent_key", "project_key" = "excluded"."project_key", "issue_type" = "excluded"."issue_type", "summary" = "excluded"."summary", "description" = "excluded"."description", "category" = "excluded"."category", "billable" = "excluded"."billable", "baseline_estimate_seconds" = "excluded"."baseline_estimate_seconds", "current_estimate_seconds" = "excluded"."current_estimate_seconds", "status" = "excluded"."status", "jira_updated_at" = "excluded"."jira_updated_at", "synced_at" = $913',
+  params: [
+    'IO-1',
+    null,
+    'IO',
+    'Project',
+    'Administration',
+    'Standing category. Internal admin time: internal meetings, team activities, general overhead. Never closes. No estimate, no baseline, no variance. Log time directly against this item.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-18T05:33:35.895Z,
+    'IO-2',
+    null,
+    'IO',
+    'Project',
+    'Training',
+    'Standing category. Time spent on training and professional development, whether attending or preparing. Never closes. No estimate, no baseline, no variance. Log time directly against this item.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-12T05:19:45.341Z,
+    'IO-3',
+    null,
+    'IO',
+    'Project',
+    'Coaching and Mentoring',
+    'Standing category. Time spent coaching or mentoring others, and time received as the person being mentored. Never closes. No estimate, no baseline, no variance. Log time directly against this item.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-12T05:20:01.969Z,
+    'IO-4',
+    null,
+    'IO',
+    'Project',
+    'Leave',
+    `Standing category. Annual leave, personal leave, public holidays. IMPORTANT: this is absence, not work. Carries the label "absence" so it can be excluded from utilisation calculations. Leave should reduce someone's available hours, not count against them as unproductive non-billable work. Any utilisation query should exclude it: labels != absence Never closes. No estimate, no baseline, no variance. Log time directly against this item.`,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-12T05:20:12.895Z,
+    'IO-5',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'Internal Meetings',
+    null,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-18T05:27:49.978Z,
+    'IO-6',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'PC Downtime',
+    null,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'To Do',
+    2026-08-18T05:25:14.512Z,
+    'IO-7',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'Quarterly Update',
+    'Quarterly update and other internal get together.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'To Do',
+    2026-08-12T06:01:59.944Z,
+    'IO-8',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'Team Activities',
+    null,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'To Do',
+    2026-08-12T06:02:21.535Z,
+    'IO-9',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    ... 813 more items
+  ]
+}
+Query executed :  {
+  durationMs: 1.819700002670288,
+  sql: 'insert into "sync_watermark" ("job_name", "last_synced_at", "last_run_at", "last_success_at", "last_error", "last_updated_count", "last_deleted_count") values ($1, $2, $3, $4, $5, $6, $7) on conflict ("job_name") do update set "last_synced_at" = $8, "last_run_at" = $9, "last_success_at" = $10, "last_error" = $11, "last_updated_count" = $12, "last_deleted_count" = $13, "updated_at" = $14',
+  params: [
+    'jira-worklog',
+    2026-08-18T06:53:04.588Z,
+    2026-08-18T06:53:05.466Z,
+    2026-08-18T06:53:05.466Z,
+    null,
+    0,
+    0,
+    2026-08-18T06:53:04.588Z,
+    2026-08-18T06:53:05.466Z,
+    2026-08-18T06:53:05.466Z,
+    null,
+    0,
+    0,
+    2026-08-18T06:53:05.466Z
+  ]
+}
+Query executed :  { durationMs: 2.821400001645088, sql: 'commit', params: [] }
+Query executed :  {
+  durationMs: 13.013700000941753,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.2635999992489815,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 7.99439999833703,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 12.903300002217293,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 11.64079999923706,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 19.5489999987185,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 16.20110000297427,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.438799999654293,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 13.052200000733137,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 11.224399998784065,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 36.014299999922514,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 2.1509999968111515,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 11.400400001555681,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 19.22580000013113,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 8.314500000327826,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 9.760599996894598,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 13.899999998509884,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 8.0439000017941,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+Query executed :  {
+  durationMs: 7.211600001901388,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 7.521899998188019,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 7.774000000208616,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 2.508099999278784,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ POST /admin/timesheets?month=2026-08 200 in 3.8s (next.js: 133ms, proxy.ts: 909ms, application-code: 2.8s)
+  └─ ƒ syncTimesheetsNowAction() in 1003ms ..//src/features/admin-timesheets/admin-timesheets.actions.ts
+ GET /admin/timesheets?month=2026-08 200 in 771ms (next.js: 14ms, proxy.ts: 99ms, application-code: 658ms)
+ GET /manifest.webmanifest 200 in 2.8s (next.js: 2.8s, application-code: 28ms)
+Query executed :  {
+  durationMs: 5.090499997138977,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.488599997013807,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 6.67960000038147,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 5.3316000029444695,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 9.344799999147654,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 7.295400001108646,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 8.226099997758865,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 9.555300001055002,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 8.104400001466274,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 2.4935999996960163,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A89ea0146-746d-4f80-acbd-d06c045d3db4 200 in 1714ms (next.js: 107ms, proxy.ts: 675ms, application-code: 932ms)
+ GET /manifest.webmanifest 200 in 16ms (next.js: 4ms, application-code: 12ms)
+Query executed :  {
+  durationMs: 1.9459000006318092,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.3927000015974045,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 7.487199999392033,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.770199999213219,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 6.992199998348951,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 17.21449999883771,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 19.560000002384186,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 19.655000001192093,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 26.11829999834299,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 5.804800000041723,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08 200 in 309ms (next.js: 6ms, proxy.ts: 42ms, application-code: 260ms)
+ GET /manifest.webmanifest 200 in 15ms (next.js: 5ms, application-code: 10ms)
+Query executed :  {
+  durationMs: 1.2465000003576279,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 0.936099998652935,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.564799997955561,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 6.385499998927116,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 18.85080000013113,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 26.39870000258088,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 31.844299998134375,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 32.92619999870658,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 32.92280000075698,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 1.7314999997615814,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets/review?month=2026-08 200 in 324ms (next.js: 50ms, proxy.ts: 34ms, application-code: 240ms)
+ GET /manifest.webmanifest 200 in 13ms (next.js: 4ms, application-code: 9ms)
+Query executed :  {
+  durationMs: 4.2677000015974045,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.274100001901388,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.703099999576807,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 4.869100000709295,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 9.028500001877546,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 4.264599997550249,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 5.471799999475479,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 5.9184999987483025,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 3.3523999974131584,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 5.999200001358986,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08 200 in 525ms (next.js: 8ms, proxy.ts: 84ms, application-code: 433ms)
+ GET /manifest.webmanifest 200 in 14ms (next.js: 5ms, application-code: 9ms)
+Query executed :  {
+  durationMs: 1.5832000002264977,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.4818000011146069,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 4.654999997466803,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 3.9503000006079674,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.982599999755621,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 8.350499998778105,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 7.9704000018537045,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 11.372400000691414,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 12.566799998283386,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 5.214499998837709,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A1916ed76-9174-4ef0-8968-e0d72bb69d60 200 in 269ms (next.js: 8ms, proxy.ts: 45ms, application-code: 217ms)
+ GET /manifest.webmanifest 200 in 16ms (next.js: 6ms, application-code: 10ms)
+Query executed :  {
+  durationMs: 8.273300003260374,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.0113999992609024,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.001299999654293,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 5.602600000798702,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 3.297800000756979,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 6.284600000828505,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  { durationMs: 0.9772999994456768, sql: 'begin', params: [] }
+Query executed :  {
+  durationMs: 1.4687000028789043,
+  sql: 'insert into "jira_project" ("project_key", "name", "category", "project_type") values ($1, $2, $3, $4), ($5, $6, $7, $8), ($9, $10, $11, $12), ($13, $14, $15, $16) on conflict ("project_key") do update set "name" = "excluded"."name", "category" = "excluded"."category", "project_type" = "excluded"."project_type", "synced_at" = $17',
+  params: [
+    'BE',
+    'Bowhill Engineering',
+    'External',
+    'business',
+    'IO',
+    'Internal Operations',
+    'Internal',
+    'business',
+    'RDP',
+    'R&D Programme',
+    'Internal',
+    'business',
+    'TSSS',
+    'Trainer Suzie Swim School',
+    'External',
+    'business',
+    2026-08-18T06:53:44.169Z
+  ]
+}
+Query executed :  {
+  durationMs: 13.596100002527237,
+  sql: 'insert into "jira_issue" ("issue_key", "parent_key", "project_key", "issue_type", "summary", "description", "category", "billable", "baseline_estimate_seconds", "current_estimate_seconds", "status", "jira_updated_at") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12), ($13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24), ($25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36), ($37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48), ($49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60), ($61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72), ($73, $74, $75, $76, $77, $78, $79, $80, $81, $82, $83, $84), ($85, $86, $87, $88, $89, $90, $91, $92, $93, $94, $95, $96), ($97, $98, $99, $100, $101, $102, $103, $104, $105, $106, $107, $108), ($109, $110, $111, $112, $113, $114, $115, $116, $117, $118, $119, $120), ($121, $122, $123, $124, $125, $126, $127, $128, $129, $130, $131, $132), ($133, $134, $135, $136, $137, $138, $139, $140, $141, $142, $143, $144), ($145, $146, $147, $148, $149, $150, $151, $152, $153, $154, $155, $156), ($157, $158, $159, $160, $161, $162, $163, $164, $165, $166, $167, $168), ($169, $170, $171, $172, $173, $174, $175, $176, $177, $178, $179, $180), ($181, $182, $183, $184, $185, $186, $187, $188, $189, $190, $191, $192), ($193, $194, $195, $196, $197, $198, $199, $200, $201, $202, $203, $204), ($205, $206, $207, $208, $209, $210, $211, $212, $213, $214, $215, $216), ($217, $218, $219, $220, $221, $222, $223, $224, $225, $226, $227, $228), ($229, $230, $231, $232, $233, $234, $235, $236, $237, $238, $239, $240), ($241, $242, $243, $244, $245, $246, $247, $248, $249, $250, $251, $252), ($253, $254, $255, $256, $257, $258, $259, $260, $261, $262, $263, $264), ($265, $266, $267, $268, $269, $270, $271, $272, $273, $274, $275, $276), ($277, $278, $279, $280, $281, $282, $283, $284, $285, $286, $287, $288), ($289, $290, $291, $292, $293, $294, $295, $296, $297, $298, $299, $300), ($301, $302, $303, $304, $305, $306, $307, $308, $309, $310, $311, $312), ($313, $314, $315, $316, $317, $318, $319, $320, $321, $322, $323, $324), ($325, $326, $327, $328, $329, $330, $331, $332, $333, $334, $335, $336), ($337, $338, $339, $340, $341, $342, $343, $344, $345, $346, $347, $348), ($349, $350, $351, $352, $353, $354, $355, $356, $357, $358, $359, $360), ($361, $362, $363, $364, $365, $366, $367, $368, $369, $370, $371, $372), ($373, $374, $375, $376, $377, $378, $379, $380, $381, $382, $383, $384), ($385, $386, $387, $388, $389, $390, $391, $392, $393, $394, $395, $396), ($397, $398, $399, $400, $401, $402, $403, $404, $405, $406, $407, $408), ($409, $410, $411, $412, $413, $414, $415, $416, $417, $418, $419, $420), ($421, $422, $423, $424, $425, $426, $427, $428, $429, $430, $431, $432), ($433, $434, $435, $436, $437, $438, $439, $440, $441, $442, $443, $444), ($445, $446, $447, $448, $449, $450, $451, $452, $453, $454, $455, $456), ($457, $458, $459, $460, $461, $462, $463, $464, $465, $466, $467, $468), ($469, $470, $471, $472, $473, $474, $475, $476, $477, $478, $479, $480), ($481, $482, $483, $484, $485, $486, $487, $488, $489, $490, $491, $492), ($493, $494, $495, $496, $497, $498, $499, $500, $501, $502, $503, $504), ($505, $506, $507, $508, $509, $510, $511, $512, $513, $514, $515, $516), ($517, $518, $519, $520, $521, $522, $523, $524, $525, $526, $527, $528), ($529, $530, $531, $532, $533, $534, $535, $536, $537, $538, $539, $540), ($541, $542, $543, $544, $545, $546, $547, $548, $549, $550, $551, $552), ($553, $554, $555, $556, $557, $558, $559, $560, $561, $562, $563, $564), ($565, $566, $567, $568, $569, $570, $571, $572, $573, $574, $575, $576), ($577, $578, $579, $580, $581, $582, $583, $584, $585, $586, $587, $588), ($589, $590, $591, $592, $593, $594, $595, $596, $597, $598, $599, $600), ($601, $602, $603, $604, $605, $606, $607, $608, $609, $610, $611, $612), ($613, $614, $615, $616, $617, $618, $619, $620, $621, $622, $623, $624), ($625, $626, $627, $628, $629, $630, $631, $632, $633, $634, $635, $636), ($637, $638, $639, $640, $641, $642, $643, $644, $645, $646, $647, $648), ($649, $650, $651, $652, $653, $654, $655, $656, $657, $658, $659, $660), ($661, $662, $663, $664, $665, $666, $667, $668, $669, $670, $671, $672), ($673, $674, $675, $676, $677, $678, $679, $680, $681, $682, $683, $684), ($685, $686, $687, $688, $689, $690, $691, $692, $693, $694, $695, $696), ($697, $698, $699, $700, $701, $702, $703, $704, $705, $706, $707, $708), ($709, $710, $711, $712, $713, $714, $715, $716, $717, $718, $719, $720), ($721, $722, $723, $724, $725, $726, $727, $728, $729, $730, $731, $732), ($733, $734, $735, $736, $737, $738, $739, $740, $741, $742, $743, $744), ($745, $746, $747, $748, $749, $750, $751, $752, $753, $754, $755, $756), ($757, $758, $759, $760, $761, $762, $763, $764, $765, $766, $767, $768), ($769, $770, $771, $772, $773, $774, $775, $776, $777, $778, $779, $780), ($781, $782, $783, $784, $785, $786, $787, $788, $789, $790, $791, $792), ($793, $794, $795, $796, $797, $798, $799, $800, $801, $802, $803, $804), ($805, $806, $807, $808, $809, $810, $811, $812, $813, $814, $815, $816), ($817, $818, $819, $820, $821, $822, $823, $824, $825, $826, $827, $828), ($829, $830, $831, $832, $833, $834, $835, $836, $837, $838, $839, $840), ($841, $842, $843, $844, $845, $846, $847, $848, $849, $850, $851, $852), ($853, $854, $855, $856, $857, $858, $859, $860, $861, $862, $863, $864), ($865, $866, $867, $868, $869, $870, $871, $872, $873, $874, $875, $876), ($877, $878, $879, $880, $881, $882, $883, $884, $885, $886, $887, $888), ($889, $890, $891, $892, $893, $894, $895, $896, $897, $898, $899, $900), ($901, $902, $903, $904, $905, $906, $907, $908, $909, $910, $911, $912) on conflict ("issue_key") do update set "parent_key" = "excluded"."parent_key", "project_key" = "excluded"."project_key", "issue_type" = "excluded"."issue_type", "summary" = "excluded"."summary", "description" = "excluded"."description", "category" = "excluded"."category", "billable" = "excluded"."billable", "baseline_estimate_seconds" = "excluded"."baseline_estimate_seconds", "current_estimate_seconds" = "excluded"."current_estimate_seconds", "status" = "excluded"."status", "jira_updated_at" = "excluded"."jira_updated_at", "synced_at" = $913',
+  params: [
+    'IO-1',
+    null,
+    'IO',
+    'Project',
+    'Administration',
+    'Standing category. Internal admin time: internal meetings, team activities, general overhead. Never closes. No estimate, no baseline, no variance. Log time directly against this item.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-18T05:33:35.895Z,
+    'IO-2',
+    null,
+    'IO',
+    'Project',
+    'Training',
+    'Standing category. Time spent on training and professional development, whether attending or preparing. Never closes. No estimate, no baseline, no variance. Log time directly against this item.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-12T05:19:45.341Z,
+    'IO-3',
+    null,
+    'IO',
+    'Project',
+    'Coaching and Mentoring',
+    'Standing category. Time spent coaching or mentoring others, and time received as the person being mentored. Never closes. No estimate, no baseline, no variance. Log time directly against this item.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-12T05:20:01.969Z,
+    'IO-4',
+    null,
+    'IO',
+    'Project',
+    'Leave',
+    `Standing category. Annual leave, personal leave, public holidays. IMPORTANT: this is absence, not work. Carries the label "absence" so it can be excluded from utilisation calculations. Leave should reduce someone's available hours, not count against them as unproductive non-billable work. Any utilisation query should exclude it: labels != absence Never closes. No estimate, no baseline, no variance. Log time directly against this item.`,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-12T05:20:12.895Z,
+    'IO-5',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'Internal Meetings',
+    null,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'In Progress',
+    2026-08-18T05:27:49.978Z,
+    'IO-6',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'PC Downtime',
+    null,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'To Do',
+    2026-08-18T05:25:14.512Z,
+    'IO-7',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'Quarterly Update',
+    'Quarterly update and other internal get together.',
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'To Do',
+    2026-08-12T06:01:59.944Z,
+    'IO-8',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    'Team Activities',
+    null,
+    'Internal',
+    'Non-billable',
+    null,
+    null,
+    'To Do',
+    2026-08-12T06:02:21.535Z,
+    'IO-9',
+    'IO-1',
+    'IO',
+    'Deliverable',
+    ... 813 more items
+  ]
+}
+Query executed :  {
+  durationMs: 1.535300001502037,
+  sql: 'insert into "sync_watermark" ("job_name", "last_synced_at", "last_run_at", "last_success_at", "last_error", "last_updated_count", "last_deleted_count") values ($1, $2, $3, $4, $5, $6, $7) on conflict ("job_name") do update set "last_synced_at" = $8, "last_run_at" = $9, "last_success_at" = $10, "last_error" = $11, "last_updated_count" = $12, "last_deleted_count" = $13, "updated_at" = $14',
+  params: [
+    'jira-worklog',
+    2026-08-18T06:53:43.457Z,
+    2026-08-18T06:53:44.193Z,
+    2026-08-18T06:53:44.193Z,
+    null,
+    0,
+    0,
+    2026-08-18T06:53:43.457Z,
+    2026-08-18T06:53:44.193Z,
+    2026-08-18T06:53:44.193Z,
+    null,
+    0,
+    0,
+    2026-08-18T06:53:44.193Z
+  ]
+}
+Query executed :  { durationMs: 1.839699998497963, sql: 'commit', params: [] }
+Query executed :  {
+  durationMs: 11.946899998933077,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 14.21279999986291,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 12.079100001603365,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 18.515900000929832,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.414900001138449,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 7.562400002032518,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 8.252999998629093,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 13.778299998492002,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 15.360100001096725,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 8.343699999153614,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+Query executed :  {
+  durationMs: 2.245600000023842,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 1.3278999999165535,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 22.287599999457598,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 13.903599999845028,
+  sql: 'select "primary".* from (select * from "sessions" where "sessions"."token" = $1) as "primary"',
+  params: [ 'jLMrtaj1QRqeOvOGy9Bb4Uns76035aVf' ]
+}
+Query executed :  {
+  durationMs: 2.7231000028550625,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 5.0760000012815,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-01', '2026-08-31' ]
+}
+Query executed :  {
+  durationMs: 43.21330000087619,
+  sql: 'select "primary".* from (select * from "users" where "users"."id" = $1) as "primary"',
+  params: [ '090602952d73e5b52b37f8c22fcbb98a' ]
+}
+Query executed :  {
+  durationMs: 21.5,
+  sql: 'select * from "jira_project" order by "project_key"',
+  params: []
+}
+Query executed :  {
+  durationMs: 22.98369999974966,
+  sql: 'select * from "sync_watermark" where "job_name" = $1',
+  params: [ 'jira-worklog' ]
+}
+Query executed :  {
+  durationMs: 28.457000002264977,
+  sql: 'select * from "jira_issue" order by "issue_key"',
+  params: []
+}
+ POST /admin/timesheets?month=2026-08&person=712020%3A1916ed76-9174-4ef0-8968-e0d72bb69d60 200 in 1925ms (next.js: 6ms, proxy.ts: 35ms, application-code: 1884ms)
+  └─ ƒ syncTimesheetsNowAction() in 845ms ..//src/features/admin-timesheets/admin-timesheets.actions.ts
+Query executed :  {
+  durationMs: 7.570099998265505,
+  sql: 'select count(*) as "total" from "worklog_fact"',
+  params: []
+}
+Query executed :  {
+  durationMs: 2.7771000005304813,
+  sql: 'select * from "worklog_fact" where "work_date" >= $1 and "work_date" <= $2 order by "work_date", "person_id", "worklog_id"',
+  params: [ '2026-08-17', '2026-08-23' ]
+}
+ GET /admin/timesheets?month=2026-08&person=712020%3A1916ed76-9174-4ef0-8968-e0d72bb69d60 200 in 424ms (next.js: 8ms, proxy.ts: 91ms, application-code: 325ms)
+ GET /manifest.webmanifest 200 in 16ms (next.js: 6ms, application-code: 10ms)

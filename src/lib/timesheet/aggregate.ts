@@ -287,9 +287,14 @@ export function rollUpBudget(facts: WorklogFactRow[], issues: SnapshotIssue[]): 
   const issuesByKey = new Map(issues.map((issue) => [issue.issueKey, issue]));
 
   const actualByParent = new Map<string, number>();
+  const factsByParent = new Map<string, WorklogFactRow[]>();
+
   for (const fact of facts) {
     if (!fact.parentKey) continue;
     actualByParent.set(fact.parentKey, (actualByParent.get(fact.parentKey) ?? 0) + fact.timeSpentSeconds);
+    const existing = factsByParent.get(fact.parentKey);
+    if (existing) existing.push(fact);
+    else factsByParent.set(fact.parentKey, [fact]);
   }
 
   // Every issue that is a parent of something, plus every issue carrying an
@@ -312,12 +317,20 @@ export function rollUpBudget(facts: WorklogFactRow[], issues: SnapshotIssue[]): 
     const baselineSeconds = issue?.baselineEstimateSeconds ?? null;
     const currentSeconds = issue?.currentEstimateSeconds ?? null;
     const actualSeconds = actualByParent.get(parentKey) ?? 0;
+    const parentFacts = factsByParent.get(parentKey) ?? [];
 
     const varianceSeconds = currentSeconds !== null ? actualSeconds - currentSeconds : null;
 
     return {
       parentKey,
       parentSummary: cleanText(issue?.summary),
+      projectKey: cleanText(issue?.projectKey),
+      // A job with no time booked still has a category, because the category
+      // belongs to the Jira project rather than to any worklog.
+      category: cleanText(issue?.category),
+      billable: cleanText(issue?.billable),
+      split: summariseSplit(parentFacts),
+      worklogCount: parentFacts.length,
       baselineSeconds,
       currentSeconds,
       actualSeconds,

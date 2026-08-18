@@ -62,12 +62,39 @@ export interface JiraIssueResponse {
   fields: Record<string, unknown>;
 }
 
+export interface JiraProjectResponse {
+  key: string;
+  name: string;
+  projectTypeKey?: string;
+  projectCategory?: { name?: string };
+}
+
 export interface JiraClient {
   worklogIdsUpdatedSince(sinceMs: number): Promise<JiraWorklogIdEntry[]>;
   worklogIdsDeletedSince(sinceMs: number): Promise<JiraWorklogIdEntry[]>;
   worklogsByIds(ids: string[]): Promise<JiraWorklog[]>;
   issue(idOrKey: string): Promise<JiraIssueResponse | null>;
+  searchIssues(jql: string, fields: string[]): Promise<JiraIssueResponse[]>;
+  projects(): Promise<JiraProjectResponse[]>;
 }
+
+// Fields the issue cache needs. Requested explicitly rather than taking Jira's
+// default set, so a site with hundreds of custom fields does not ship all of
+// them on every row.
+export const ISSUE_FIELDS = [
+  "summary",
+  "description",
+  "parent",
+  "project",
+  "issuetype",
+  "status",
+  "updated",
+  "timeoriginalestimate",
+];
+
+// The page size for JQL search. Jira caps this server-side anyway; asking for
+// a round number keeps the pagination loop honest.
+const SEARCH_PAGE_SIZE = 100;
 
 // -------------------------------------------------------------------
 // Basic auth with a service account's API token.
@@ -302,6 +329,81 @@ export function createJiraClient(): JiraClient | null {
       } catch (error) {
         if (error instanceof Error && error.message.includes("responded 404")) return null;
         throw handleError("issue", error);
+      }
+    },
+
+    // ---------------------------------------------------------------
+    // Issues by JQL.
+    //
+    // POST /rest/api/3/search/jql is the ONLY option: the older
+    // GET /rest/api/3/search now answers 410 Gone, verified against this
+    // instance. Confirmed working, unlike the worklog endpoints this file
+    // originally guessed at.
+    //
+    // Paging follows `nextPageToken` rather than a numeric offset, so an issue
+    // changing mid-walk cannot shift rows past the cursor and out of the
+    // results.
+    //
+    // Jira rejects an unbounded JQL query outright, so every caller must pass
+    // a restriction. That is enforced by the API, not by this code.
+    // ---------------------------------------------------------------
+    async searchIssues(jql: string, fields: string[]): Promise<JiraIssueResponse[]> {
+      try {
+        const issues: JiraIssueResponse[] = [];
+        let nextPageToken: string | undefined;
+        let pages = 0;
+
+        do {
+          const payload: unknown = await request<unknown>("/rest/api/3/search/jql", {
+            method: "POST",
+            body: JSON.stringify({ jql, fields, maxResults: SEARCH_PAGE_SIZE, nextPageToken }),
+          });
+
+          issues.push(...(requireArray(payload, "issues", "search/jql") as JiraIssueResponse[]));
+
+          const record = payload as Record<string, unknown>;
+          nextPageToken = record.isLast === true ? undefined : ((record.nextPageToken as string) ?? undefined);
+
+          pages += 1;
+          if (pages >= MAX_PAGES) {
+            throw new Error(`Jira search/jql paged past ${MAX_PAGES} pages without reporting isLast.`);
+          }
+        } while (nextPageToken);
+
+        return issues;
+      } catch (error) {
+        throw handleError("searchIssues", error);
+      }
+    },
+
+    // ---------------------------------------------------------------
+    // Every project the account can see, with its category.
+    //
+    // The category is what Internal vs External is read from, and it is needed
+    // even for projects with no time logged - a category that exists and has
+    // nothing against it is a fact worth showing, not one to hide.
+    // ---------------------------------------------------------------
+    async projects(): Promise<JiraProjectResponse[]> {
+      try {
+        const projects: JiraProjectResponse[] = [];
+        let startAt = 0;
+
+        for (let page = 0; page < MAX_PAGES; page += 1) {
+          const payload: unknown = await request<unknown>(
+            `/rest/api/3/project/search?maxResults=${SEARCH_PAGE_SIZE}&startAt=${startAt}`,
+          );
+
+          const values = requireArray(payload, "values", "project/search") as JiraProjectResponse[];
+          projects.push(...values);
+
+          const record = payload as Record<string, unknown>;
+          if (record.isLast === true || values.length === 0) return projects;
+          startAt += values.length;
+        }
+
+        return projects;
+      } catch (error) {
+        throw handleError("projects", error);
       }
     },
   };

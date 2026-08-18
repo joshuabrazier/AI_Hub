@@ -210,12 +210,24 @@ export interface ProjectTotal extends DurationTotals {
 }
 
 // -------------------------------------------------------------------
-// Baseline vs current vs actual, per Project item. Baseline and current come
-// from Jira's estimates; actual is summed from the facts and never stored.
+// One job: a Project item, with its budget and what has been booked to it.
+//
+// This is the job list, so EVERY job appears - including the ones with no
+// hours against them. In a system replacing a job-and-timesheet tool, a job
+// with nothing booked is not an empty row to hide; it is a job nobody has
+// started, or one whose time is being recorded somewhere else entirely. Both
+// are worth seeing, and both vanish if the table only lists jobs with hours.
+//
+// Baseline and current come from Jira's estimates. Actual is summed from the
+// facts and never stored.
 // -------------------------------------------------------------------
 export interface BudgetRow {
   parentKey: string;
   parentSummary: string | null;
+  projectKey: string | null;
+  category: string | null;
+  // What the job itself declares, which is what its deliverables inherit.
+  billable: string | null;
   baselineSeconds: number | null;
   currentSeconds: number | null;
   actualSeconds: number;
@@ -228,6 +240,9 @@ export interface BudgetRow {
   varianceHours: number | null;
   // Actual as a share of current estimate, or null when there is no estimate.
   consumedRatio: number | null;
+  // How the booked time splits. All zeroes for a job with nothing on it.
+  split: BillableSplit;
+  worklogCount: number;
 }
 
 // -------------------------------------------------------------------

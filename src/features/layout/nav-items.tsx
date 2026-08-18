@@ -1,9 +1,12 @@
 import {
   Bell,
   BookOpen,
+  Briefcase,
   CalendarClock,
   CalendarDays,
   CalendarOff,
+  ClipboardCheck,
+  Clock,
   Files,
   FileText,
   House,
@@ -17,6 +20,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   UserCircle,
+  UserRound,
   Users,
   UsersRound,
 } from "lucide-react";
@@ -109,6 +113,15 @@ const ADMIN_NAV: NavGroup[] = [
         ],
       },
       { label: "Schedule", href: ROUTES.ADMIN_SCHEDULE, icon: CalendarDays, tooltip: "Weekly schedule" },
+    ],
+  },
+  {
+    label: "Time and billing",
+    items: [
+      { label: "Timesheet", href: ROUTES.ADMIN_TIMESHEETS, icon: Clock, tooltip: "Time entries" },
+      { label: "Jobs", href: ROUTES.ADMIN_TIMESHEETS_JOBS, icon: Briefcase, tooltip: "The book of work" },
+      { label: "Staff", href: ROUTES.ADMIN_TIMESHEETS_STAFF, icon: UserRound, tooltip: "Hours and utilisation" },
+      { label: "Review", href: ROUTES.ADMIN_TIMESHEETS_REVIEW, icon: ClipboardCheck, tooltip: "Data to fix in Jira" },
     ],
   },
   {

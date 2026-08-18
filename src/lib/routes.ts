@@ -55,6 +55,14 @@ export const ROUTES = {
   ADMIN_CONFIGURATIONS: "/admin/configurations",
   ADMIN_ACTIVITY: "/admin/activity",
   ADMIN_DATA_RETENTION: "/admin/data-retention",
+  // Time and billing. Four views over one aggregation: the entries, the book
+  // of work, the people, and the data-quality findings kept out of the way of
+  // all three.
+  ADMIN_TIMESHEETS: "/admin/timesheets",
+  ADMIN_TIMESHEETS_JOBS: "/admin/timesheets/jobs",
+  ADMIN_TIMESHEETS_STAFF: "/admin/timesheets/staff",
+  ADMIN_TIMESHEETS_REVIEW: "/admin/timesheets/review",
+  ADMIN_TIMESHEETS_EXPORT: "/admin/timesheets/export",
 
   // Manager area. Every one of these is scoped server-side to the teams the
   // signed-in manager has been assigned to; the team id in the URL is for
