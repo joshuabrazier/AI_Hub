@@ -24,6 +24,10 @@ export const ROUTES = {
 
   // Auth
   PUBLIC_AUTH_SIGN_IN: "/sign-in",
+  // First-run setup. Signed-in but pre-profile, so it sits outside the three
+  // area groups - their layouts enforce a role, and somebody mid-setup has
+  // not been placed in one yet.
+  ACCOUNT_SETUP: "/welcome",
   PUBLIC_AUTH_TWO_FACTOR: "/two-factor", // second sign-in step (TOTP or backup code)
   PUBLIC_AUTH_FORGOT_PASSWORD: "/forgot-password",
   PUBLIC_AUTH_RESET_PASSWORD: "/reset-password",

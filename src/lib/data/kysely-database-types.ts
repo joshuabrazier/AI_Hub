@@ -199,6 +199,9 @@ export interface Users {
   // better-auth two-factor plugin: true once a TOTP setup has been verified.
   twoFactorEnabled: Generated<boolean>;
   phoneNumber: string | null;
+  // NULL until the first-run setup screen has been completed. See the note
+  // on the column in database-schema.sql.
+  profileCompletedAt: Date | null;
   // Data retention: set once this person's data has been de-identified
   // (irreversible). NULL = still identifiable.
   deidentifiedAt: Date | null;

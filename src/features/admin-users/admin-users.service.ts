@@ -335,7 +335,7 @@ export async function addAdminUserInvitationService(
 
     const userInvitation = await addUserInvitationRepo(newUserInvitation);
 
-    const userInvitationLink = await generateInvitationLink(userInvitation.id);
+    const userInvitationLink = await generateInvitationLink();
 
     await sendAdminUserInvitationEmail({
       toAddress: requestDTO.email,

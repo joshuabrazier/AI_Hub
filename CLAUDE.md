@@ -115,6 +115,13 @@ serving bytes, so the actions rule never applied to it.)
 - **Calendar dates are `'YYYY-MM-DD'` strings, not `Date`.** The pg type parser in `src/lib/data/kysely-database-client.ts` maps Postgres `DATE` to a string on purpose (timezone-safe, React-renderable), and `TIME` to `'HH:MM:SS'`. No table currently has a `DATE` column, but the parser stays so the first one a project adds is safe by default. Type such columns as `string` and compare lexicographically.
 - **The app timezone is `NEXT_PUBLIC_APP_TIME_ZONE`**, read once in `src/lib/timezone.ts` as `APP_TIME_ZONE`. Never hardcode a zone, and never use `new Date()` to decide what calendar day it is - derive it in the app zone (`formatDateTime` in `src/lib/format.ts` is the pattern).
 - **Roles are server-assigned.** `role` / `isActive` are `input:false` in Better Auth - never accept them from the client.
+- **Sign-in is Microsoft (Entra) ONLY.** `emailAndPassword` is disabled, and the forgot/reset/accept-invite/change-password/2FA surfaces are gone with it - Entra owns credentials and MFA. The operational consequence is real: an expired Entra client secret locks everyone out, admins included, and the fix is in Azure. Diarise it.
+- **The app AUTO-PROVISIONS.** Anyone in the tenant on `AUTH_ALLOWED_EMAIL_DOMAINS` gets an account as `member` on first sign-in. That allowlist is the entire access boundary - unset means *no restriction*. It is enforced in `databaseHooks.user.create.before`, the database layer, so it holds for every path.
+- **An invitation is no longer a gate, it is a pre-assignment.** A pending invitation matching the address Entra verified sets the role and team the person lands with (`apply-invitation.ts`); without one they land as a member in no team.
+- **`requireUser` redirects an incomplete profile to `/welcome`.** `users.profile_completed_at` is NULL until first-run setup is done. Anything that must work *during* setup uses `requireSessionUserAllowingSetup` instead, or it redirects to itself.
+- **The email address is the Entra identity.** It is not editable anywhere - the domain allowlist only runs at creation, so an editable email would separate an account from the directory it is trusted because of.
+- **Account linking is explicit and `requireLocalEmailVerified` stays on.** It is what lets a pre-existing password account keep working after passwords were disabled, and what stops an unverified account at somebody's address capturing their Entra identity.
+- **The first admin is made with `scripts/promote-admin.mjs`, after they have signed in once.** New accounts are always members, so a fresh deployment has no admin and no in-app way to make one. Creating a user row by hand cannot work - it would have no linked Entra identity.
 - **Sanitize rich text** server-side (`src/lib/sanitize-rich-text.ts`) before `dangerouslySetInnerHTML`.
 - **Admin-editable JSON is validated on read.** Home page blocks fall back to defaults if malformed rather than throwing, and report which keys fell back.
 - **Icons from the database resolve through an allowlist** (`LANDING_ICONS`), never a dynamic module lookup.
@@ -150,7 +157,7 @@ docs, commit messages, and UI copy.
 - `src/lib` - `auth`, `data` (Kysely client + types + repositories + `sql/`), `ai` (the pinned Bedrock client), `email`, `crypto`, `audit`, `brand`, `env`.
 - `src/components` - `ui/` (shadcn), `form/`, `brand/`, shared tables and dialogs.
 - Unit tests are co-located (`src/**/*.test.ts`); Playwright lives in `tests/e2e`.
-- Schema: `src/lib/data/sql/database-schema.sql` (no migration runner; applied manually). No seed file - bootstrap the first admin with `scripts/create-admin.mjs`.
+- Schema: `src/lib/data/sql/database-schema.sql` (no migration runner; applied manually). No seed file - the first admin signs in with Microsoft, then is promoted with `scripts/promote-admin.mjs`.
 
 ## Deploy
 

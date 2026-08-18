@@ -5,7 +5,6 @@ import { getEmailClient } from "./email-client";
 import { AdminUserInvitationEmailTemplate } from "./templates/admin-user-invitation-email-template";
 import { EmailChangeNotificationEmailTemplate } from "./templates/email-change-notification-email-template";
 import { EnquiryEmailData, EnquiryEmailTemplate } from "./templates/enquiry-email-template";
-import { PasswordResetEmailTemplate } from "./templates/password-reset-email-template";
 import { TwoFactorOtpEmailTemplate } from "./templates/two-factor-otp-email-template";
 import { VerifyEmailTemplate } from "./templates/verify-email-template";
 
@@ -77,23 +76,6 @@ export async function sendAdminUserInvitationEmail({
     });
   } catch (error) {
     throw handleError("sendAdminUserInvitationEmail", error);
-  }
-}
-
-type SendPasswordResetEmailParams = {
-  toAddress: string;
-  resetUrl: string;
-};
-
-export async function sendPasswordResetEmail({ toAddress, resetUrl }: SendPasswordResetEmailParams) {
-  try {
-    return await sendEmail({
-      toAddress,
-      subject: "Reset your password",
-      html: PasswordResetEmailTemplate({ resetUrl, recipientEmail: toAddress }),
-    });
-  } catch (error) {
-    throw handleError("sendPasswordResetEmail", error);
   }
 }
 

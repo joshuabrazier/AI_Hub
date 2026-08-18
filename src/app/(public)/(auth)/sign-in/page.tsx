@@ -1,21 +1,26 @@
 import { SignInPage } from "@/features/sign-in/sigin-in.page";
 import { isMicrosoftSignInConfigured } from "@/lib/auth/account-creation-policy";
-import { redirectIfAuthenticated } from "@/lib/auth/session-auth-server";
 
-export default async function SignIn({
+// -------------------------------------------------------------------
+// /sign-in
+//
+// `error` is set by Better Auth when it bounces somebody back here - the
+// account-creation gate refusing an address outside the allowed domains, or
+// a guest account. The page says something useful rather than showing a bare
+// button again, but deliberately does not repeat the reason: which of the
+// two it was is in the server log, not in the browser.
+// -------------------------------------------------------------------
+export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  // Already signed in? Don't show the login form - go to their portal.
-  await redirectIfAuthenticated();
-
   const params = await searchParams;
 
   return (
     <SignInPage
-      emailChanged={params["email-changed"] === "true"}
       microsoftEnabled={isMicrosoftSignInConfigured()}
+      refused={typeof params.error === "string" && params.error.length > 0}
     />
   );
 }

@@ -128,6 +128,13 @@ CREATE TABLE users (
     ban_expires TIMESTAMPTZ NULL,
     two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     phone_number TEXT NULL,
+    -- NULL until the person has been through the first-run setup screen.
+    -- Sign-in creates the account from what Entra asserts, which is a name
+    -- and an address and nothing else; this records that a human has since
+    -- confirmed the name and had a chance to add the rest. The guards
+    -- redirect anyone with a NULL here, so it is what makes the setup step
+    -- unskippable rather than a page somebody could navigate away from.
+    profile_completed_at TIMESTAMPTZ NULL,
     -- Data retention: set when this person's personal data has been
     -- de-identified (irreversible). NULL = still identifiable.
     deidentified_at TIMESTAMPTZ NULL,

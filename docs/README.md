@@ -23,7 +23,7 @@ contributor and agent quick reference.
    `src/app/globals.css`. Nothing else references a colour directly.
 3. Replace `public/logo.png`.
 4. Apply `src/lib/data/sql/database-schema.sql`, then bootstrap the first admin
-   with `scripts/create-admin.mjs`.
+   with `scripts/promote-admin.mjs`, after signing in once.
 5. Sign in and edit the public pages from the admin area. The home page and all
    legal copy are content, not code.
 6. Configure `.github/workflows/deploy.yml` deliberately - it is inert until you

@@ -13,6 +13,7 @@ import {
   getManagedTeamIdsForUserRepo,
   getTeamIdsForUserRepo,
 } from "../data/repositories/team-members.repository";
+import { getUserByUserIdRepo } from "../data/repositories/users.repository";
 
 // -------------------------------------------------------------------
 // Base Session
@@ -38,8 +39,38 @@ export async function requireSession(): Promise<NonNullSession> {
 
 // -------------------------------------------------------------------
 // Require Auth User (normalised)
+//
+// Also the choke point for FIRST-RUN SETUP. An account is created from what
+// Entra asserts - a name and an address - and nothing else, so a new person
+// is sent to the setup screen until they have confirmed it. Putting that
+// here rather than in the three area layouts means it cannot be skipped by
+// reaching a route that happens not to have its own check.
+//
+// A page that must be reachable DURING setup has to use
+// requireSessionUserAllowingSetup below, or it will redirect to itself.
 // -------------------------------------------------------------------
 export async function requireUser(): Promise<SessionUser> {
+  const user = await requireSessionUserAllowingSetup();
+
+  if (!user.profileCompletedAt) {
+    redirect(ROUTES.ACCOUNT_SETUP);
+  }
+
+  return user;
+}
+
+// -------------------------------------------------------------------
+// The same normalisation WITHOUT the setup redirect.
+//
+// Only for the setup screen itself and anything that must work while an
+// account is half-configured. Everything else wants requireUser.
+//
+// `profileCompletedAt` is read from the database rather than the session:
+// the session is issued at sign-in and would still say "incomplete" for the
+// rest of its life, trapping somebody on the setup screen after they had
+// finished it.
+// -------------------------------------------------------------------
+export async function requireSessionUserAllowingSetup(): Promise<SessionUser> {
   const session = await requireSession();
 
   const parsed = UserRoleSchema.safeParse(session.user.role);
@@ -48,9 +79,12 @@ export async function requireUser(): Promise<SessionUser> {
     redirect(ROUTES.ERROR_FORBIDDEN);
   }
 
+  const row = await getUserByUserIdRepo(session.user.id);
+
   return {
     ...session.user,
     role: parsed.data,
+    profileCompletedAt: row?.profileCompletedAt ?? null,
   };
 }
 

@@ -70,7 +70,7 @@ There is no seed file, so no credentials are ever committed. Sign-up is
 invite-only, so bootstrap the first admin account directly:
 
 ```bash
-ADMIN_EMAIL=you@example.com node --env-file=.env scripts/create-admin.mjs
+ADMIN_EMAIL=you@example.com node --env-file=.env scripts/promote-admin.mjs
 ```
 
 It prints a generated password once, makes no changes if that email already

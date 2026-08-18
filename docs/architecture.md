@@ -1,9 +1,9 @@
 # Architecture
 
 This is a **reusable portal base**, not a finished product. It ships the parts
-every internal portal needs - authentication, two-factor, invitations,
-role-based access, teams, an audit trail and a
-data-retention job - so a new project starts from a working, secured
+every internal portal needs - Microsoft (Entra) sign-in, role-based access,
+teams, an audit trail and a data-retention job - so a new project starts from
+a working, secured
 application rather than from nothing.
 
 It deliberately ships **no domain**. There is nothing in it describing what any
@@ -21,7 +21,7 @@ Better Auth for authentication and Azure Communication Services for email.
 | Language | TypeScript 5 |
 | UI | Tailwind CSS 4, shadcn/ui (Radix UI), lucide-react icons |
 | Data | Postgres via Kysely (typed query builder) + node-postgres (pg) |
-| Auth | Better Auth (email/password, impersonation, two-factor) |
+| Auth | Better Auth (Microsoft Entra SSO, impersonation) |
 | Validation | Zod, react-hook-form |
 | Email | Azure Communication Services |
 | Rich text | TipTap editor, sanitize-html on the server |
@@ -49,7 +49,7 @@ manager to a team by creating a `team_members` row with `team_role = 'manager'`.
 That is the whole domain. Everything else is cross-cutting: `user_invitations`,
 `site_content`, `enquiry_categories` / `enquiry_submissions`, `audit_logs`, the
 `ai_chat_*` tables, plus Better Auth's `sessions` / `accounts` /
-`verifications` / `two_factor`.
+`verifications`.
 
 **Adding a domain.** A new project's own tables go alongside these, not inside
 them. The pattern to copy is `admin-teams`: a table, a `*.repository.ts`, a
@@ -60,7 +60,7 @@ makes it visible to the right managers and to nobody else.
 
 The authoritative DDL is `src/lib/data/sql/database-schema.sql`. There is no
 seed file, deliberately: nothing ships with credentials in it. Bootstrap the
-first admin with `scripts/create-admin.mjs`.
+first admin with `scripts/promote-admin.mjs`, after they have signed in once.
 
 ## The three areas
 
@@ -120,9 +120,11 @@ a read that returns bytes, so the mutations rule never applied to it.
 
 Configured in `src/lib/auth/auth.ts`.
 
-- Email/password with Postgres-backed sessions (5-day expiry). Secure cookies and rate limiting are gated on `MODE=production`.
-- **Roles** are server-assigned (`input:false`), so a user cannot escalate its own privileges through the public update endpoint or at sign-up.
-- **Two-factor**: TOTP or an emailed one-time code, with one backup code. Required for staff (admin and manager), optional for members. Note that Better Auth issues a session at sign-in only while 2FA is off; once enabled, sign-in returns a challenge instead.
+- **Microsoft (Entra) sign-in only.** `emailAndPassword` is disabled; there is no password, reset or app-level 2FA path, because Entra owns credentials and MFA. An expired Entra client secret therefore locks everyone out, admins included - see `deployment.md`.
+- **Auto-provisioning.** Anyone in the tenant on `AUTH_ALLOWED_EMAIL_DOMAINS` gets an account as `member` on first sign-in. That allowlist is the entire access boundary, enforced in `databaseHooks.user.create.before` so it holds for every path; **unset means no restriction**.
+- **Invitations pre-assign, they do not gate.** A pending invitation matching the address Entra verified sets the role and team the person lands with.
+- **First-run setup.** `users.profile_completed_at` is NULL until done, and `requireUser` redirects to `/welcome` until it is set. Use `requireSessionUserAllowingSetup` for anything that must work during setup.
+- **Roles** are server-assigned (`input:false`), so a user cannot escalate its own privileges through the public update endpoint.
 - **Impersonation**: only admins hold the permission, and only admins are protected from being impersonated. Impersonating a manager grants an admin nothing they do not already have, and the act is recorded on the session row and in the audit log.
 - Deactivated accounts are rejected at session creation, and their live sessions are deleted at the moment of deactivation.
 

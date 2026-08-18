@@ -1,7 +1,6 @@
 import { AdminUserInvitationEmailTemplate } from "@/lib/email/templates/admin-user-invitation-email-template";
 import { EmailChangeNotificationEmailTemplate } from "@/lib/email/templates/email-change-notification-email-template";
 import { EnquiryEmailTemplate } from "@/lib/email/templates/enquiry-email-template";
-import { PasswordResetEmailTemplate } from "@/lib/email/templates/password-reset-email-template";
 import { TwoFactorOtpEmailTemplate } from "@/lib/email/templates/two-factor-otp-email-template";
 import { VerifyEmailTemplate } from "@/lib/email/templates/verify-email-template";
 
@@ -21,7 +20,6 @@ export type EmailPreview = {
 // touches a real account, and none of it leaves this page.
 const SAMPLE = {
   inviteUrl: "https://portal.example/accept-invite/sample-token",
-  resetUrl: "https://portal.example/reset-password?token=sample-token",
   verifyUrl: "https://portal.example/verify-email?token=sample-token",
   portalUrl: "https://portal.example/portal",
 };
@@ -48,17 +46,6 @@ export function buildEmailPreviews(): EmailPreview[] {
         inviterName: "Alex Chen",
         role: "Manager",
         expiryDays: 14,
-      }),
-    },
-    {
-      key: "password-reset",
-      name: "Password reset",
-      audience: "Any account holder",
-      trigger: "When somebody requests a password reset from the sign-in page.",
-      subject: "Reset your password",
-      html: PasswordResetEmailTemplate({
-        resetUrl: SAMPLE.resetUrl,
-        recipientEmail: "jordan.lee@example.com",
       }),
     },
     {

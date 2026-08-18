@@ -133,12 +133,45 @@ app's TOTP two-factor is applied on the email-and-password path; a Microsoft
 sign-in is not challenged for it again. **Confirm your tenant actually enforces
 MFA** - if it does not, an SSO sign-in has only one factor.
 
-### Keep password sign-in during cutover
+### There is no password fallback
 
-`emailAndPassword` stays enabled. Your bootstrap admin account is
-password-based, and if the Entra registration is misconfigured - wrong redirect
-URI, expired secret - that account is the way back in. Disable it only once SSO
-is proven end to end.
+`emailAndPassword` is **disabled**. Microsoft is the only way in, and the
+forgot-password, reset-password, accept-invite, change-password and app-level
+2FA surfaces have been removed with it.
+
+**If the Entra client secret expires or the registration breaks, nobody can
+sign in - including admins - and the fix is in Azure, not in this app.** Put the
+secret's expiry in a shared calendar.
+
+### Access model
+
+Anyone in the tenant whose address is on `AUTH_ALLOWED_EMAIL_DOMAINS` gets an
+account on first sign-in, as a **member**. That allowlist is the entire access
+boundary; unset means no restriction at all.
+
+An invitation is no longer required. One that exists still pre-assigns the role
+and team the person lands with.
+
+### The first admin
+
+New accounts are always members, so a fresh deployment has **no admin**, and
+there is no in-app way to make one. The order is:
+
+1. Deploy, with `AUTH_ALLOWED_EMAIL_DOMAINS` set.
+2. Sign in with Microsoft yourself. This creates your account as a member and
+   sends you to `/welcome` to confirm your name.
+3. Promote yourself:
+
+```
+$env:DATABASE_URL = "<connection string>"
+$env:ADMIN_EMAIL  = "you@yourdomain"
+node scripts/promote-admin.mjs
+```
+
+4. Sign out and back in. Everyone else is promoted from the admin users screen.
+
+Creating a user row by hand does not work: it would have no linked Entra
+identity, so it could never be signed into.
 
 ## Attachment storage (Azure Blob)
 
@@ -161,7 +194,7 @@ is proven end to end.
 
 - Azure Database for PostgreSQL Flexible Server. Keep `sslmode=verify-full` in `DATABASE_URL`.
 - **Firewall.** The build no longer touches the database, but the running app does (auth, dashboards, the dynamic public pages). The App Service must be able to reach the Postgres server, so enable **"Allow public access from Azure services"** (or add the App Service's outbound IPs) on the Postgres firewall. A connection timeout at runtime is almost always this.
-- For a brand-new environment, apply `src/lib/data/sql/database-schema.sql` (it creates every table and the `schema_migrations` ledger), then create the first admin with `scripts/create-admin.mjs`. See `setup.md`.
+- For a brand-new environment, apply `src/lib/data/sql/database-schema.sql` (it creates every table and the `schema_migrations` ledger), then sign in once and promote yourself with `scripts/promote-admin.mjs`. See `setup.md`.
 - A single App Service instance means one pg pool - no PgBouncer needed. If you move to autoscale (multiple instances), add PgBouncer and watch the Postgres connection limit.
 
 ## CI
@@ -196,15 +229,15 @@ specs too. A broken spec fails the build before the tests even run.
    Always On, Node 20.
 7. **Set the GitHub Secrets and Variables** listed above.
 8. **Run the deploy workflow** from the Actions tab.
-9. **Create the first admin** with `scripts/create-admin.mjs`. Its address must
-   be on `AUTH_ALLOWED_EMAIL_DOMAINS`, or it cannot be created.
-10. **Verify in this order**: the site loads; password sign-in works as that
-    admin; Microsoft sign-in works; an invited colleague can accept with
-    Microsoft; an **uninvited** tenant account is refused.
+9. **Sign in with Microsoft yourself**, complete `/welcome`, then promote your
+   account with `scripts/promote-admin.mjs`. There is no admin until you do.
+10. **Verify in this order**: the site loads; Microsoft sign-in works; you land
+    on `/welcome` first time and not again afterwards; you can reach `/admin`
+    after promoting; a tenant account on a **different** domain is refused.
 
-That last check is the one worth doing deliberately - it is the difference
-between an invite-only app and one open to your whole tenant, and it is
-invisible from the sign-in screen.
+That last check is the one worth doing deliberately. The domain allowlist is
+the entire access boundary now - if it is unset or wrong, anyone the Entra app
+admits gets an account, and nothing on the sign-in screen would show it.
 
 ### Every deployment after that
 

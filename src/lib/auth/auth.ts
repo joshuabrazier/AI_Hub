@@ -7,11 +7,12 @@ import { USER_ROLES } from "../../lib/data/kysely-database-types";
 import { nextCookies } from "better-auth/next-js";
 import { admin, twoFactor } from "better-auth/plugins";
 import { createAuthMiddleware } from "better-auth/api";
-import { sendPasswordResetEmail, sendTwoFactorOtpEmail, sendVerificationEmail } from "../email/send-email";
+import { sendTwoFactorOtpEmail, sendVerificationEmail } from "../email/send-email";
 import { deleteSessionsByUserIdRepo } from "../data/repositories/sessions.repository";
 import { getUserByUserIdRepo } from "../data/repositories/users.repository";
 import { accessControl, impersonatorOnly } from "./auth-permissions";
-import { canCreateAccountFor } from "./account-creation-policy";
+import { isEmailDomainAllowed } from "./account-creation-policy";
+import { applyInvitationOnFirstSignIn } from "./apply-invitation";
 import { recordAuthAuditEvent } from "../audit/auth-audit";
 import { AUDIT_ACTIONS } from "../audit/audit-log.types";
 
@@ -181,18 +182,27 @@ export const auth = betterAuth({
   // -------------------------------------------------------------------
   // Email and Password
   // -------------------------------------------------------------------
+  // -------------------------------------------------------------------
+  // Email and password: OFF.
+  //
+  // Microsoft is the only way in. Turning this back on is a one-line change
+  // here, but note what it would mean: an account could then be created or
+  // signed into without Entra ever seeing it, which is the whole reason
+  // this is a single front door.
+  //
+  // THE OPERATIONAL RISK THIS CREATES, stated plainly because it is not
+  // visible from the code: if the Entra client secret expires or the app
+  // registration breaks, NOBODY can sign in, including admins, and the fix
+  // is in Azure rather than in this app. Diarise the secret's expiry.
+  //
+  // The settings below are retained rather than deleted so re-enabling is
+  // one flag, and because they still bound what Better Auth would accept.
+  // -------------------------------------------------------------------
   emailAndPassword: {
-    enabled: true,
+    enabled: false,
     // Keep the server-side password bounds in sync with the client Zod schemas
     minPasswordLength: PASSWORD_MIN_LENGTH,
     maxPasswordLength: PASSWORD_MAX_LENGTH,
-    sendResetPassword: async ({ user, url }) => {
-      await sendPasswordResetEmail({
-        toAddress: user.email,
-        resetUrl: url,
-      });
-    },
-    revokeSessionsOnPasswordReset: true,
     requireEmailVerification: false,
     autoSignIn: true,
   },
@@ -268,10 +278,34 @@ export const auth = betterAuth({
   },
 
   // -------------------------------------------------------------------
-  // Better Auth Accounts Model
+  // Account linking.
+  //
+  // Stated explicitly rather than left to defaults, because what it decides
+  // is whether an existing account can still be signed into.
+  //
+  // An account created before Microsoft sign-in existed has a `credential`
+  // row and no social one. On the first Entra sign-in at the same address,
+  // Better Auth links the identity into that row instead of failing - which
+  // is how a pre-existing admin keeps working after passwords were turned
+  // off. Without linking they would be locked out of their own app.
+  //
+  // The safety condition is `requireLocalEmailVerified`, left at its default
+  // of true: the local row must ALREADY have emailVerified set before an
+  // IdP identity is linked into it. That is what stops somebody registering
+  // an unverified account at a colleague's address and having the
+  // colleague's Entra identity attached to it on first sign-in. Do not turn
+  // it off.
+  //
+  // `microsoft` is trusted because the tenant is pinned and guests are
+  // rejected, so an address it asserts has been verified by the directory
+  // this app is deployed for.
   // -------------------------------------------------------------------
   account: {
     modelName: "accounts",
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["microsoft"],
+    },
   },
 
   // -------------------------------------------------------------------
@@ -353,14 +387,20 @@ export const auth = betterAuth({
 
   databaseHooks: {
     // -------------------------------------------------------------------
-    // The single gate on account creation.
+    // The single gate on account creation, and the ONLY one.
     //
-    // Runs for EVERY path that creates a user - the invite form, Microsoft
-    // sign-in, anything added later - because it sits at the database layer
-    // rather than in a page. This is what keeps the app invite-only now that
-    // a social provider exists: adding Entra without it would quietly turn
-    // "an admin decides who has an account" into "anyone in the tenant
-    // does". See src/lib/auth/account-creation-policy.ts.
+    // The app auto-provisions: anybody in the tenant on an allowed domain
+    // gets an account on first Microsoft sign-in, as a member. So this hook
+    // is the entire access boundary, which is why it sits at the database
+    // layer rather than in a page - it holds for every path that could ever
+    // create a user, including ones added later.
+    //
+    // If AUTH_ALLOWED_EMAIL_DOMAINS is unset there is NO restriction at all.
+    // That default is right for a base repo and wrong for a deployment.
+    //
+    // The `after` hook applies a pending invitation's role and team, if one
+    // exists. An invitation is no longer required to get in; it is how an
+    // admin says in advance what somebody should land as.
     //
     // Throwing rather than returning false: a false return makes Better Auth
     // hand back a null user, which surfaces as an unexplained failure. An
@@ -369,21 +409,27 @@ export const auth = betterAuth({
     user: {
       create: {
         before: async (user) => {
-          const decision = await canCreateAccountFor(user.email);
-
-          if (!decision.allowed) {
-            // Logged with the reason, answered without it: telling the
-            // browser "no invitation" versus "wrong domain" would let
-            // somebody map who has been invited.
-            console.warn(`[auth] refused account creation for ${user.email}: ${decision.reason}`);
+          if (!isEmailDomainAllowed(user.email)) {
+            console.warn(`[auth] refused account creation for ${user.email}: email_domain_not_allowed`);
 
             throw new APIError("FORBIDDEN", {
-              message:
-                "This account cannot be created. Access is by invitation only - ask an administrator to invite you.",
+              message: "Your account is not permitted to access this application.",
             });
           }
 
           return { data: user };
+        },
+        after: async (user) => {
+          // Best-effort, and deliberately so: this decorates a new account
+          // with a role and a team an admin chose in advance. If it fails,
+          // the person still has a working member account and an admin can
+          // set both from the users screen. Throwing here would leave them
+          // with an account they cannot sign into.
+          try {
+            await applyInvitationOnFirstSignIn(user.id, user.email);
+          } catch (error) {
+            console.error("[auth] failed to apply invitation on first sign-in", error);
+          }
         },
       },
     },

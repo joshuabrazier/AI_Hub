@@ -35,13 +35,15 @@ Start projects **from** this repo rather than from scratch. See
 pnpm install
 cp .env.example .env          # then fill it in
 psql "$DATABASE_URL" -f src/lib/data/sql/database-schema.sql
-ADMIN_EMAIL=you@example.com node --env-file=.env scripts/create-admin.mjs
+ADMIN_EMAIL=you@example.com node --env-file=.env scripts/promote-admin.mjs
 pnpm dev
 ```
 
 There is no seed file, deliberately: nothing in this repo contains credentials.
-`create-admin.mjs` prints a generated password once, makes no changes if that
-email already exists, and is safe to run against any environment.
+`promote-admin.mjs` promotes an EXISTING account to admin. Sign in with
+Microsoft first - that is what creates the account - then run it. Creating a
+user row by hand cannot work: it would have no linked Entra identity and could
+never be signed into.
 
 Sign in, complete the mandatory two-factor setup, then change your password in
 Settings.
