@@ -59,6 +59,7 @@ export const ROUTES = {
   // of work, the people, and the data-quality findings kept out of the way of
   // all three.
   ADMIN_TIMESHEETS: "/admin/timesheets",
+  ADMIN_TIMESHEETS_ENTRIES: "/admin/timesheets/entries",
   ADMIN_TIMESHEETS_JOBS: "/admin/timesheets/jobs",
   ADMIN_TIMESHEETS_STAFF: "/admin/timesheets/staff",
   ADMIN_TIMESHEETS_REVIEW: "/admin/timesheets/review",

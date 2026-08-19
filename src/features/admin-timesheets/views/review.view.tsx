@@ -25,7 +25,6 @@ export default async function ReviewView(request: TimesheetRequest) {
 
   return (
     <TimesheetShell
-      view="review"
       data={data}
       title="Review"
       description={`What to fix in Jira before invoicing ${period.label}. Nothing here is edited in this app.`}

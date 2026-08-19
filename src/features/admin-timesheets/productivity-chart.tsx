@@ -24,7 +24,10 @@ import { TimesheetWeekDTO } from "./admin-timesheets.types";
 // width. There is no viewBox to fight.
 //
 // Specs it keeps from the chart guidance:
-//   - columns capped in width, 4px rounded top, square at the baseline
+//   - wide columns with a 6px gutter between them. The usual advice is to cap
+//     a column near 24px and let the slot breathe, but at seven columns across
+//     a full-width card that read as hairlines with a lot of nothing around
+//     them. Filling most of the slot makes the day the unit you see.
 //   - a 2px gap between stacked segments, so they read apart without a border
 //   - solid hairline gridlines one step off the surface, never dashed
 //   - the capacity target is a horizontal line, because capacity is a constant
@@ -231,7 +234,7 @@ export function ProductivityChart({
                   {points.map((point, index) => (
                     <div
                       key={point.date}
-                      className="group flex h-full flex-1 items-end justify-center px-1"
+                      className="group flex h-full flex-1 items-end justify-center px-[3px]"
                       // One tooltip per day on a full-height target, so it is
                       // reachable without landing on a thin column.
                       title={
@@ -244,7 +247,7 @@ export function ProductivityChart({
                         (point.unsetHours > 0 ? `\nUnset ${formatHours(point.unsetHours)}` : "")
                       }
                     >
-                      <div className="relative h-full w-full max-w-[26px]">
+                      <div className="relative h-full w-full max-w-[72px]">
                         {/* Unused capacity: a recessive track showing the room
                             the day had, never a competing series. */}
                         {point.capacityHours > 0 && (

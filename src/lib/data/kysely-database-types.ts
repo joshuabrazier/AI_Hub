@@ -890,6 +890,31 @@ export type NewWorklogFact = Insertable<WorklogFacts>;
 export type UpdateWorklogFact = Updateable<WorklogFacts>;
 
 // -------------------------------------------------------------------
+// Staff Targets
+//
+// What a person is contracted to work and expected to bill. The only table in
+// the timesheet model that is NOT derived from Jira, so it survives a rebuild
+// of everything else and has to be re-entered if lost.
+//
+// Days are tenths (50 = 5 days) and hours are minutes (450 = 7.5h), both
+// integers. See migration 003 for why nothing here is NUMERIC.
+// -------------------------------------------------------------------
+export interface StaffTargets {
+  personId: string;
+  personName: string | null;
+  workingDaysTenths: Generated<number>;
+  minutesPerDay: Generated<number>;
+  billableTargetPercent: number | null;
+  notes: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type StaffTarget = Selectable<StaffTargets>;
+export type NewStaffTarget = Insertable<StaffTargets>;
+export type UpdateStaffTarget = Updateable<StaffTargets>;
+
+// -------------------------------------------------------------------
 // Sync Watermarks
 // Where the last successful run of a sync job reached. Advanced last, inside
 // the same transaction as the writes it describes, so a crash repeats a
@@ -945,4 +970,5 @@ export interface Database {
   jiraIssue: JiraIssues;
   worklogFact: WorklogFacts;
   syncWatermark: SyncWatermarks;
+  staffTarget: StaffTargets;
 }

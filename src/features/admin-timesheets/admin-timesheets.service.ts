@@ -8,6 +8,7 @@ import {
   countWorklogFactsRepo,
   getJiraIssuesRepo,
   getJiraProjectsRepo,
+  getStaffTargetsRepo,
   getSyncWatermarkRepo,
   getWorklogFactsInRangeRepo,
 } from "@/lib/data/repositories/timesheet.repository";
@@ -15,6 +16,12 @@ import { envServer } from "@/lib/env-server";
 import { handleError } from "@/lib/handle-errors";
 import { buildReport } from "@/lib/timesheet/aggregate";
 import { addDays, buildDailySeries, mondayOf } from "@/lib/timesheet/daily-series";
+import {
+  buildCategorySplit,
+  buildInvoiceReadiness,
+  buildTopJobs,
+} from "@/lib/timesheet/overview-series";
+import { countWeekdays, measureAgainstTarget, toStaffCapacity } from "@/lib/timesheet/staff-capacity";
 import { JIRA_WORKLOG_SYNC_JOB } from "@/features/timesheet-sync/timesheet-sync.service";
 import { SnapshotIssue, SnapshotWorklog, TimesheetSnapshot } from "@/lib/timesheet/timesheet.types";
 import { todayInAppZone } from "@/lib/timezone";
@@ -26,6 +33,9 @@ import {
   MonthOptionDTO,
   PersonOptionDTO,
   ProjectOptionDTO,
+  OverviewDTO,
+  StaffDashboardDTO,
+  StaffSummaryDTO,
   TimesheetPeriodDTO,
 } from "./admin-timesheets.types";
 
@@ -287,7 +297,14 @@ function toProjectOptions(rows: FactRows, issues: IssueRows): ProjectOptionDTO[]
 // parsing, and a period of "Invalid Date" renders as an empty report that
 // looks exactly like a quiet month.
 // -------------------------------------------------------------------
-export async function getAdminTimesheetsService(request: TimesheetRequest = {}): Promise<AdminTimesheetsDTO> {
+export async function getAdminTimesheetsService(
+  request: TimesheetRequest = {},
+  // When the screen is scoped to one person, their contracted week replaces
+  // the company-wide assumption. Without it the cards and the chart on the
+  // same screen report different utilisation for the same person, which is
+  // worse than either being wrong on its own.
+  capacityOverride?: { hoursPerDay: number; weeklyHours: number },
+): Promise<AdminTimesheetsDTO> {
   try {
     await requireUserRole([USER_ROLES.ADMIN]);
 
@@ -423,8 +440,9 @@ export async function getAdminTimesheetsService(request: TimesheetRequest = {}):
       weekSeries: buildDailySeries(weekDayTotals, {
         from: week.start,
         to: week.end,
-        capacityHours: envServer.WORKING_DAY_HOURS,
+        capacityHours: capacityOverride?.hoursPerDay ?? envServer.WORKING_DAY_HOURS,
         includeNonWorkingDays: true,
+        availableHoursOverride: capacityOverride?.weeklyHours,
       }),
       periodTotalHours: Math.round((periodSeconds / 3600) * 10000) / 10000,
       syncStatus: {
@@ -526,4 +544,155 @@ export async function getAdminTimesheetsCsvService(
 function toCsvCell(value: string): string {
   const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
   return `"${guarded.replace(/"/g, '""')}"`;
+}
+
+// -------------------------------------------------------------------
+// The team dashboard.
+//
+// Everyone who logged time in the period, each measured against THEIR
+// contracted arrangement rather than one company-wide assumption. Somebody on
+// three days a week who worked three full days is at 100%, and this is the
+// function that makes that true.
+//
+// People with a target but no time in the period are included too: "contracted
+// to four days and logged nothing" is the most important row on the page, and
+// building the list from the facts alone would hide it.
+// -------------------------------------------------------------------
+export async function getStaffDashboardService(request: TimesheetRequest = {}): Promise<{
+  data: AdminTimesheetsDTO;
+  dashboard: StaffDashboardDTO;
+}> {
+  try {
+    // Targets are loaded before the report so a person-scoped view can build
+    // its chart against the right capacity in one pass.
+    const targets = await getStaffTargetsRepo();
+    const targetByPerson = new Map(targets.map((row) => [row.personId, row]));
+
+    const scopedCapacity =
+      request.person && request.person !== ALL_CATEGORIES
+        ? toStaffCapacity(targetByPerson.get(request.person) ?? null, request.person)
+        : null;
+
+    const data = await getAdminTimesheetsService(
+      request,
+      scopedCapacity ? { hoursPerDay: scopedCapacity.hoursPerDay, weeklyHours: scopedCapacity.weeklyHours } : undefined,
+    );
+    const weekdaysInPeriod = countWeekdays(data.period.from, data.period.to);
+
+    // Everyone with time, plus everyone with a target, so a contracted person
+    // who logged nothing still appears.
+    const personIds = new Set<string>([
+      ...data.report.byPerson.map((person) => person.personId),
+      ...targets.map((row) => row.personId),
+    ]);
+
+    const people: StaffSummaryDTO[] = [...personIds].map((personId) => {
+      const totals = data.report.byPerson.find((person) => person.personId === personId);
+      const targetRow = targetByPerson.get(personId) ?? null;
+      const capacity = toStaffCapacity(targetRow, personId);
+
+      const performance = measureAgainstTarget(
+        capacity,
+        weekdaysInPeriod,
+        totals?.hours ?? 0,
+        totals?.split.billableHours ?? 0,
+      );
+
+      return {
+        personId,
+        // The name from the facts is the most recent Jira knows; the target's
+        // snapshot covers somebody with no time this period.
+        personName: totals?.personName ?? targetRow?.personName ?? personId,
+        loggedHours: performance.loggedHours,
+        capacityHours: performance.capacityHours,
+        utilisation: performance.utilisation,
+        billableHours: performance.billableHours,
+        nonBillableHours: totals?.split.nonBillableHours ?? 0,
+        billableShare: performance.billableShare,
+        billableTargetPercent: performance.billableTargetPercent,
+        billableVariance: performance.billableVariance,
+        meetsBillableTarget: performance.meetsBillableTarget,
+        daysWorked: totals?.daysWorked ?? 0,
+        worklogCount: totals?.worklogCount ?? 0,
+        target: {
+          personId,
+          personName: targetRow?.personName ?? totals?.personName ?? null,
+          workingDaysPerWeek: capacity.workingDaysPerWeek,
+          hoursPerDay: capacity.hoursPerDay,
+          weeklyHours: capacity.weeklyHours,
+          billableTargetPercent: capacity.billableTargetPercent,
+          isDefault: capacity.isDefault,
+        },
+      };
+    });
+
+    // Busiest first. A stable secondary sort on name keeps the order steady
+    // between renders when two people have logged the same amount.
+    people.sort((left, right) => right.loggedHours - left.loggedHours || left.personName.localeCompare(right.personName));
+
+    const capacityHours = people.reduce((total, person) => total + person.capacityHours, 0);
+    const loggedHours = data.report.totals.hours;
+
+    return {
+      data,
+      dashboard: {
+        people,
+        weekdaysInPeriod,
+        totals: {
+          loggedHours,
+          capacityHours: Math.round(capacityHours * 10000) / 10000,
+          billableHours: data.report.split.billableHours,
+          nonBillableHours: data.report.split.nonBillableHours,
+          unsetHours: data.report.split.unsetHours,
+          utilisation: capacityHours > 0 ? Math.round((loggedHours / capacityHours) * 10000) / 10000 : null,
+          billableShare: data.report.split.billableRatio,
+          peopleCount: people.length,
+          meetingTarget: people.filter((person) => person.meetsBillableTarget === true).length,
+          withTarget: people.filter((person) => person.billableTargetPercent !== null).length,
+        },
+      },
+    };
+  } catch (error) {
+    throw handleError("getStaffDashboardService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The company overview.
+//
+// The questions a director actually asks, which the entry list cannot answer:
+// where is the time going, which jobs are eating it, and how much of it could
+// actually be invoiced today. The day-by-day shape of the week comes from the
+// same weekly series every other screen uses, so the bars on the overview and
+// the bars on a person can never disagree.
+// -------------------------------------------------------------------
+export async function getOverviewService(request: TimesheetRequest = {}): Promise<{
+  data: AdminTimesheetsDTO;
+  overview: OverviewDTO;
+}> {
+  try {
+    const { data, dashboard } = await getStaffDashboardService(request);
+
+    const issues = await getJiraIssuesRepo();
+    const summaryByKey = new Map(issues.map((issue) => [issue.issueKey, issue.summary]));
+
+    // The period's own facts, already narrowed to the current selection by the
+    // report that produced them.
+    const periodFacts = data.report.facts;
+
+    return {
+      data,
+      overview: {
+        categories: buildCategorySplit(periodFacts),
+        topJobs: buildTopJobs(periodFacts, summaryByKey),
+        readiness: buildInvoiceReadiness(periodFacts),
+        capacityHours: dashboard.totals.capacityHours,
+        utilisation: dashboard.totals.utilisation,
+        peopleCount: dashboard.totals.peopleCount,
+        weekdaysInPeriod: dashboard.weekdaysInPeriod,
+      },
+    };
+  } catch (error) {
+    throw handleError("getOverviewService", error);
+  }
 }

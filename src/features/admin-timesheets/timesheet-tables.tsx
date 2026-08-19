@@ -1,15 +1,12 @@
-import Link from "next/link";
 import { FileWarning } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatIsoDate } from "@/lib/format";
-import { PersonDayTotal, PersonTotal, WorklogFactRow } from "@/lib/timesheet/timesheet.types";
-import { ROUTES } from "@/lib/routes";
+import { PersonDayTotal, WorklogFactRow } from "@/lib/timesheet/timesheet.types";
 import { cn } from "@/lib/utils";
 
-import { ALL_CATEGORIES, TimesheetFiltersDTO } from "./admin-timesheets.types";
 import { Reveal } from "./timesheet-motion";
 import { formatHours } from "./timesheet-panels";
 
@@ -115,91 +112,6 @@ export function EntriesTable({ facts }: { facts: WorklogFactRow[] }) {
                 <TableCell />
               </TableRow>
             </TableFooter>
-          </Table>
-        </CardContent>
-      </Card>
-    </Reveal>
-  );
-}
-
-// -------------------------------------------------------------------
-// The staff list. Click a row to see that person alone.
-//
-// Utilisation averages over days actually worked, not over the calendar:
-// dividing by the month would make someone who worked one full day look 3%
-// utilised, which says nothing about the day they worked.
-// -------------------------------------------------------------------
-export function StaffTable({
-  people,
-  workingHoursPerDay,
-  filters,
-}: {
-  people: PersonTotal[];
-  workingHoursPerDay: number;
-  filters: TimesheetFiltersDTO;
-}) {
-  function hrefFor(personId: string): string {
-    const params = new URLSearchParams({ month: filters.month, person: personId });
-    if (filters.category !== ALL_CATEGORIES) params.set("category", filters.category);
-    if (filters.project !== ALL_CATEGORIES) params.set("project", filters.project);
-    return `${ROUTES.ADMIN_TIMESHEETS_STAFF}?${params.toString()}`;
-  }
-
-  return (
-    <Reveal>
-      <Card>
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Person</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead className="text-right">Billable</TableHead>
-                <TableHead className="text-right">Non-billable</TableHead>
-                <TableHead className="text-right">Days</TableHead>
-                <TableHead className="text-right">Utilisation</TableHead>
-                <TableHead className="text-right">Billable share</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {people.map((person) => {
-                const utilisation =
-                  person.daysWorked > 0 ? person.hours / person.daysWorked / workingHoursPerDay : null;
-                const isSelected = filters.person === person.personId;
-
-                return (
-                  <TableRow
-                    key={person.personId}
-                    className={cn("transition-colors hover:bg-muted/50", isSelected && "bg-muted/60")}
-                  >
-                    <TableCell>
-                      <Link
-                        href={hrefFor(person.personId)}
-                        className="font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        {person.personName ?? person.personId}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">{formatHours(person.hours)}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatHours(person.split.billableHours)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {formatHours(person.split.nonBillableHours)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{person.daysWorked}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {utilisation === null ? "n/a" : `${Math.round(utilisation * 100)}%`}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {person.split.billableRatio === null
-                        ? "n/a"
-                        : `${Math.round(person.split.billableRatio * 100)}%`}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
           </Table>
         </CardContent>
       </Card>

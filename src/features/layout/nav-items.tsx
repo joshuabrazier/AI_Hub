@@ -5,6 +5,7 @@ import {
   CalendarClock,
   CalendarDays,
   CalendarOff,
+  ChartColumn,
   ClipboardCheck,
   Clock,
   Files,
@@ -118,10 +119,31 @@ const ADMIN_NAV: NavGroup[] = [
   {
     label: "Time and billing",
     items: [
-      { label: "Timesheet", href: ROUTES.ADMIN_TIMESHEETS, icon: Clock, tooltip: "Time entries" },
-      { label: "Jobs", href: ROUTES.ADMIN_TIMESHEETS_JOBS, icon: Briefcase, tooltip: "The book of work" },
-      { label: "Staff", href: ROUTES.ADMIN_TIMESHEETS_STAFF, icon: UserRound, tooltip: "Hours and utilisation" },
-      { label: "Review", href: ROUTES.ADMIN_TIMESHEETS_REVIEW, icon: ClipboardCheck, tooltip: "Data to fix in Jira" },
+      {
+        // Collapsed under one parent, like People and Delivery. Five sibling
+        // links at the top level made the sidebar's longest section the one
+        // people use least often day to day.
+        label: "Timesheets",
+        icon: Clock,
+        tooltip: "Time, jobs, staff and data quality",
+        children: [
+          {
+            label: "Overview",
+            href: ROUTES.ADMIN_TIMESHEETS,
+            icon: ChartColumn,
+            tooltip: "How the business is tracking",
+          },
+          { label: "Entries", href: ROUTES.ADMIN_TIMESHEETS_ENTRIES, icon: Clock, tooltip: "Every time entry" },
+          { label: "Jobs", href: ROUTES.ADMIN_TIMESHEETS_JOBS, icon: Briefcase, tooltip: "The book of work" },
+          { label: "Staff", href: ROUTES.ADMIN_TIMESHEETS_STAFF, icon: UserRound, tooltip: "Hours and utilisation" },
+          {
+            label: "Review",
+            href: ROUTES.ADMIN_TIMESHEETS_REVIEW,
+            icon: ClipboardCheck,
+            tooltip: "Data to fix in Jira",
+          },
+        ],
+      },
     ],
   },
   {

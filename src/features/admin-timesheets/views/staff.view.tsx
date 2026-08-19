@@ -1,96 +1,81 @@
 import { ROUTES } from "@/lib/routes";
 
-import { getAdminTimesheetsService, TimesheetRequest } from "../admin-timesheets.service";
-import { ALL_CATEGORIES } from "../admin-timesheets.types";
+import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { ProductivityChart } from "../productivity-chart";
-import { EmptyState, ProjectsCard, StatTile, SyncStatusLine } from "../timesheet-panels";
+import { StaffList } from "../staff-cards";
+import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
 import TimesheetShell, { weekHref } from "../timesheet-shell";
-import { EntriesTable, PersonDaysTable, StaffTable } from "../timesheet-tables";
 
 // -------------------------------------------------------------------
-// Staff: who worked, how much, and how much of it bills.
+// Staff: the team at a glance, then click into somebody.
 //
-// Two states in one view. With nobody selected it is the team: one row per
-// person, sorted by hours. Pick someone - from the selector or by clicking
-// their name - and the same page becomes their timesheet: day by day, the jobs
-// they touched, and every entry they logged.
+// This is the overview. It answers "how is the team doing" with a few figures
+// and the week's shape, then lists everyone so the comparison between them is
+// visible on the page rather than hidden behind a dropdown.
 //
-// Selection is a URL parameter, not component state, so one person's month can
-// be linked to and sent to them.
+// Every person is measured against THEIR contracted arrangement. Somebody on
+// three days a week who works three full days shows 100%, not 60% - a number
+// that is wrong in a predictable direction gets ignored, and then so does the
+// dashboard around it.
 // -------------------------------------------------------------------
 export default async function StaffView(request: TimesheetRequest) {
-  const data = await getAdminTimesheetsService(request);
-  const { period, filters, report, syncStatus, workingHoursPerDay, periodTotalHours, personOptions, weekSeries, week } =
-    data;
+  const { data, dashboard } = await getStaffDashboardService(request);
+  const { period, filters, report, syncStatus, weekSeries, week, periodTotalHours } = data;
 
-  const isPersonSelected = filters.person !== ALL_CATEGORIES;
-  const selected = personOptions.find((option) => option.value === filters.person);
-  const person = report.byPerson[0];
-
-  const hasEntries = report.totals.worklogCount > 0;
+  const { totals } = dashboard;
+  const hasAnyone = dashboard.people.length > 0;
 
   return (
     <TimesheetShell
-      view="staff"
       data={data}
-      title={isPersonSelected ? (selected?.label ?? "Staff") : "Staff"}
-      description={
-        isPersonSelected
-          ? `Their time in ${period.label}. Choose "Everyone" to compare the team.`
-          : `Hours and utilisation across the team in ${period.label}.`
-      }
+      title="Staff"
+      description={`How the team is tracking in ${period.label}, each against their own contracted days.`}
     >
-      {!hasEntries ? (
+      {!hasAnyone ? (
         <>
           <EmptyState syncStatus={syncStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
           <SyncStatusLine syncStatus={syncStatus} />
         </>
-      ) : isPersonSelected && person ? (
+      ) : (
         <>
-          {/* One person's week: which days were full, which were billable, and
-              which were not worked at all. */}
-          <ProductivityChart
-            series={weekSeries}
-            week={week}
-            title={`${person.personName ?? person.personId}, week of ${week.label}`}
-            previousHref={weekHref(ROUTES.ADMIN_TIMESHEETS_STAFF, filters, week.previousStart)}
-            nextHref={weekHref(ROUTES.ADMIN_TIMESHEETS_STAFF, filters, week.nextStart)}
-          />
-
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatTile
-              label="Logged"
-              hours={person.hours}
-              hint={`${person.daysWorked} ${person.daysWorked === 1 ? "day" : "days"} worked`}
+              label="Team utilisation"
+              hours={totals.utilisation === null ? 0 : Math.round(totals.utilisation * 100)}
+              format="count"
+              hint={`${totals.loggedHours.toFixed(2)}h of ${totals.capacityHours.toFixed(2)}h capacity`}
               index={0}
             />
             <StatTile
-              label="Billable"
-              hours={person.split.billableHours}
-              ratio={person.split.billableRatio}
+              label="Billable share"
+              hours={totals.billableShare === null ? 0 : Math.round(totals.billableShare * 100)}
+              format="count"
+              ratio={totals.billableShare}
+              hint={`${totals.billableHours.toFixed(2)}h billable`}
               index={1}
             />
-            <StatTile label="Non-billable" hours={person.split.nonBillableHours} emphasis="muted" index={2} />
             <StatTile
-              label="Average day"
-              hours={person.daysWorked > 0 ? person.hours / person.daysWorked : 0}
-              hint={`Against ${workingHoursPerDay}h`}
+              label="Meeting target"
+              hours={totals.meetingTarget}
+              format="count"
+              hint={
+                totals.withTarget === 0
+                  ? "No billable targets set yet"
+                  : `of ${totals.withTarget} with a target set`
+              }
+              emphasis={totals.withTarget > 0 && totals.meetingTarget < totals.withTarget ? "alert" : "normal"}
+              index={2}
+            />
+            <StatTile
+              label="People"
+              hours={totals.peopleCount}
+              format="count"
+              hint={`${dashboard.weekdaysInPeriod} weekdays in this period`}
+              emphasis="muted"
               index={3}
             />
           </div>
 
-          <PersonDaysTable days={report.byPersonDay} workingHoursPerDay={workingHoursPerDay} />
-
-          {/* Which jobs their time went to. */}
-          <ProjectsCard projects={report.byProject} totalHours={report.totals.hours} index={2} />
-
-          {/* Their entries, so the figures above can be checked. */}
-          <EntriesTable facts={report.facts} />
-
-          <SyncStatusLine syncStatus={syncStatus} />
-        </>
-      ) : (
-        <>
           <ProductivityChart
             series={weekSeries}
             week={week}
@@ -99,19 +84,15 @@ export default async function StaffView(request: TimesheetRequest) {
             nextHref={weekHref(ROUTES.ADMIN_TIMESHEETS_STAFF, filters, week.nextStart)}
           />
 
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatTile label="People" hours={report.byPerson.length} format="count" index={0} />
-            <StatTile label="Logged" hours={report.totals.hours} index={1} />
-            <StatTile
-              label="Billable"
-              hours={report.split.billableHours}
-              ratio={report.split.billableRatio}
-              index={2}
-            />
-            <StatTile label="Non-billable" hours={report.split.nonBillableHours} emphasis="muted" index={3} />
+          <div>
+            <h2 className="mb-3 font-heading text-lg font-semibold text-foreground">Everyone</h2>
+            <StaffList people={dashboard.people} filters={filters} />
           </div>
 
-          <StaffTable people={report.byPerson} workingHoursPerDay={workingHoursPerDay} filters={filters} />
+          {report.totals.worklogCount === 0 && (
+            <EmptyState syncStatus={syncStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
+          )}
+
           <SyncStatusLine syncStatus={syncStatus} />
         </>
       )}

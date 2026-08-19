@@ -24,7 +24,6 @@ export default async function JobsView(request: TimesheetRequest) {
 
   return (
     <TimesheetShell
-      view="jobs"
       data={data}
       title="Jobs"
       description={`The book of work as it stands in ${period.label}.`}

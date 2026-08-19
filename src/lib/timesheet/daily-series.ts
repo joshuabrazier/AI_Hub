@@ -123,6 +123,15 @@ export function buildDailySeries(
     // shows Monday to Sunday because the shape of the week is the point; a
     // month view drops empty weekends so the chart is not a third blank.
     includeNonWorkingDays?: boolean;
+    // The contracted capacity for the whole window, when it differs from
+    // "every weekday is a full day".
+    //
+    // Somebody on three days a week has 22.5h available in a week, not 37.5h,
+    // and measuring them against five days reports 60% when they have worked a
+    // full week. Which three days they choose is not recorded and does not
+    // matter: the per-day track still shows what a full day looks like, while
+    // the WEEK total is what their utilisation is measured against.
+    availableHoursOverride?: number;
   },
 ): DailySeries {
   const { from, to, capacityHours } = options;
@@ -175,7 +184,7 @@ export function buildDailySeries(
   const nonBillable = points.reduce((total, point) => total + point.nonBillableHours, 0);
   const unset = points.reduce((total, point) => total + point.unsetHours, 0);
   const logged = billable + nonBillable + unset;
-  const available = workingDays * capacityHours;
+  const available = options.availableHoursOverride ?? workingDays * capacityHours;
 
   // The y-axis has to clear both the tallest bar and the capacity line, or an
   // over-capacity day would be drawn outside the plot.

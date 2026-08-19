@@ -26,9 +26,8 @@ export default async function TimesheetView(request: TimesheetRequest) {
 
   return (
     <TimesheetShell
-      view="timesheet"
       data={data}
-      title="Timesheet"
+      title="Entries"
       description={`Time entries for ${period.label}, read from Jira.`}
     >
       {hasEntries ? (
@@ -39,8 +38,8 @@ export default async function TimesheetView(request: TimesheetRequest) {
             series={weekSeries}
             week={week}
             title="Hours this week"
-            previousHref={weekHref(ROUTES.ADMIN_TIMESHEETS, filters, week.previousStart)}
-            nextHref={weekHref(ROUTES.ADMIN_TIMESHEETS, filters, week.nextStart)}
+            previousHref={weekHref(ROUTES.ADMIN_TIMESHEETS_ENTRIES, filters, week.previousStart)}
+            nextHref={weekHref(ROUTES.ADMIN_TIMESHEETS_ENTRIES, filters, week.nextStart)}
           />
 
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

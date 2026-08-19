@@ -7,7 +7,9 @@ import {
   JiraProject,
   NewJiraIssue,
   NewJiraProject,
+  NewStaffTarget,
   NewWorklogFact,
+  StaffTarget,
   SyncWatermark,
   WorklogFact,
 } from "../kysely-database-types";
@@ -323,5 +325,45 @@ export async function recordSyncFailureRepo(jobName: string, message: string): P
       .execute();
   } catch (error) {
     throw handleError("recordSyncFailureRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Staff targets
+//
+// The only rows in this model that are not derived from Jira, so unlike
+// everything else here they cannot be recovered by re-syncing. Handled with
+// correspondingly more care: an upsert never blanks a column the caller did
+// not supply.
+// -------------------------------------------------------------------
+export async function getStaffTargetsRepo(): Promise<StaffTarget[]> {
+  try {
+    return await database.selectFrom("staffTarget").selectAll().orderBy("personId").execute();
+  } catch (error) {
+    throw handleError("getStaffTargetsRepo", error);
+  }
+}
+
+export async function upsertStaffTargetRepo(row: NewStaffTarget, db: DBClient = database): Promise<StaffTarget> {
+  try {
+    const now = new Date();
+
+    return await db
+      .insertInto("staffTarget")
+      .values(row)
+      .onConflict((oc) =>
+        oc.column("personId").doUpdateSet((eb) => ({
+          personName: eb.ref("excluded.personName"),
+          workingDaysTenths: eb.ref("excluded.workingDaysTenths"),
+          minutesPerDay: eb.ref("excluded.minutesPerDay"),
+          billableTargetPercent: eb.ref("excluded.billableTargetPercent"),
+          // updated_at has no trigger in this schema, so it is set here.
+          updatedAt: now,
+        })),
+      )
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  } catch (error) {
+    throw handleError("upsertStaffTargetRepo", error);
   }
 }
