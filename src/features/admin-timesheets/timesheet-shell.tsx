@@ -103,16 +103,18 @@ export default function TimesheetShell({
           </Link>
         )}
 
-        {/* One filter row, and only the controls that make sense for the view.
-            Each hides itself when there is nothing to choose between. */}
-        <div className="flex flex-wrap items-center gap-2">
+{/* One filter row. Everything flows left to right and wraps together;
+            the category control used to be pushed right with ms-auto, which
+            stranded it alone on a second line as soon as anything else grew. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-muted/20 p-2">
           <PeriodControl filters={filters} period={period} todayIso={todayIso} pathname={pathname} />
-          {showProjectFilter && <ProjectSelect filters={filters} options={projectOptions} />}
-          {showCategoryFilter && (
-            <div className="ms-auto">
-              <CategorySegmentedControl filters={filters} options={categoryOptions} />
-            </div>
+
+          {(showProjectFilter || showCategoryFilter) && (
+            <span className="hidden h-6 w-px bg-border sm:block" aria-hidden />
           )}
+
+          {showCategoryFilter && <CategorySegmentedControl filters={filters} options={categoryOptions} />}
+          {showProjectFilter && <ProjectSelect filters={filters} options={projectOptions} />}
         </div>
 
         {children}

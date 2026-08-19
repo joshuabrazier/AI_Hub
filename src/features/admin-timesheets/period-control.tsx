@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { CalendarCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
@@ -52,9 +52,6 @@ export function PeriodControl({
     return `${pathname}?${filterQuery({ ...filters, granularity }, todayIso)}`;
   }
 
-  // "This week" / "This month" - named after the length in view, so the button
-  // says where it takes you.
-  const thisPeriodLabel = `This ${GRANULARITY_LABELS[period.granularity].toLowerCase()}`;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -65,7 +62,7 @@ export function PeriodControl({
         <div
           role="group"
           aria-label="Period length"
-          className="inline-flex items-center gap-1 rounded-xl border border-border bg-muted/40 p-1"
+          className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5"
         >
           {GRANULARITIES.map((granularity) => {
             const isActive = granularity === filters.granularity;
@@ -81,7 +78,7 @@ export function PeriodControl({
                   startTransition(() => router.push(hrefFor(granularity)));
                 }}
                 className={cn(
-                  "relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                  "relative rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
                   isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground",
                   isPending && "cursor-wait",
@@ -90,7 +87,7 @@ export function PeriodControl({
                 {isActive && (
                   <motion.span
                     layoutId="granularity-pill"
-                    className="absolute inset-0 rounded-lg bg-card shadow-sm ring-1 ring-border"
+                    className="absolute inset-0 rounded-md bg-card shadow-sm ring-1 ring-border"
                     transition={reduceMotion ? { duration: 0 } : TRANSITION}
                   />
                 )}
@@ -101,10 +98,11 @@ export function PeriodControl({
         </div>
       </LayoutGroup>
 
-      {/* Stepping is links, not state: a period is a real URL that can be
-          bookmarked and sent to somebody. */}
-      <div className="flex items-center gap-1 rounded-xl border border-border p-0.5">
-        <Button asChild variant="ghost" size="icon" className="size-8">
+      {/* The stepper. Its LABEL is the way back to the current period, rather
+          than a separate button beside it - one fewer control, and the thing
+          you click is the thing you want to change. */}
+      <div className="inline-flex items-center rounded-lg border border-border">
+        <Button asChild variant="ghost" size="icon" className="size-8 rounded-r-none">
           <Link
             href={`${pathname}?${filterQuery(filters, period.previousStart)}`}
             aria-label={`Previous ${GRANULARITY_LABELS[period.granularity].toLowerCase()}`}
@@ -114,10 +112,23 @@ export function PeriodControl({
           </Link>
         </Button>
 
-        <span className="min-w-[150px] px-2 text-center text-sm font-medium tabular-nums">{period.label}</span>
+        {period.isCurrent ? (
+          <span className="min-w-[142px] px-1 text-center text-sm font-medium tabular-nums text-foreground">
+            {period.label}
+          </span>
+        ) : (
+          <Link
+            href={`${pathname}?${filterQuery(filters, todayIso)}`}
+            scroll={false}
+            title={`Back to this ${GRANULARITY_LABELS[period.granularity].toLowerCase()}`}
+            className="min-w-[142px] px-1 text-center text-sm font-medium tabular-nums text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {period.label}
+          </Link>
+        )}
 
         {period.hasNext ? (
-          <Button asChild variant="ghost" size="icon" className="size-8">
+          <Button asChild variant="ghost" size="icon" className="size-8 rounded-l-none">
             <Link
               href={`${pathname}?${filterQuery(filters, period.nextStart)}`}
               aria-label={`Next ${GRANULARITY_LABELS[period.granularity].toLowerCase()}`}
@@ -129,28 +140,11 @@ export function PeriodControl({
         ) : (
           // Disabled rather than hidden, so the control does not shift around
           // as you step back through periods.
-          <Button variant="ghost" size="icon" className="size-8" disabled aria-label="Next period">
+          <Button variant="ghost" size="icon" className="size-8 rounded-l-none" disabled aria-label="Next period">
             <ChevronRight aria-hidden />
           </Button>
         )}
       </div>
-
-      {/* Disabled rather than hidden when you are already on the current
-          period: a control that vanishes is harder to find again than one that
-          is visibly unavailable. */}
-      {period.isCurrent ? (
-        <Button variant="ghost" size="sm" disabled>
-          <CalendarCheck aria-hidden />
-          {thisPeriodLabel}
-        </Button>
-      ) : (
-        <Button asChild variant="outline" size="sm">
-          <Link href={`${pathname}?${filterQuery(filters, todayIso)}`} scroll={false}>
-            <CalendarCheck aria-hidden />
-            {thisPeriodLabel}
-          </Link>
-        </Button>
-      )}
     </div>
   );
 }

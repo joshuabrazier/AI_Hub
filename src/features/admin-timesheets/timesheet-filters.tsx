@@ -81,7 +81,7 @@ export function CategorySegmentedControl({
       <div
         role="group"
         aria-label="Job category"
-        className="inline-flex items-center gap-1 rounded-xl border border-border bg-muted/40 p-1"
+        className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5"
       >
         {options.map((option) => {
           const isActive = option.value === filters.category;
@@ -97,7 +97,7 @@ export function CategorySegmentedControl({
                 startTransition(() => router.push(buildHref(pathname, filters, { category: option.value })));
               }}
               className={cn(
-                "relative rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "relative rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
                 // A real focus ring, never removed: this is the primary way
                 // the screen is navigated by keyboard.
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
@@ -110,17 +110,15 @@ export function CategorySegmentedControl({
                   // layoutId makes this one element that moves between
                   // buttons, rather than one fading out and another in.
                   layoutId="category-pill"
-                  className="absolute inset-0 rounded-lg bg-card shadow-sm ring-1 ring-border"
+                  className="absolute inset-0 rounded-md bg-card shadow-sm ring-1 ring-border"
                   transition={reduceMotion ? { duration: 0 } : TRANSITION}
                 />
               )}
 
-              <span className="relative flex items-baseline gap-2">
-                {option.label}
-                {/* Tabular figures so the number does not jitter the label
-                    width as it changes between periods. */}
-                <span className="text-xs tabular-nums text-muted-foreground">{option.hours.toFixed(2)}h</span>
-              </span>
+              {/* The label alone. The hours used to sit beside it, which made
+                  this control wide enough to wrap onto a line of its own - and
+                  the same figures are in the tiles immediately below. */}
+              <span className="relative">{option.label}</span>
             </button>
           );
         })}
@@ -147,7 +145,7 @@ export function ProjectSelect({ filters, options }: { filters: TimesheetFiltersD
       disabled={isPending}
       onValueChange={(project) => startTransition(() => router.push(buildHref(pathname, filters, { project })))}
     >
-      <SelectTrigger className="w-[260px]" aria-label="Job">
+      <SelectTrigger className="w-[220px]" aria-label="Job">
         <SelectValue placeholder="All jobs" />
       </SelectTrigger>
       <SelectContent>
