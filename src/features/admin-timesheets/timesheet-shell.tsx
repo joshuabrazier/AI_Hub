@@ -8,7 +8,8 @@ import { ROUTES } from "@/lib/routes";
 
 import { ALL_CATEGORIES, AdminTimesheetsDTO } from "./admin-timesheets.types";
 import { RefreshButton } from "./refresh-button";
-import { CategorySegmentedControl, PeriodSelect, ProjectSelect } from "./timesheet-filters";
+import { PeriodControl } from "./period-control";
+import { CategorySegmentedControl, ProjectSelect } from "./timesheet-filters";
 
 // -------------------------------------------------------------------
 // The shell every time-and-billing view sits in.
@@ -29,12 +30,11 @@ import { CategorySegmentedControl, PeriodSelect, ProjectSelect } from "./timeshe
 // them. `week` is included only when overriding the default, which keeps a
 // plain link short and lets the chart fall back to the week of the latest
 // entry.
-export function filterQuery(filters: AdminTimesheetsDTO["filters"], week?: string): string {
-  const params = new URLSearchParams({ month: filters.month });
+export function filterQuery(filters: AdminTimesheetsDTO["filters"], start?: string): string {
+  const params = new URLSearchParams({ granularity: filters.granularity, start: start ?? filters.start });
   if (filters.category !== ALL_CATEGORIES) params.set("category", filters.category);
   if (filters.project !== ALL_CATEGORIES) params.set("project", filters.project);
   if (filters.person !== ALL_CATEGORIES) params.set("person", filters.person);
-  if (week) params.set("week", week);
   return params.toString();
 }
 
@@ -45,14 +45,16 @@ export function filterQuery(filters: AdminTimesheetsDTO["filters"], week?: strin
 //
 // Returns a STRING rather than a closure: the chart is a Client Component, and
 // a function cannot cross the server-to-client boundary.
-export function weekHref(pathname: string, filters: AdminTimesheetsDTO["filters"], weekStart: string): string {
-  return `${pathname}?${filterQuery({ ...filters, month: weekStart.slice(0, 7) }, weekStart)}`;
+export function periodHref(pathname: string, filters: AdminTimesheetsDTO["filters"], start: string): string {
+  return `${pathname}?${filterQuery(filters, start)}`;
 }
 
 export default function TimesheetShell({
   data,
   title,
   description,
+  // The route this shell is rendering, so the period arrows keep you on it.
+  pathname,
   backLink,
   showProjectFilter = true,
   showCategoryFilter = true,
@@ -61,6 +63,7 @@ export default function TimesheetShell({
   data: AdminTimesheetsDTO;
   title: string;
   description: string;
+  pathname: string;
   // Shown above the title on a detail screen, so there is always a way back to
   // the list you came from.
   backLink?: { href: string; label: string };
@@ -68,7 +71,7 @@ export default function TimesheetShell({
   showCategoryFilter?: boolean;
   children: React.ReactNode;
 }) {
-  const { filters, monthOptions, categoryOptions, projectOptions, report } = data;
+  const { filters, period, todayIso, categoryOptions, projectOptions, report } = data;
 
   return (
     <PortalPage
@@ -103,7 +106,7 @@ export default function TimesheetShell({
         {/* One filter row, and only the controls that make sense for the view.
             Each hides itself when there is nothing to choose between. */}
         <div className="flex flex-wrap items-center gap-2">
-          <PeriodSelect filters={filters} options={monthOptions} />
+          <PeriodControl filters={filters} period={period} todayIso={todayIso} pathname={pathname} />
           {showProjectFilter && <ProjectSelect filters={filters} options={projectOptions} />}
           {showCategoryFilter && (
             <div className="ms-auto">

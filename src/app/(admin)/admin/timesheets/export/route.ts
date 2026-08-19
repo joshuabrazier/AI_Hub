@@ -24,7 +24,8 @@ export async function GET(request: Request): Promise<Response> {
   const params = new URL(request.url).searchParams;
 
   const { filename, csv } = await getAdminTimesheetsCsvService({
-    month: params.get("month") ?? undefined,
+    granularity: params.get("granularity") ?? undefined,
+    start: params.get("start") ?? undefined,
     category: params.get("category") ?? undefined,
     project: params.get("project") ?? undefined,
   });

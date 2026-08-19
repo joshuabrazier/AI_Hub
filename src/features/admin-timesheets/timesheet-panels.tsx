@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { SyncStatusDTO } from "./admin-timesheets.types";
+import { JobsDataTable } from "./table/timesheet-data-tables";
 import { AnimatedNumber, LiftOnHover, ProportionBar, Reveal } from "./timesheet-motion";
 
 // -------------------------------------------------------------------
@@ -97,8 +98,10 @@ export function StatTile({
   hint,
   ratio,
   emphasis = "normal",
-  // "hours" renders "18.75 h"; "count" renders "7". A count shown with a unit
-  // reads as a duration, and "7.00 h of jobs" is nonsense.
+  // "hours" renders "18.75 h", "count" renders "7", "percent" renders "64%".
+  // A count shown with a unit reads as a duration; a percentage shown without
+  // its sign reads as a count, which is how "14" ended up on screen where
+  // "14%" was meant.
   format = "hours",
   index = 0,
 }: {
@@ -107,7 +110,7 @@ export function StatTile({
   hint?: string;
   ratio?: number | null;
   emphasis?: "normal" | "muted" | "alert";
-  format?: "hours" | "count";
+  format?: "hours" | "count" | "percent";
   index?: number;
 }) {
   return (
@@ -127,8 +130,8 @@ export function StatTile({
             >
               <AnimatedNumber
                 value={hours}
-                decimals={format === "count" ? 0 : 2}
-                suffix={format === "count" ? "" : " h"}
+                decimals={format === "hours" ? 2 : 0}
+                suffix={format === "hours" ? " h" : format === "percent" ? "%" : ""}
               />
             </p>
 
@@ -319,6 +322,13 @@ export function ProjectsCard({
 // budget with nothing under it is either work that has not started or work
 // recorded somewhere else, and a table of only-items-with-hours shows neither.
 // -------------------------------------------------------------------
+// The book of work.
+//
+// Every job appears, including the ones nobody has started - a large budget
+// with nothing under it means the work has not begun, or is being recorded
+// somewhere other than Jira, and a table of only-jobs-with-hours shows
+// neither. Sorting and filtering come from the shared DataTable.
+// -------------------------------------------------------------------
 export function JobsCard({ jobs, index }: { jobs: BudgetRow[]; index: number }) {
   if (jobs.length === 0) return null;
 
@@ -326,84 +336,22 @@ export function JobsCard({ jobs, index }: { jobs: BudgetRow[]; index: number }) 
   const hasAnyEstimate = jobs.some((job) => job.baselineSeconds !== null || job.currentSeconds !== null);
 
   return (
-    <PanelCard
-      title="Jobs"
-      description={
-        `Every job in the book of work, including the ${jobs.length - started} with no time booked in this period. ` +
-        (hasAnyEstimate
-          ? "Baseline and estimate come from Jira; actuals are summed from the entries, never stored."
-          : "No baseline or estimate is set in Jira yet, so there is nothing to measure against.")
-      }
-      index={index}
-    >
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Job</TableHead>
-            <TableHead>Category</TableHead>
-            <TableHead className="text-right">Logged</TableHead>
-            <TableHead className="text-right">Baseline</TableHead>
-            <TableHead className="text-right">Estimate</TableHead>
-            <TableHead className="text-right">Variance</TableHead>
-            <TableHead className="text-right">Consumed</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {jobs.map((job) => {
-            const over = job.varianceSeconds !== null && job.varianceSeconds > 0;
-            const untouched = job.worklogCount === 0;
-
-            return (
-              <TableRow
-                key={job.parentKey}
-                className={cn("transition-colors hover:bg-muted/50", untouched && "text-muted-foreground")}
-              >
-                <TableCell>
-                  <div className="flex min-w-0 flex-col">
-                    <span className={cn(!untouched && "font-medium text-foreground")}>
-                      {job.parentSummary ?? job.parentKey}
-                    </span>
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {job.parentKey}
-                      {job.billable && ` - ${job.billable}`}
-                    </span>
-                  </div>
-                </TableCell>
-
-                <TableCell>
-                  {job.category ? (
-                    <Badge variant="outline">{job.category}</Badge>
-                  ) : (
-                    <span className="text-muted-foreground">-</span>
-                  )}
-                </TableCell>
-
-                <TableCell className="text-right tabular-nums">
-                  {untouched ? (
-                    // An explicit dash, not "0.00 h". Nothing booked is a
-                    // different statement from a job that netted to zero.
-                    <span className="text-muted-foreground">not started</span>
-                  ) : (
-                    <span className="font-medium text-foreground">{formatHours(job.actualHours)}</span>
-                  )}
-                </TableCell>
-
-                <TableCell className="text-right tabular-nums">
-                  {job.baselineHours === null ? "-" : formatHours(job.baselineHours)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {job.currentHours === null ? "-" : formatHours(job.currentHours)}
-                </TableCell>
-                <TableCell className={cn("text-right tabular-nums", over && "font-medium text-destructive")}>
-                  {job.varianceHours === null ? "-" : formatHours(job.varianceHours)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">{formatPercent(job.consumedRatio)}</TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </PanelCard>
+    <Reveal index={index}>
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Jobs</CardTitle>
+          <CardDescription>
+            {`${jobs.length} jobs, ${jobs.length - started} with no time booked in this period. `}
+            {hasAnyEstimate
+              ? "Baseline and estimate come from Jira; actuals are summed from the entries, never stored."
+              : "No baseline or estimate is set in Jira yet, so there is nothing to measure against."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <JobsDataTable jobs={jobs} />
+        </CardContent>
+      </Card>
+    </Reveal>
   );
 }
 

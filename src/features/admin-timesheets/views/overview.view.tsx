@@ -4,7 +4,7 @@ import { getOverviewService, TimesheetRequest } from "../admin-timesheets.servic
 import { CategorySplitCard, OverviewLegend, ReadinessCard, TopJobsCard } from "../overview-panels";
 import { ProductivityChart } from "../productivity-chart";
 import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
-import TimesheetShell, { weekHref } from "../timesheet-shell";
+import TimesheetShell, { periodHref } from "../timesheet-shell";
 
 // -------------------------------------------------------------------
 // Overview: the company at a glance.
@@ -23,13 +23,14 @@ import TimesheetShell, { weekHref } from "../timesheet-shell";
 // -------------------------------------------------------------------
 export default async function OverviewView(request: TimesheetRequest) {
   const { data, overview } = await getOverviewService(request);
-  const { period, filters, report, syncStatus, periodTotalHours, weekSeries, week } = data;
+  const { period, filters, report, syncStatus, periodTotalHours, periodSeries } = data;
 
   const hasData = report.totals.worklogCount > 0;
 
   return (
     <TimesheetShell
       data={data}
+      pathname={ROUTES.ADMIN_TIMESHEETS}
       title="Overview"
       description={`How the business is tracking in ${period.label}.`}
     >
@@ -52,7 +53,7 @@ export default async function OverviewView(request: TimesheetRequest) {
             <StatTile
               label="Utilisation"
               hours={overview.utilisation === null ? 0 : Math.round(overview.utilisation * 100)}
-              format="count"
+              format="percent"
               ratio={overview.utilisation}
               hint={`of ${overview.capacityHours.toFixed(2)}h contracted`}
               index={1}
@@ -85,11 +86,11 @@ export default async function OverviewView(request: TimesheetRequest) {
               actually think in - a quarter of weekly bars answered a question
               nobody was asking on this screen. */}
           <ProductivityChart
-            series={weekSeries}
-            week={week}
+            series={periodSeries}
+            period={period}
             title="The company week"
-            previousHref={weekHref(ROUTES.ADMIN_TIMESHEETS, filters, week.previousStart)}
-            nextHref={weekHref(ROUTES.ADMIN_TIMESHEETS, filters, week.nextStart)}
+            previousHref={periodHref(ROUTES.ADMIN_TIMESHEETS, filters, period.previousStart)}
+            nextHref={periodHref(ROUTES.ADMIN_TIMESHEETS, filters, period.nextStart)}
           />
 
           <div className="grid gap-6 lg:grid-cols-3">

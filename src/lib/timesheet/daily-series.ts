@@ -23,10 +23,12 @@ const SECONDS_PER_HOUR = 3600;
 const DEFAULT_WORKING_WEEKDAYS = [1, 2, 3, 4, 5];
 
 export interface DailyPoint {
-  // 'YYYY-MM-DD'
+  // 'YYYY-MM-DD'. For a month bucket, the first of that month.
   date: string;
-  // Mon, Tue, ...
+  // Mon, Tue, ... For a month bucket, the short month name.
   weekdayLabel: string;
+  // Day of month for a day bucket; the year for a month bucket, so the label
+  // under a twelve-bar year reads "Jan 2026" rather than "Jan 1".
   dayOfMonth: number;
   isWorkingDay: boolean;
   billableHours: number;
@@ -132,6 +134,10 @@ export function buildDailySeries(
     // matter: the per-day track still shows what a full day looks like, while
     // the WEEK total is what their utilisation is measured against.
     availableHoursOverride?: number;
+    // "day" gives one bar per day, "month" one bar per month. A year of daily
+    // bars is 365 slivers nobody can read or hover, so a long period buckets
+    // up rather than drawing every day of it.
+    bucket?: "day" | "month";
   },
 ): DailySeries {
   const { from, to, capacityHours } = options;
@@ -151,6 +157,10 @@ export function buildDailySeries(
   }
 
   const points: DailyPoint[] = [];
+
+  if ((options.bucket ?? "day") === "month") {
+    return buildMonthlyPoints(byDate, { from, to, capacityHours, workingWeekdays, options });
+  }
 
   for (const date of eachDate(from, to)) {
     const booked = byDate.get(date);
@@ -210,3 +220,101 @@ export function buildDailySeries(
 function round(value: number): number {
   return Math.round(value * 10000) / 10000;
 }
+
+// -------------------------------------------------------------------
+// One bar per month, for a period long enough that daily bars stop being
+// readable.
+//
+// A month's capacity is its own weekday count times a full day, so February
+// is not held to January's target. Every month in the range gets a bar
+// including the empty ones - a year with a quiet quarter should show the gap,
+// not close it up.
+// -------------------------------------------------------------------
+function buildMonthlyPoints(
+  byDate: Map<string, { billable: number; nonBillable: number; unset: number }>,
+  context: {
+    from: string;
+    to: string;
+    capacityHours: number;
+    workingWeekdays: number[];
+    options: { availableHoursOverride?: number };
+  },
+): DailySeries {
+  const { from, to, capacityHours, workingWeekdays, options } = context;
+
+  const months = new Map<string, { billable: number; nonBillable: number; unset: number; workingDays: number }>();
+
+  // Seed every month in the range so an empty one still gets a bar.
+  let cursor = `${from.slice(0, 7)}-01`;
+  while (cursor.slice(0, 7) <= to.slice(0, 7)) {
+    months.set(cursor.slice(0, 7), { billable: 0, nonBillable: 0, unset: 0, workingDays: 0 });
+    const year = Number(cursor.slice(0, 4));
+    const month = Number(cursor.slice(5, 7));
+    cursor = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+  }
+
+  // Count each month's working days from the actual calendar, so a short
+  // month is measured against its own length.
+  for (const date of eachDate(from, to)) {
+    const key = date.slice(0, 7);
+    const bucket = months.get(key);
+    if (!bucket) continue;
+
+    const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+    if (workingWeekdays.includes(weekday)) bucket.workingDays += 1;
+
+    const booked = byDate.get(date);
+    if (!booked) continue;
+    bucket.billable += booked.billable;
+    bucket.nonBillable += booked.nonBillable;
+    bucket.unset += booked.unset;
+  }
+
+  const points: DailyPoint[] = [...months.entries()].map(([month, bucket]) => {
+    const billableHours = bucket.billable / SECONDS_PER_HOUR;
+    const nonBillableHours = bucket.nonBillable / SECONDS_PER_HOUR;
+    const unsetHours = bucket.unset / SECONDS_PER_HOUR;
+
+    return {
+      date: `${month}-01`,
+      weekdayLabel: MONTH_SHORT[Number(month.slice(5, 7)) - 1],
+      dayOfMonth: Number(month.slice(0, 4)),
+      isWorkingDay: bucket.workingDays > 0,
+      billableHours,
+      nonBillableHours,
+      unsetHours,
+      loggedHours: billableHours + nonBillableHours + unsetHours,
+      capacityHours: bucket.workingDays * capacityHours,
+    };
+  });
+
+  const billable = points.reduce((total, point) => total + point.billableHours, 0);
+  const nonBillable = points.reduce((total, point) => total + point.nonBillableHours, 0);
+  const unset = points.reduce((total, point) => total + point.unsetHours, 0);
+  const logged = billable + nonBillable + unset;
+  const available =
+    options.availableHoursOverride ?? points.reduce((total, point) => total + point.capacityHours, 0);
+
+  const maxLogged = points.reduce((max, point) => Math.max(max, point.loggedHours), 0);
+  const maxCapacity = points.reduce((max, point) => Math.max(max, point.capacityHours), 0);
+
+  return {
+    points,
+    // The axis has to clear the tallest bar AND the tallest capacity track,
+    // or a quiet month would be drawn outside its own plot.
+    maxHours: Math.max(maxLogged, maxCapacity),
+    capacityHours,
+    totals: {
+      billableHours: round(billable),
+      nonBillableHours: round(nonBillable),
+      unsetHours: round(unset),
+      loggedHours: round(logged),
+      availableHours: round(available),
+      workingDays: points.reduce((total, point) => total + (point.isWorkingDay ? 1 : 0), 0),
+      utilisation: available > 0 ? round(logged / available) : null,
+      billableShare: logged > 0 ? round(billable / logged) : null,
+    },
+  };
+}
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

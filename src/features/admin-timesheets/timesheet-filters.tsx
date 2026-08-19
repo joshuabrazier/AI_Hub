@@ -11,7 +11,6 @@ import { cn } from "@/lib/utils";
 import {
   ALL_CATEGORIES,
   CategoryOptionDTO,
-  MonthOptionDTO,
   PersonOptionDTO,
   ProjectOptionDTO,
   TimesheetFiltersDTO,
@@ -41,7 +40,7 @@ const TRANSITION = { duration: 0.2, ease: [0.22, 1, 0.36, 1] } as const;
 // this works unchanged on all four views.
 function buildHref(pathname: string, filters: TimesheetFiltersDTO, change: Partial<TimesheetFiltersDTO>): string {
   const next = { ...filters, ...change };
-  const params = new URLSearchParams({ month: next.month });
+  const params = new URLSearchParams({ granularity: next.granularity, start: next.start });
 
   // Defaults are left out of the URL entirely, so a plain link stays short and
   // readable rather than carrying "&category=all&project=all&person=all".
@@ -134,31 +133,6 @@ export function CategorySegmentedControl({
 // Period and project, as dropdowns. Both are lists that grow without bound,
 // which is what a select is for.
 // -------------------------------------------------------------------
-export function PeriodSelect({ filters, options }: { filters: TimesheetFiltersDTO; options: MonthOptionDTO[] }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const [isPending, startTransition] = useTransition();
-
-  return (
-    <Select
-      value={filters.month}
-      disabled={isPending}
-      onValueChange={(month) => startTransition(() => router.push(buildHref(pathname, filters, { month })))}
-    >
-      <SelectTrigger className="w-[190px]" aria-label="Reporting period">
-        <SelectValue placeholder="Choose a month" />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
 export function ProjectSelect({ filters, options }: { filters: TimesheetFiltersDTO; options: ProjectOptionDTO[] }) {
   const router = useRouter();
   const pathname = usePathname();

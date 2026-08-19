@@ -201,3 +201,56 @@ describe("week view (Monday to Sunday)", () => {
     expect(series.totals.availableHours).toBe(37.5);
   });
 });
+
+// -------------------------------------------------------------------
+// Month bucketing, for a period too long to draw a bar per day
+// -------------------------------------------------------------------
+describe("monthly buckets", () => {
+  const YEAR = { from: "2026-01-01", to: "2026-12-31", capacityHours: 7.5, bucket: "month" as const };
+
+  it("draws twelve bars for a year, including the empty months", () => {
+    // A year with a quiet quarter should show the gap, not close it up.
+    const series = buildDailySeries([day("2026-08-11", 27000)], YEAR);
+
+    expect(series.points).toHaveLength(12);
+    expect(series.points.map((point) => point.weekdayLabel)).toEqual([
+      "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]);
+  });
+
+  it("puts each entry in its own month", () => {
+    const series = buildDailySeries(
+      [day("2026-08-11", 27000), day("2026-03-04", 3600)],
+      YEAR,
+    );
+
+    expect(series.points[2].loggedHours).toBe(1); // March
+    expect(series.points[7].loggedHours).toBe(7.5); // August
+  });
+
+  it("measures each month against its own weekday count", () => {
+    // February 2026 has 20 weekdays, August has 21. Holding February to
+    // August's capacity would report it as permanently behind.
+    const series = buildDailySeries([], YEAR);
+
+    expect(series.points[1].capacityHours).toBe(20 * 7.5);
+    expect(series.points[7].capacityHours).toBe(21 * 7.5);
+  });
+
+  it("sizes the axis to clear the tallest capacity track, not just the bars", () => {
+    // A quiet year still has to draw its capacity tracks inside the plot.
+    const series = buildDailySeries([day("2026-08-11", 3600)], YEAR);
+    expect(series.maxHours).toBeGreaterThanOrEqual(20 * 7.5);
+  });
+
+  it("totals the whole year", () => {
+    const series = buildDailySeries(
+      [day("2026-08-11", 18000, 9000), day("2026-03-04", 3600)],
+      YEAR,
+    );
+
+    expect(series.totals.loggedHours).toBe(8.5);
+    expect(series.totals.billableHours).toBe(6);
+    expect(series.totals.nonBillableHours).toBe(2.5);
+  });
+});

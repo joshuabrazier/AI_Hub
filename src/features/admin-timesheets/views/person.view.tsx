@@ -7,8 +7,9 @@ import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.
 import { ProductivityChart } from "../productivity-chart";
 import { StaffTargetDialog } from "../staff-target-dialog";
 import { ProjectsCard, StatTile, SyncStatusLine } from "../timesheet-panels";
-import TimesheetShell, { filterQuery, weekHref } from "../timesheet-shell";
-import { EntriesTable, PersonDaysTable } from "../timesheet-tables";
+import TimesheetShell, { filterQuery, periodHref } from "../timesheet-shell";
+import { EntriesDataTable } from "../table/timesheet-data-tables";
+import { PersonDaysTable } from "../timesheet-tables";
 
 // -------------------------------------------------------------------
 // One person.
@@ -26,7 +27,7 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
   // The person filter is forced to the id in the path, so every figure and
   // every table on this screen describes them and nobody else.
   const { data, dashboard } = await getStaffDashboardService({ ...request, person: personId });
-  const { period, filters, report, syncStatus, workingHoursPerDay, weekSeries, week } = data;
+  const { period, filters, report, syncStatus, workingHoursPerDay, periodSeries } = data;
 
   const person = dashboard.people.find((candidate) => candidate.personId === personId);
 
@@ -40,6 +41,7 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
   return (
     <TimesheetShell
       data={data}
+      pathname={`${ROUTES.ADMIN_TIMESHEETS_STAFF}/${encodeURIComponent(personId)}`}
       title={person.personName}
       description={
         `${person.target.workingDaysPerWeek} ${person.target.workingDaysPerWeek === 1 ? "day" : "days"} a week at ` +
@@ -66,7 +68,7 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
         <StatTile
           label="Utilisation"
           hours={person.utilisation === null ? 0 : Math.round(person.utilisation * 100)}
-          format="count"
+          format="percent"
           ratio={person.utilisation}
           hint={`${person.loggedHours.toFixed(2)}h of ${person.capacityHours.toFixed(2)}h`}
           index={0}
@@ -74,7 +76,7 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
         <StatTile
           label="Billable share"
           hours={person.billableShare === null ? 0 : Math.round(person.billableShare * 100)}
-          format="count"
+          format="percent"
           ratio={person.billableShare}
           hint={
             person.billableTargetPercent === null
@@ -92,11 +94,11 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
       </div>
 
       <ProductivityChart
-        series={weekSeries}
-        week={week}
-        title={`${person.personName}, week of ${week.label}`}
-        previousHref={weekHref(`${ROUTES.ADMIN_TIMESHEETS_STAFF}/${encodeURIComponent(personId)}`, filters, week.previousStart)}
-        nextHref={weekHref(`${ROUTES.ADMIN_TIMESHEETS_STAFF}/${encodeURIComponent(personId)}`, filters, week.nextStart)}
+        series={periodSeries}
+        period={period}
+        title={`${person.personName}, ${period.label}`}
+        previousHref={periodHref(`${ROUTES.ADMIN_TIMESHEETS_STAFF}/${encodeURIComponent(personId)}`, filters, period.previousStart)}
+        nextHref={periodHref(`${ROUTES.ADMIN_TIMESHEETS_STAFF}/${encodeURIComponent(personId)}`, filters, period.nextStart)}
       />
 
       <PersonDaysTable days={report.byPersonDay} workingHoursPerDay={workingHoursPerDay} />
@@ -105,7 +107,7 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
         <ProjectsCard projects={report.byProject} totalHours={report.totals.hours} index={2} />
       )}
 
-      {report.facts.length > 0 && <EntriesTable facts={report.facts} />}
+      {report.facts.length > 0 && <EntriesDataTable facts={report.facts} />}
 
       <SyncStatusLine syncStatus={syncStatus} />
     </TimesheetShell>

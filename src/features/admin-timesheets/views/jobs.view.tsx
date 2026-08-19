@@ -1,3 +1,5 @@
+import { ROUTES } from "@/lib/routes";
+
 import { getAdminTimesheetsService, TimesheetRequest } from "../admin-timesheets.service";
 import { JobsCard, ProjectsCard, StatTile, SyncStatusLine } from "../timesheet-panels";
 import TimesheetShell from "../timesheet-shell";
@@ -25,6 +27,7 @@ export default async function JobsView(request: TimesheetRequest) {
   return (
     <TimesheetShell
       data={data}
+      pathname={ROUTES.ADMIN_TIMESHEETS_JOBS}
       title="Jobs"
       description={`The book of work as it stands in ${period.label}.`}
       showProjectFilter={false}

@@ -20,11 +20,16 @@ import { cn } from "@/lib/utils";
 // "actions" and renders it as a footer before any label is used.
 // -------------------------------------------------------------------
 
-type ColumnAlign = "left" | "center";
+// "right" exists for numeric columns: figures line up on their last digit,
+// and a left-aligned header over right-aligned numbers reads as a mistake.
+type ColumnAlign = "left" | "center" | "right";
 
 /** The header renderer used by every admin column. */
 export function columnHeader(label: string, align: ColumnAlign = "left") {
-  const className = cn("font-semibold", align === "center" ? "text-center" : "text-left");
+  const className = cn(
+    "font-semibold",
+    align === "center" ? "text-center" : align === "right" ? "text-right" : "text-left",
+  );
 
   function ColumnHeader() {
     return <div className={className}>{label}</div>;

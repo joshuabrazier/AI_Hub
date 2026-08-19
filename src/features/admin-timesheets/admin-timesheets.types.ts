@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DailySeries } from "@/lib/timesheet/daily-series";
+import { Granularity } from "@/lib/timesheet/period";
 import { InvoiceReadiness, JobSlice, SplitSlice } from "@/lib/timesheet/overview-series";
 import { TimesheetReport } from "@/lib/timesheet/timesheet.types";
 
@@ -11,37 +12,23 @@ import { TimesheetReport } from "@/lib/timesheet/timesheet.types";
 // the export and the sync job all read the same numbers from the same code.
 // -------------------------------------------------------------------
 
+// The one period the whole screen describes: its bounds, how to say it, and
+// where the arrows go.
 export interface TimesheetPeriodDTO {
-  // 'YYYY-MM', the value carried in the URL.
-  month: string;
-  // "August 2026"
+  granularity: Granularity;
+  // The period's own start, 'YYYY-MM-DD'. This is what the URL carries.
+  start: string;
+  // "17-23 Aug 2026", "August 2026", "2026"
   label: string;
   // Inclusive bounds, 'YYYY-MM-DD'.
   from: string;
   to: string;
-}
-
-export interface MonthOptionDTO {
-  value: string;
-  label: string;
-}
-
-// -------------------------------------------------------------------
-// The week the chart is showing. Monday-anchored, and in the URL, so a week
-// can be linked to and stepped through without losing the rest of the filters.
-// -------------------------------------------------------------------
-export interface TimesheetWeekDTO {
-  // 'YYYY-MM-DD', always a Monday.
-  start: string;
-  end: string;
-  // "10-16 Aug 2026"
-  label: string;
-  // Monday of the previous / next week, for the arrows.
   previousStart: string;
   nextStart: string;
-  // False when the next week is entirely in the future, so the arrow can be
-  // disabled rather than walking off into empty weeks forever.
   hasNext: boolean;
+  // True when this IS the period containing today, so a "this week" control can
+  // disable itself rather than looking like a button that does nothing.
+  isCurrent: boolean;
 }
 
 // -------------------------------------------------------------------
@@ -85,7 +72,9 @@ export interface PersonOptionDTO {
 }
 
 export interface TimesheetFiltersDTO {
-  month: string;
+  granularity: Granularity;
+  // The period's start, carried in the URL.
+  start: string;
   category: string;
   project: string;
   person: string;
@@ -108,16 +97,18 @@ export interface SyncStatusDTO {
 export interface AdminTimesheetsDTO {
   period: TimesheetPeriodDTO;
   filters: TimesheetFiltersDTO;
-  monthOptions: MonthOptionDTO[];
   categoryOptions: CategoryOptionDTO[];
   projectOptions: ProjectOptionDTO[];
   personOptions: PersonOptionDTO[];
   // The report for the CURRENT filter selection.
   report: TimesheetReport;
-  // Monday to Sunday, for the chart. Derived from the same report, so the bars
-  // can never disagree with the tables beside them.
-  weekSeries: DailySeries;
-  week: TimesheetWeekDTO;
+  // The chart's series for the SAME period as the tables, derived from the
+  // same report, so the two can never disagree.
+  periodSeries: DailySeries;
+  // Today in the app zone. The period control anchors "this week" to it, and it
+  // never comes from the browser clock - a viewer in another timezone must not
+  // see a different "today" from the server that produced these figures.
+  todayIso: string;
   // Totals for the whole period, ignoring category and project. Kept so the
   // filtered view can say "18.75 of 62.00 h" rather than presenting a filtered
   // subtotal as if it were the period.

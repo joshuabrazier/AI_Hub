@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { DailySeries } from "@/lib/timesheet/daily-series";
 import { cn } from "@/lib/utils";
 
-import { TimesheetWeekDTO } from "./admin-timesheets.types";
+import { TimesheetPeriodDTO } from "./admin-timesheets.types";
 
 // -------------------------------------------------------------------
 // Weekly hours: Monday to Sunday, each day against a full day's capacity.
@@ -72,14 +72,14 @@ function axisTicks(top: number): number[] {
 
 export function ProductivityChart({
   series,
-  week,
+  period,
   title,
   previousHref,
   nextHref,
   className,
 }: {
   series: DailySeries;
-  week: TimesheetWeekDTO;
+  period: TimesheetPeriodDTO;
   title: string;
   // Finished URLs, built on the server. NOT a function: every prop crossing
   // into a Client Component has to be serialisable, and React throws on a
@@ -103,7 +103,11 @@ export function ProductivityChart({
           <div className="min-w-0">
             <CardTitle className="text-base">{title}</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              Monday to Sunday, each day against a {capacityHours}h day.
+              {period.granularity === "year"
+                ? `One bar per month, each against that month's own working days. ${capacityHours.toFixed(2)}h a day across everyone in view.`
+                : period.granularity === "week"
+                  ? `Monday to Sunday, each day against ${capacityHours.toFixed(2)}h - a full day for everyone in view.`
+                  : `Each day against ${capacityHours.toFixed(2)}h - a full day for everyone in view.`}
             </p>
           </div>
 
@@ -117,9 +121,9 @@ export function ProductivityChart({
                 </Link>
               </Button>
 
-              <span className="min-w-[124px] px-1 text-center text-sm font-medium tabular-nums">{week.label}</span>
+              <span className="min-w-[124px] px-1 text-center text-sm font-medium tabular-nums">{period.label}</span>
 
-              {week.hasNext ? (
+              {period.hasNext ? (
                 <Button asChild variant="ghost" size="icon" className="size-8">
                   <Link href={nextHref} aria-label="Next week" scroll={false}>
                     <ChevronRight aria-hidden />
@@ -293,23 +297,67 @@ export function ProductivityChart({
                 </div>
               </div>
 
-              {/* Day labels. Real HTML text in a matching flex row, so they line
-                  up under their column and are never scaled. */}
+              {/* Axis labels. Real HTML text in a matching flex row, so they
+                  line up under their column and are never scaled.
+
+                  What is shown depends on the granularity, because the same
+                  treatment does not work at every length:
+                    week/fortnight - the weekday over the date, all of them
+                    month          - dates only, thinned; weekday names on 20+
+                                     bars were noise and collided
+                    year           - the month name, all twelve */}
               <div className="mt-2 flex">
-                {points.map((point) => (
-                  <div key={point.date} className="flex-1 text-center">
-                    <p
-                      className={cn(
-                        "text-xs font-medium",
-                        point.isWorkingDay ? "text-foreground" : "text-muted-foreground",
+                {points.map((point) => {
+                  const isYear = period.granularity === "year";
+                  const isShort = period.granularity === "week" || period.granularity === "fortnight";
+
+                  // Every bar gets its date, however many there are: the whole
+                  // point of a daily axis is being able to find a particular
+                  // day on it.
+                  //
+                  // Weekday names appear only on a week or a fortnight, where
+                  // all of them fit. Scattered across a month they read as
+                  // noise - a handful of names over some columns and not
+                  // others tells you nothing the dates do not.
+                  const showWeekday = isShort;
+
+                  return (
+                    <div key={point.date} className="min-w-0 flex-1 text-center">
+                      {isYear ? (
+                        <p className="text-xs font-medium text-foreground">{point.weekdayLabel}</p>
+                      ) : (
+                        <>
+                          {/* The weekday name is the part that collides, so it
+                              thins out on a long period. */}
+                          {showWeekday && (
+                            <p
+                              className={cn(
+                                "text-[11px] font-medium leading-tight",
+                                point.isWorkingDay ? "text-foreground" : "text-muted-foreground",
+                              )}
+                            >
+                              {point.weekdayLabel}
+                            </p>
+                          )}
+                          {/* Every day keeps its number. */}
+                          <p
+                            className={cn(
+                              "text-[11px] tabular-nums leading-tight",
+                              point.isWorkingDay ? "text-muted-foreground" : "text-muted-foreground/60",
+                            )}
+                          >
+                            {point.dayOfMonth}
+                          </p>
+                        </>
                       )}
-                    >
-                      {point.weekdayLabel}
-                    </p>
-                    <p className="text-[11px] tabular-nums text-muted-foreground">{point.dayOfMonth}</p>
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
+
+              <p className="mt-1 text-center text-xs text-muted-foreground">
+                {period.granularity === "year" ? "Month" : "Day of month"}
+              </p>
             </div>
           </div>
         )}

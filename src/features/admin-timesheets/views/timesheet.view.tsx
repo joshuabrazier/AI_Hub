@@ -1,10 +1,10 @@
 import { ROUTES } from "@/lib/routes";
 
-import { getAdminTimesheetsService, TimesheetRequest } from "../admin-timesheets.service";
+import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { ProductivityChart } from "../productivity-chart";
 import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
-import TimesheetShell, { weekHref } from "../timesheet-shell";
-import { EntriesTable } from "../timesheet-tables";
+import TimesheetShell, { periodHref } from "../timesheet-shell";
+import { EntriesDataTable } from "../table/timesheet-data-tables";
 
 // -------------------------------------------------------------------
 // Timesheet: the entries themselves.
@@ -19,14 +19,17 @@ import { EntriesTable } from "../timesheet-tables";
 // than as a separate wall of warnings above the data.
 // -------------------------------------------------------------------
 export default async function TimesheetView(request: TimesheetRequest) {
-  const data = await getAdminTimesheetsService(request);
-  const { period, filters, report, syncStatus, periodTotalHours, weekSeries, week } = data;
+  // Through the dashboard service, so the chart s capacity track scales with
+  // however many people are in view rather than sitting at one person s day.
+  const { data } = await getStaffDashboardService(request);
+  const { period, filters, report, syncStatus, periodTotalHours, periodSeries } = data;
 
   const hasEntries = report.totals.worklogCount > 0;
 
   return (
     <TimesheetShell
       data={data}
+      pathname={ROUTES.ADMIN_TIMESHEETS_ENTRIES}
       title="Entries"
       description={`Time entries for ${period.label}, read from Jira.`}
     >
@@ -35,11 +38,11 @@ export default async function TimesheetView(request: TimesheetRequest) {
           {/* The chart leads: the shape of the period is the thing you want
               before any individual figure. */}
           <ProductivityChart
-            series={weekSeries}
-            week={week}
+            series={periodSeries}
+            period={period}
             title="Hours this week"
-            previousHref={weekHref(ROUTES.ADMIN_TIMESHEETS_ENTRIES, filters, week.previousStart)}
-            nextHref={weekHref(ROUTES.ADMIN_TIMESHEETS_ENTRIES, filters, week.nextStart)}
+            previousHref={periodHref(ROUTES.ADMIN_TIMESHEETS_ENTRIES, filters, period.previousStart)}
+            nextHref={periodHref(ROUTES.ADMIN_TIMESHEETS_ENTRIES, filters, period.nextStart)}
           />
 
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -67,7 +70,7 @@ export default async function TimesheetView(request: TimesheetRequest) {
             />
           </div>
 
-          <EntriesTable facts={report.facts} />
+          <EntriesDataTable facts={report.facts} />
           <SyncStatusLine syncStatus={syncStatus} />
         </>
       ) : (

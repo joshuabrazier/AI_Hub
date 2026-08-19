@@ -1,3 +1,5 @@
+import { ROUTES } from "@/lib/routes";
+
 import { getAdminTimesheetsService, TimesheetRequest } from "../admin-timesheets.service";
 import { AuditCard, BillableStateBanner, StatTile, SyncStatusLine } from "../timesheet-panels";
 import TimesheetShell from "../timesheet-shell";
@@ -26,6 +28,7 @@ export default async function ReviewView(request: TimesheetRequest) {
   return (
     <TimesheetShell
       data={data}
+      pathname={ROUTES.ADMIN_TIMESHEETS_REVIEW}
       title="Review"
       description={`What to fix in Jira before invoicing ${period.label}. Nothing here is edited in this app.`}
     >

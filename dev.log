@@ -2,12 +2,12 @@
 > portal-base@0.1.0 dev C:\dev\Template-PWA
 > next dev --webpack
 
-⚠ Port 3000 is in use by process 8608, using available port 3001 instead.
+⚠ Port 3000 is in use by process 30388, using available port 3001 instead.
 ▲ Next.js 16.2.10 (webpack)
 - Local:         http://localhost:3001
 - Network:       http://172.22.63.29:3001
 - Environments: .env
-✓ Ready in 755ms
+✓ Ready in 1020ms
 
 ○ Compiling proxy ...
 [?25h

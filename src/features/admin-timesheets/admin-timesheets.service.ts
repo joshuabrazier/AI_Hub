@@ -1,7 +1,5 @@
 import "server-only";
 
-import { endOfMonth, format, parseISO, subMonths } from "date-fns";
-
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
 import {
@@ -15,13 +13,19 @@ import {
 import { envServer } from "@/lib/env-server";
 import { handleError } from "@/lib/handle-errors";
 import { buildReport } from "@/lib/timesheet/aggregate";
-import { addDays, buildDailySeries, mondayOf } from "@/lib/timesheet/daily-series";
+import { buildDailySeries } from "@/lib/timesheet/daily-series";
+import { bucketFor, Granularity, isGranularity, resolvePeriod } from "@/lib/timesheet/period";
 import {
   buildCategorySplit,
   buildInvoiceReadiness,
   buildTopJobs,
 } from "@/lib/timesheet/overview-series";
-import { countWeekdays, measureAgainstTarget, toStaffCapacity } from "@/lib/timesheet/staff-capacity";
+import {
+  capacityHoursForPeriod,
+  countWeekdays,
+  measureAgainstTarget,
+  toStaffCapacity,
+} from "@/lib/timesheet/staff-capacity";
 import { JIRA_WORKLOG_SYNC_JOB } from "@/features/timesheet-sync/timesheet-sync.service";
 import { SnapshotIssue, SnapshotWorklog, TimesheetSnapshot } from "@/lib/timesheet/timesheet.types";
 import { todayInAppZone } from "@/lib/timezone";
@@ -30,7 +34,6 @@ import {
   ALL_CATEGORIES,
   AdminTimesheetsDTO,
   CategoryOptionDTO,
-  MonthOptionDTO,
   PersonOptionDTO,
   ProjectOptionDTO,
   OverviewDTO,
@@ -39,44 +42,6 @@ import {
   TimesheetPeriodDTO,
 } from "./admin-timesheets.types";
 
-// How far back the month picker offers. Twelve is a financial year plus a
-// month of overlap, which covers every period anyone asks to re-check.
-const MONTHS_OFFERED = 12;
-
-const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
-
-// -------------------------------------------------------------------
-// A 'YYYY-MM' to its inclusive bounds.
-//
-// The bounds are strings because work_date is a DATE and comes back as a
-// string; the round trip through parseISO here is calendar arithmetic only,
-// and hands back 'YYYY-MM-DD' so no date column ever becomes a Date the app
-// then compares.
-// -------------------------------------------------------------------
-function toPeriod(month: string): TimesheetPeriodDTO {
-  const from = `${month}-01`;
-  const firstDay = parseISO(from);
-
-  return {
-    month,
-    label: format(firstDay, "MMMM yyyy"),
-    from,
-    to: format(endOfMonth(firstDay), "yyyy-MM-dd"),
-  };
-}
-
-// -------------------------------------------------------------------
-// The months the picker offers, most recent first, ending with the current
-// one in the app's zone rather than the server's.
-// -------------------------------------------------------------------
-function monthOptions(currentMonth: string): MonthOptionDTO[] {
-  const anchor = parseISO(`${currentMonth}-01`);
-
-  return Array.from({ length: MONTHS_OFFERED }, (unused, index) => {
-    const date = subMonths(anchor, index);
-    return { value: format(date, "yyyy-MM"), label: format(date, "MMMM yyyy") };
-  });
-}
 
 // -------------------------------------------------------------------
 // Read-model rows to the engine's snapshot shape.
@@ -115,15 +80,22 @@ function toSnapshotIssues(rows: Awaited<ReturnType<typeof getJiraIssuesRepo>>): 
 
 // What the URL asked for. Every field is untrusted and validated below.
 export interface TimesheetRequest {
-  month?: string;
+  // "week" | "fortnight" | "month" | "year". Anything else falls back to the
+  // default rather than erroring, so a stale link still opens.
+  granularity?: string;
+  // Any date inside the wanted period, 'YYYY-MM-DD'. It is snapped to the
+  // start of its period, so the 15th and the 20th open the same month.
+  start?: string;
   category?: string;
   project?: string;
   person?: string;
-  // Monday of the week the chart shows, 'YYYY-MM-DD'.
-  week?: string;
 }
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// One period drives the whole screen. Before this the month drove the tables
+// and the week drove the chart, so the two halves of a page could describe
+// different spans of time with nothing saying so.
+const DEFAULT_GRANULARITY: Granularity = "month";
+
 
 type FactRows = Awaited<ReturnType<typeof getWorklogFactsInRangeRepo>>;
 
@@ -131,16 +103,6 @@ const SECONDS_TO_HOURS = 3600;
 
 function toHours(seconds: number): number {
   return Math.round((seconds / SECONDS_TO_HOURS) * 10000) / 10000;
-}
-
-// "10-16 Aug 2026", or "31 Aug-6 Sep 2026" when the week straddles two months.
-function toWeekLabel(start: string, end: string): string {
-  const from = parseISO(start);
-  const to = parseISO(end);
-
-  return format(from, "yyyy-MM") === format(to, "yyyy-MM")
-    ? `${format(from, "d")}-${format(to, "d MMM yyyy")}`
-    : `${format(from, "d MMM")}-${format(to, "d MMM yyyy")}`;
 }
 
 // -------------------------------------------------------------------
@@ -303,17 +265,28 @@ export async function getAdminTimesheetsService(
   // the company-wide assumption. Without it the cards and the chart on the
   // same screen report different utilisation for the same person, which is
   // worse than either being wrong on its own.
-  capacityOverride?: { hoursPerDay: number; weeklyHours: number },
+  capacityOverride?: { hoursPerDay: number; periodHours: number },
 ): Promise<AdminTimesheetsDTO> {
   try {
     await requireUserRole([USER_ROLES.ADMIN]);
 
     // Today in the app zone, never from the server clock.
     const todayIso = todayInAppZone();
-    const currentMonth = todayIso.slice(0, 7);
 
-    const month = request.month && MONTH_PATTERN.test(request.month) ? request.month : currentMonth;
-    const period = toPeriod(month);
+    const granularity: Granularity = isGranularity(request.granularity) ? request.granularity : DEFAULT_GRANULARITY;
+    const resolved = resolvePeriod(granularity, request.start ?? todayIso, todayIso);
+
+    const period: TimesheetPeriodDTO = {
+      granularity,
+      start: resolved.start,
+      label: resolved.label,
+      from: resolved.start,
+      to: resolved.end,
+      previousStart: resolved.previousStart,
+      nextStart: resolved.nextStart,
+      hasNext: resolved.hasNext,
+      isCurrent: resolved.isCurrent,
+    };
 
     const [factRows, issueRows, projectRows, watermark, totalWorklogs] = await Promise.all([
       getWorklogFactsInRangeRepo(period.from, period.to),
@@ -376,73 +349,32 @@ export async function getAdminTimesheetsService(
 
     const report = buildReport(snapshot);
 
-    // ---------------------------------------------------------------
-    // The week the chart shows.
-    //
-    // Defaults to the week of the most recent entry in the period rather than
-    // to today's week. Opening on an empty current week, when the last work
-    // logged was a fortnight ago, makes the chart look broken - and the first
-    // thing anyone wants to see is the last week that had anything in it.
-    // ---------------------------------------------------------------
-    const latestFactDate = factRows.length > 0 ? factRows[factRows.length - 1].workDate : null;
-    const weekAnchor =
-      (request.week && DATE_PATTERN.test(request.week) ? request.week : null) ??
-      latestFactDate ??
-      (todayIso >= period.from && todayIso <= period.to ? todayIso : period.to);
-
-    const weekStart = mondayOf(weekAnchor);
-    const weekEnd = addDays(weekStart, 6);
-    const nextStart = addDays(weekStart, 7);
-
-    const week = {
-      start: weekStart,
-      end: weekEnd,
-      label: toWeekLabel(weekStart, weekEnd),
-      previousStart: addDays(weekStart, -7),
-      nextStart,
-      // Only offer the next week once it has actually begun.
-      hasNext: nextStart <= todayIso,
-    };
-
-    // A week can straddle a month boundary, so its facts are fetched for the
-    // week's own range rather than sliced out of the period's. The same filters
-    // are applied, so the chart always describes the same selection as the
-    // tables.
-    const weekFactRows = (await getWorklogFactsInRangeRepo(weekStart, weekEnd)).filter(
-      (row) =>
-        (category === ALL_CATEGORIES || row.category === category) &&
-        (project === ALL_CATEGORIES || row.parentKey === project) &&
-        (person === ALL_CATEGORIES || row.personId === person),
-    );
-
-    const weekDayTotals = buildReport({
-      worklogs: toSnapshotWorklogs(weekFactRows),
-      issues: toSnapshotIssues(filteredIssues),
-      today: todayIso,
-      options: { workingHoursPerDay: envServer.WORKING_DAY_HOURS, periodStart: weekStart, periodEnd: weekEnd },
-    }).byPersonDay;
+    const periodDayTotals = report.byPersonDay;
 
     return {
       period,
-      filters: { month, category, project, person },
-      monthOptions: monthOptions(currentMonth),
+      todayIso,
+      filters: { granularity, start: period.start, category, project, person },
       categoryOptions,
       projectOptions,
       personOptions,
       report,
-      week,
       // Built from the report's own day totals, so the chart is another view of
       // the same numbers rather than a second calculation of them.
       //
       // Note it reads UNFILTERED-BY-PERIOD day totals: the chosen week can
       // straddle a month boundary, and a chart that silently dropped the days
       // outside the selected month would show a short week with no explanation.
-      weekSeries: buildDailySeries(weekDayTotals, {
-        from: week.start,
-        to: week.end,
+      periodSeries: buildDailySeries(periodDayTotals, {
+        from: period.from,
+        to: period.to,
         capacityHours: capacityOverride?.hoursPerDay ?? envServer.WORKING_DAY_HOURS,
-        includeNonWorkingDays: true,
-        availableHoursOverride: capacityOverride?.weeklyHours,
+        // A week shows all seven days because the shape of the week is the
+        // point; longer periods drop empty weekends so the chart is not a
+        // third blank.
+        includeNonWorkingDays: granularity === "week",
+        bucket: bucketFor(granularity),
+        availableHoursOverride: capacityOverride?.periodHours,
       }),
       periodTotalHours: Math.round((periodSeconds / 3600) * 10000) / 10000,
       syncStatus: {
@@ -524,7 +456,7 @@ export async function getAdminTimesheetsCsvService(
       .join("-");
 
     return {
-      filename: `timesheet-${period.month}${scope ? `-${scope}` : ""}.csv`,
+      filename: `timesheet-${period.start}${scope ? `-${scope}` : ""}.csv`,
       csv: [header, ...rows].map((row) => row.map(toCsvCell).join(",")).join("\r\n"),
     };
   } catch (error) {
@@ -573,10 +505,18 @@ export async function getStaffDashboardService(request: TimesheetRequest = {}): 
         ? toStaffCapacity(targetByPerson.get(request.person) ?? null, request.person)
         : null;
 
-    const data = await getAdminTimesheetsService(
-      request,
-      scopedCapacity ? { hoursPerDay: scopedCapacity.hoursPerDay, weeklyHours: scopedCapacity.weeklyHours } : undefined,
-    );
+    // The scoped person's capacity has to be prorated to whatever period is
+    // being shown, not just a week - a year view against a weekly figure would
+    // report everyone at several thousand per cent.
+    const probe = await getAdminTimesheetsService(request);
+    const weekdays = countWeekdays(probe.period.from, probe.period.to);
+
+    const data = scopedCapacity
+      ? await getAdminTimesheetsService(request, {
+          hoursPerDay: scopedCapacity.hoursPerDay,
+          periodHours: capacityHoursForPeriod(scopedCapacity, weekdays),
+        })
+      : probe;
     const weekdaysInPeriod = countWeekdays(data.period.from, data.period.to);
 
     // Everyone with time, plus everyone with a target, so a contracted person
@@ -633,8 +573,46 @@ export async function getStaffDashboardService(request: TimesheetRequest = {}): 
     const capacityHours = people.reduce((total, person) => total + person.capacityHours, 0);
     const loggedHours = data.report.totals.hours;
 
+    // ---------------------------------------------------------------
+    // The chart's capacity has to match WHO is on screen.
+    //
+    // A daily track fixed at one person's 7.5h compares a whole team's hours
+    // against a single person's day, which is what it was doing: three people
+    // each contracted to 7.5h have a 22.5h day between them, and their bars
+    // were being measured against 7.5.
+    //
+    // So the per-day track is the sum of every scoped person's full day. Note
+    // this is deliberately NOT prorated by contracted days: it marks "a full
+    // day for everyone in view", which is the ceiling a bar is read against.
+    // The utilisation percentage below still divides by properly prorated
+    // contracted capacity, so somebody on three days is not judged against
+    // five - the two answer different questions and the subtitle says so.
+    //
+    // buildDailySeries is pure, so this rebuilds the series without another
+    // trip to the database.
+    // ---------------------------------------------------------------
+    const inScope = scopedCapacity ? people.filter((person) => person.personId === request.person) : people;
+
+    const dailyCapacityHours = inScope.reduce((total, person) => total + person.target.hoursPerDay, 0);
+    const periodCapacityHours = inScope.reduce((total, person) => total + person.capacityHours, 0);
+
+    const scaledData: AdminTimesheetsDTO =
+      dailyCapacityHours > 0
+        ? {
+            ...data,
+            periodSeries: buildDailySeries(data.report.byPersonDay, {
+              from: data.period.from,
+              to: data.period.to,
+              capacityHours: dailyCapacityHours,
+              includeNonWorkingDays: data.period.granularity === "week",
+              bucket: bucketFor(data.period.granularity),
+              availableHoursOverride: periodCapacityHours,
+            }),
+          }
+        : data;
+
     return {
-      data,
+      data: scaledData,
       dashboard: {
         people,
         weekdaysInPeriod,
