@@ -1,3 +1,4 @@
+import { formatInTimeZone } from "date-fns-tz";
 import { envClient } from "./env-client";
 
 // -------------------------------------------------------------------
@@ -20,3 +21,11 @@ import { envClient } from "./env-client";
 //     already, and the copies disagreed.
 // -------------------------------------------------------------------
 export const APP_TIME_ZONE = envClient.NEXT_PUBLIC_APP_TIME_ZONE;
+
+// Today's calendar date in the app zone as "yyyy-MM-dd", regardless of the
+// server's zone. Use this rather than `format(new Date(), "yyyy-MM-dd")` for
+// any day comparison: the server runs in UTC, so deriving "today" from its
+// clock puts the boundary on the wrong day for most of the evening.
+export function todayInAppZone(): string {
+  return formatInTimeZone(new Date(), APP_TIME_ZONE, "yyyy-MM-dd");
+}

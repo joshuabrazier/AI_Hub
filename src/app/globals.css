@@ -116,6 +116,19 @@
   --chart-3: #56c2ce;
   --chart-4: #9adae2;
   --chart-5: #b5701c;
+  /* Chart FILLS for the billable split. Separate from --chart-* because those
+     are tuned to read as text and lines: --chart-1 has an OKLCH chroma of
+     0.085, under the 0.10 floor a large fill needs, so it renders gray-ish as
+     a block. These two were stepped until a validator passed all six checks
+     against this surface - lightness band, chroma floor, CVD separation
+     (deutan dE 18.1), normal-vision separation (dE 24.1) and contrast.
+     Warm-vs-cool on purpose, so the pair survives colour-vision deficiency.
+
+     Non-billable is deliberately NOT red. Training, leave and internal admin
+     are legitimate work, and a danger colour would say they were a mistake.
+     Red stays reserved for an actual data error - billable status unset. */
+  --data-billable: #0e9aab;
+  --data-nonbillable: #c2691a;
   --radius: 0.875rem;
   /* Near-white, separated from the content by its border rather than by a
      fill, so the app chrome does not darken the page. */
@@ -160,6 +173,11 @@
   --chart-3: var(--primary);
   --chart-4: #1c8b9c;
   --chart-5: #e0a34b;
+  /* Chosen for the dark card surface, not flipped from light: the dark
+     lightness band is tighter (L 0.48-0.67), and the light-mode pair sits
+     above it. Validated against #131f22 - all six checks pass, CVD dE 17.3. */
+  --data-billable: #119db1;
+  --data-nonbillable: #c48228;
   --sidebar: #0f1a1c;
   --sidebar-foreground: #e6eff0;
   --sidebar-primary: var(--primary);

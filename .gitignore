@@ -54,3 +54,6 @@ docs/data-retention.md
 
 # Azurite (local blob emulator) data
 .azurite/
+
+# Local dev server output
+dev.log

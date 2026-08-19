@@ -1,4 +1,8 @@
 import {
+  Briefcase,
+  ChartColumn,
+  ClipboardCheck,
+  Clock,
   FileText,
   House,
   LayoutPanelLeft,
@@ -10,6 +14,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   UserCircle,
+  UserRound,
   Users,
   UsersRound,
 } from "lucide-react";
@@ -78,6 +83,35 @@ const ADMIN_NAV: NavGroup[] = [
         children: [
           { label: "Users", href: ROUTES.ADMIN_USERS, icon: Users, tooltip: "Everyone with an account" },
           { label: "Teams", href: ROUTES.ADMIN_TEAMS, icon: LayoutPanelLeft, tooltip: "Teams and their members" },
+        ],
+      },
+    ],
+  },
+  {
+    label: "Time and billing",
+    items: [
+      {
+        // Collapsed under one parent, like People. Five sibling links at the
+        // top level made this the longest section in the sidebar.
+        label: "Timesheets",
+        icon: Clock,
+        tooltip: "Time, jobs, staff and data quality",
+        children: [
+          {
+            label: "Overview",
+            href: ROUTES.ADMIN_TIMESHEETS,
+            icon: ChartColumn,
+            tooltip: "How the business is tracking",
+          },
+          { label: "Entries", href: ROUTES.ADMIN_TIMESHEETS_ENTRIES, icon: Clock, tooltip: "Every time entry" },
+          { label: "Jobs", href: ROUTES.ADMIN_TIMESHEETS_JOBS, icon: Briefcase, tooltip: "The book of work" },
+          { label: "Staff", href: ROUTES.ADMIN_TIMESHEETS_STAFF, icon: UserRound, tooltip: "Hours and utilisation" },
+          {
+            label: "Review",
+            href: ROUTES.ADMIN_TIMESHEETS_REVIEW,
+            icon: ClipboardCheck,
+            tooltip: "Data to fix in Jira",
+          },
         ],
       },
     ],

@@ -1,3 +1,4 @@
+import { format, parseISO } from "date-fns";
 import { APP_TIME_ZONE } from "./timezone";
 
 // -------------------------------------------------------------------
@@ -32,4 +33,18 @@ export function formatDateTime(value: Date | string): string {
   const parts = appDateTimeFormat.formatToParts(date);
   const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
   return `${get("day")} ${get("month")} ${get("year")}, ${get("hour")}:${get("minute")} ${get("dayPeriod").toUpperCase()}`;
+}
+
+// Format a 'YYYY-MM-DD' string, e.g. "20 Jul 2026". Falls back to the raw
+// string if it cannot be parsed.
+//
+// Takes a STRING, not a Date: calendar dates come out of Postgres as strings on
+// purpose (see kysely-database-client.ts), and turning one into a Date to format
+// it is what shifts a day across a timezone.
+export function formatIsoDate(isoDate: string, dateFormat = "d MMM yyyy"): string {
+  try {
+    return format(parseISO(isoDate), dateFormat);
+  } catch {
+    return isoDate;
+  }
 }
