@@ -1,12 +1,14 @@
 import { ROUTES } from "@/lib/routes";
 
 import { getOverviewSummaryService } from "../admin-timesheets-ai.service";
+import { getForecastForScopeService } from "../admin-timesheets-forecast.service";
 import { getRevenueForFactsService } from "../admin-timesheets-revenue.service";
+import { ForecastChart } from "../forecast-chart";
 import { ConcentrationCard, RevenueTiles } from "../revenue-panels";
 import { ReportCreateDialog } from "../report-create-dialog";
 import { TimesheetAskBox } from "../timesheet-ask-box";
 import { AiSummaryPanel } from "../ai-summary-panel";
-import { getOverviewService, TimesheetRequest } from "../admin-timesheets.service";
+import { getOverviewService, getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { CategorySplitCard, OverviewLegend, ReadinessCard, TopJobsCard } from "../overview-panels";
 import { ProductivityChart } from "../productivity-chart";
 import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
@@ -39,6 +41,12 @@ export default async function OverviewView(request: TimesheetRequest) {
   // rate table, which is one row per person per rate change.
   const revenue = await getRevenueForFactsService(report.facts);
 
+  // The overview is the whole business, so no person scope. getOverviewService
+  // does not carry a staff dashboard, so the forecast comes from its own call -
+  // one query for capacity, one for rates.
+  const { dashboard } = await getStaffDashboardService(request);
+  const forecast = await getForecastForScopeService(dashboard, period, data.todayIso, revenue, report.facts);
+
   const hasData = report.totals.worklogCount > 0;
 
   return (
@@ -69,7 +77,7 @@ export default async function OverviewView(request: TimesheetRequest) {
 
           {/* The four headline figures. Utilisation is against contracted
               capacity, so a part-time team is not reported as underperforming. */}
-          <RevenueTiles revenue={revenue} index={0} />
+          <RevenueTiles revenue={revenue} billableFilter={filters.billable} index={0} />
 
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatTile
@@ -121,7 +129,16 @@ export default async function OverviewView(request: TimesheetRequest) {
             nextHref={periodHref(ROUTES.ADMIN_TIMESHEETS, filters, period.nextStart)}
           />
 
-          <ConcentrationCard revenue={revenue} index={4} />
+          <ForecastChart
+            points={forecast.burnUp}
+            periodLabel={period.label}
+            projectedCostCents={forecast.projectedCostCents}
+            projectedValueCents={forecast.projectedValueCents}
+            weekdaysRemaining={forecast.progress.weekdaysRemaining}
+            index={4}
+          />
+
+          <ConcentrationCard revenue={revenue} index={5} />
 
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">

@@ -1,5 +1,6 @@
 import { formatCents, formatRate } from "@/lib/timesheet/revenue";
 
+import type { ForecastDTO } from "./admin-timesheets-forecast.service";
 import type { RevenueDTO } from "./admin-timesheets-revenue.service";
 import type { QueryMeasure, QueryMeasureDTO } from "./admin-timesheets-query.types";
 import type { AdminTimesheetsDTO, StaffDashboardDTO } from "./admin-timesheets.types";
@@ -28,10 +29,45 @@ const LABELS: Record<QueryMeasure, string> = {
   margin: "Margin",
   effectiveRate: "Effective rate",
   utilisation: "Utilisation",
+  projectedCost: "Projected cost",
+  projectedValue: "Projected value",
+  remainingCapacity: "Contracted hours left",
 };
 
 function hours(value: number | null | undefined): string {
   return value === null || value === undefined ? "-" : `${value.toFixed(2)}h`;
+}
+
+// -------------------------------------------------------------------
+// What a projection assumes, in one line, sitting with the number.
+//
+// Ordered by what would most likely make the figure wrong: a missing rate
+// means there is no figure at all; leave is the reason a committed cost comes
+// in high; and a projected VALUE additionally assumes the billable mix holds,
+// which is the softest assumption on the screen.
+// -------------------------------------------------------------------
+function forecastCaveat(forecast: ForecastDTO | null, kind: "cost" | "value"): string | null {
+  if (forecast === null) return null;
+
+  if (forecast.progress.isComplete) return "The period has finished, so this is the actual";
+
+  if (kind === "cost" && forecast.projectedCostCents === null) {
+    return forecast.peopleWithoutCostRate > 0
+      ? `${forecast.peopleWithoutCostRate} ${forecast.peopleWithoutCostRate === 1 ? "person has" : "people have"} no cost rate for the days ahead`
+      : "Needs a cost rate on every hour, worked and remaining";
+  }
+
+  if (kind === "value" && forecast.projectedValueCents === null) {
+    return forecast.progress.elapsedRatio !== null && forecast.progress.elapsedRatio < 0.25
+      ? "Too early in the period to project revenue from the billable mix so far"
+      : "Needs charge rates for everybody with days remaining";
+  }
+
+  const remaining = `${forecast.progress.weekdaysRemaining} weekday${forecast.progress.weekdaysRemaining === 1 ? "" : "s"} still to come`;
+
+  return kind === "value"
+    ? `${remaining}, assuming no leave and the same billable mix`
+    : `${remaining}, assuming no leave`;
 }
 
 export function buildAnswerMeasures(
@@ -39,6 +75,7 @@ export function buildAnswerMeasures(
   data: AdminTimesheetsDTO,
   revenue: RevenueDTO,
   dashboard: StaffDashboardDTO | null,
+  forecast: ForecastDTO | null,
 ): QueryMeasureDTO[] {
   // Deduplicated but order-preserving, so a model that asks for cost twice
   // does not produce two identical rows.
@@ -90,18 +127,24 @@ export function buildAnswerMeasures(
                 : null,
         };
 
-      case "margin":
+      case "margin": {
+        // Same trap as the tiles: a billable-filtered set has had its
+        // non-billable cost removed, so what is left flatters the margin.
+        const filtered = data.filters.billable !== "all";
+
         return {
           key,
           label: LABELS[key],
-          value: revenue.configured ? formatCents(revenue.marginCents) : "-",
-          caveat:
-            revenue.marginCents === null
+          value: !revenue.configured || filtered ? "-" : formatCents(revenue.marginCents),
+          caveat: filtered
+            ? "Not meaningful for a billable-filtered question: the non-billable cost is excluded"
+            : revenue.marginCents === null
               ? "Margin needs a cost rate on every valued hour"
               : revenue.marginRatio !== null
                 ? `${Math.round(revenue.marginRatio * 100)}% of chargeable value`
                 : null,
         };
+      }
 
       case "effectiveRate":
         return {
@@ -114,6 +157,40 @@ export function buildAnswerMeasures(
             revenue.chargeRatePerBillableHourCents === null
               ? null
               : `per logged hour; ${formatRate(revenue.chargeRatePerBillableHourCents)} on billable hours alone`,
+        };
+
+      // -------------------------------------------------------------------
+      // FORECASTS. Every one says what it assumes, in the caveat, because the
+      // assumption is the figure's main weakness and a projection quoted
+      // without it is worse than no projection.
+      // -------------------------------------------------------------------
+      case "projectedCost":
+        return {
+          key,
+          label: LABELS[key],
+          value: formatCents(forecast?.projectedCostCents ?? null),
+          caveat: forecastCaveat(forecast, "cost"),
+        };
+
+      case "projectedValue":
+        return {
+          key,
+          label: LABELS[key],
+          value: formatCents(forecast?.projectedValueCents ?? null),
+          caveat: forecastCaveat(forecast, "value"),
+        };
+
+      case "remainingCapacity":
+        return {
+          key,
+          label: LABELS[key],
+          value: forecast === null ? "-" : hours(forecast.committedRemainingHours),
+          caveat:
+            forecast === null
+              ? null
+              : forecast.progress.isComplete
+                ? "The period has finished"
+                : `${forecast.progress.weekdaysRemaining} weekday${forecast.progress.weekdaysRemaining === 1 ? "" : "s"} left, assuming no leave`,
         };
 
       case "utilisation":

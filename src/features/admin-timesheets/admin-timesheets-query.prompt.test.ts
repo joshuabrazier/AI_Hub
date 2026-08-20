@@ -31,6 +31,7 @@ const people: PersonOptionDTO[] = [
 function prompt(question = "Philipp's external work last month") {
   return buildQueryPrompt({
     question,
+    askedBy: "Louis D'Odorico",
     today: "2026-08-20",
     currentGranularity: "week",
     currentPeriodLabel: "17-23 Aug 2026",
@@ -73,6 +74,12 @@ describe("the query system prompt", () => {
 });
 
 describe("buildQueryPrompt", () => {
+  it("names the asker, so 'I' and 'my' can resolve to somebody", () => {
+    // From the SESSION, not from the question: "my hours" has to mean the
+    // person signed in, not whoever the text claims to be.
+    expect(prompt()).toContain("THE ASKER IS: Louis D'Odorico");
+  });
+
   it("gives today, so a bare month name can resolve to a year", () => {
     // Never the browser clock and never new Date() in the app - the period
     // code takes today from the app zone, and so does this.
@@ -103,6 +110,7 @@ describe("buildQueryPrompt", () => {
   it("says so plainly when a period has no people or jobs", () => {
     const empty = buildQueryPrompt({
       question: "anything",
+      askedBy: null,
       today: "2026-08-20",
       currentGranularity: "week",
       currentPeriodLabel: "a quiet week",

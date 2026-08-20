@@ -14,6 +14,7 @@ import {
   type TimesheetRequest,
 } from "./admin-timesheets.service";
 import { buildAnswerMeasures, describeScope } from "./admin-timesheets-answer";
+import { getForecastForScopeService } from "./admin-timesheets-forecast.service";
 import { getRevenueForFactsService } from "./admin-timesheets-revenue.service";
 import { buildQueryPrompt, QUERY_SYSTEM_PROMPT } from "./admin-timesheets-query.prompt";
 import { ResolvedQuerySchema, type TimesheetQueryResultDTO } from "./admin-timesheets-query.types";
@@ -144,6 +145,9 @@ export async function askTimesheetQueryService(
       system: QUERY_SYSTEM_PROMPT,
       prompt: buildQueryPrompt({
         question,
+        // From the SESSION, never from the question. "my hours" must mean the
+        // person signed in, not whoever a question claims to be.
+        askedBy: actor.name ?? null,
         today: data.todayIso,
         currentGranularity: data.filters.granularity,
         currentPeriodLabel: data.period.label,
@@ -253,11 +257,28 @@ export async function askTimesheetQueryService(
     const scoped = await getAdminTimesheetsService(scopedRequest);
     const revenue = await getRevenueForFactsService(scoped.report.facts);
 
-    // Utilisation needs contracted capacity, which only the staff dashboard
-    // knows. Fetched only when asked for, so an "how much did it cost" question
-    // does not pay for a capacity calculation nobody wanted.
-    const dashboard = measures.includes("utilisation")
-      ? (await getStaffDashboardService(scopedRequest)).dashboard
+    // Utilisation AND every forecast need contracted capacity, which only the
+    // staff dashboard knows. Fetched once when any of them is asked for, so a
+    // plain "what did it cost" question does not pay for a capacity
+    // calculation nobody wanted.
+    const needsCapacity = measures.some((measure) =>
+      ["utilisation", "projectedCost", "projectedValue", "remainingCapacity"].includes(measure),
+    );
+
+    const dashboard = needsCapacity ? (await getStaffDashboardService(scopedRequest)).dashboard : null;
+
+    // Today comes from the app's own zone, never a clock in this file: a
+    // forecast that disagreed with the dashboard about what day it is would
+    // count the wrong number of days remaining.
+    const forecast = dashboard
+      ? await getForecastForScopeService(
+          dashboard,
+          scoped.period,
+          scoped.todayIso,
+          revenue,
+          scoped.report.facts,
+          people,
+        )
       : null;
 
     const peopleNames = people.map(
@@ -280,7 +301,7 @@ export async function askTimesheetQueryService(
             : undefined,
           billable,
         }),
-        measures: buildAnswerMeasures(measures, scoped, revenue, dashboard),
+        measures: buildAnswerMeasures(measures, scoped, revenue, dashboard, forecast),
       },
     };
   } catch (error) {

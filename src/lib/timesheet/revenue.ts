@@ -314,3 +314,45 @@ export function formatCents(cents: number | null, places = 0): string {
 export function formatRate(cents: number | null): string {
   return cents === null ? "-" : `${formatCents(cents)}/h`;
 }
+
+// -------------------------------------------------------------------
+// Cost and value day by day, for a burn-up.
+//
+// Keyed on the worklog's own date and summed there, so a chart can show the
+// shape of a period rather than only its total. Same two rules as the totals:
+// every logged hour costs, only billable hours earn.
+//
+// Returns only the days that HAVE rows. A chart wanting a point per weekday
+// fills the gaps itself, because only the caller knows which days it means to
+// draw - the period's weekdays, or the days somebody actually worked.
+// -------------------------------------------------------------------
+export interface DailyMoney {
+  // 'YYYY-MM-DD'.
+  date: string;
+  hours: number;
+  costCents: number | null;
+  valueCents: number | null;
+}
+
+export function buildDailyMoney(facts: WorklogFactRow[], rates: StaffRateRow[]): DailyMoney[] {
+  const byDate = new Map<string, WorklogFactRow[]>();
+
+  for (const fact of facts) {
+    const existing = byDate.get(fact.workDate);
+    if (existing) existing.push(fact);
+    else byDate.set(fact.workDate, [fact]);
+  }
+
+  return [...byDate.entries()]
+    .map(([date, dayFacts]) => {
+      const totals = computeRevenue(dayFacts, rates);
+
+      return {
+        date,
+        hours: totals.loggedHours,
+        costCents: totals.costCents,
+        valueCents: totals.chargeableValueCents,
+      };
+    })
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}

@@ -22,6 +22,12 @@ export const QUERY_MEASURES = [
   "margin",
   "effectiveRate",
   "utilisation",
+  // FORECASTS. Named separately from the actuals so a question asking what
+  // something WILL cost cannot be answered with what it HAS cost - which is
+  // the mistake that makes a forecast feature worse than none.
+  "projectedCost",
+  "projectedValue",
+  "remainingCapacity",
 ] as const;
 
 export type QueryMeasure = (typeof QUERY_MEASURES)[number];

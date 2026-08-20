@@ -27,7 +27,29 @@ function percent(ratio: number | null): string {
 // -------------------------------------------------------------------
 // The headline figures.
 // -------------------------------------------------------------------
-export function RevenueTiles({ revenue, index }: { revenue: RevenueDTO; index: number }) {
+// -------------------------------------------------------------------
+// A margin on a BILLABLE-FILTERED view is not a margin.
+//
+// Cost covers every logged hour in the set - which is right - but filtering
+// the set to billable rows removes the non-billable cost those same people
+// incurred. What is left divides revenue by only the cost that earned it, and
+// reads far better than the truth. Exactly the error costing-only-billable
+// made, arriving by a different door.
+//
+// So margin is withheld and says why, rather than being shown with a footnote
+// somebody will read past.
+// -------------------------------------------------------------------
+export function RevenueTiles({
+  revenue,
+  billableFilter = "all",
+  index,
+}: {
+  revenue: RevenueDTO;
+  billableFilter?: string;
+  index: number;
+}) {
+  const marginIsMeaningful = billableFilter === "all";
+
   if (!revenue.configured) {
     return (
       <Reveal index={index}>
@@ -61,19 +83,21 @@ export function RevenueTiles({ revenue, index }: { revenue: RevenueDTO; index: n
         />
         <MoneyTile
           label="Margin"
-          value={formatCents(revenue.marginCents)}
+          value={marginIsMeaningful ? formatCents(revenue.marginCents) : "-"}
           hint={
-            revenue.marginRatio === null
-              ? revenue.uncostedHours > 0
-                ? `${revenue.uncostedHours.toFixed(2)}h has no cost rate`
-                : "No cost rates recorded"
-              : `${percent(revenue.marginRatio)} of value`
+            !marginIsMeaningful
+              ? "Not meaningful while filtered by billable state"
+              : revenue.marginRatio === null
+                ? revenue.uncostedHours > 0
+                  ? `${revenue.uncostedHours.toFixed(2)}h has no cost rate`
+                  : "No cost rates recorded"
+                : `${percent(revenue.marginRatio)} of value`
           }
-          emphasis={revenue.marginRatio === null ? "muted" : "normal"}
+          emphasis={!marginIsMeaningful || revenue.marginRatio === null ? "muted" : "normal"}
           index={index + 2}
         />
         <MoneyTile
-          label="Cost"
+          label={billableFilter === "all" ? "Cost" : "Cost of this time"}
           value={formatCents(revenue.costCents)}
           // The absorbed part named on the tile: cost with no income against
           // it is the figure somebody acts on, and it is invisible in a total.

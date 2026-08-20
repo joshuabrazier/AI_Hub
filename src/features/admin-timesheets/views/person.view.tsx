@@ -7,6 +7,10 @@ import { getPersonSummaryService } from "../admin-timesheets-ai.service";
 import { AiSummaryPanel } from "../ai-summary-panel";
 import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { ProductivityChart } from "../productivity-chart";
+import { getForecastForScopeService } from "../admin-timesheets-forecast.service";
+import { getRevenueForFactsService } from "../admin-timesheets-revenue.service";
+import { ForecastChart } from "../forecast-chart";
+import { RevenueTiles } from "../revenue-panels";
 import { getPersonRatesService } from "../admin-timesheets-rate.service";
 import { StaffRateDialog } from "../staff-rate-dialog";
 import { StaffTargetDialog } from "../staff-target-dialog";
@@ -46,6 +50,14 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
   const summary = await getPersonSummaryService(data, dashboard, person);
 
   const rates = await getPersonRatesService(personId);
+
+  // Scoped to this person, so the forecast is their remaining days and not the
+  // team's - see the note in getForecastForScopeService about why the scope has
+  // to be passed rather than inferred from the dashboard.
+  const revenue = await getRevenueForFactsService(report.facts);
+  const forecast = await getForecastForScopeService(dashboard, period, data.todayIso, revenue, report.facts, [
+    personId,
+  ]);
 
   const backHref = `${ROUTES.ADMIN_TIMESHEETS_STAFF}?${filterQuery({ ...filters, person: "all" })}`;
 
@@ -105,6 +117,17 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
         <StatTile label="Logged" hours={person.loggedHours} hint={`${person.daysWorked} days worked`} index={2} />
         <StatTile label="Non-billable" hours={person.nonBillableHours} emphasis="muted" index={3} />
       </div>
+
+      <RevenueTiles revenue={revenue} billableFilter={filters.billable} index={0} />
+
+      <ForecastChart
+        points={forecast.burnUp}
+        periodLabel={period.label}
+        projectedCostCents={forecast.projectedCostCents}
+        projectedValueCents={forecast.projectedValueCents}
+        weekdaysRemaining={forecast.progress.weekdaysRemaining}
+        index={1}
+      />
 
       <ProductivityChart
         series={periodSeries}
