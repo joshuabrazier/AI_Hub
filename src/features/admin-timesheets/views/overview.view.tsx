@@ -1,6 +1,6 @@
 import { ROUTES } from "@/lib/routes";
 
-import { getTimesheetSummaryService } from "../admin-timesheets-ai.service";
+import { getOverviewSummaryService } from "../admin-timesheets-ai.service";
 import { AiSummaryPanel } from "../ai-summary-panel";
 import { getOverviewService, TimesheetRequest } from "../admin-timesheets.service";
 import { CategorySplitCard, OverviewLegend, ReadinessCard, TopJobsCard } from "../overview-panels";
@@ -27,9 +27,9 @@ export default async function OverviewView(request: TimesheetRequest) {
   const { data, overview } = await getOverviewService(request);
   const { period, filters, report, syncStatus, periodTotalHours, periodSeries } = data;
 
-  // Read-only: whatever is already cached for these filters, or nothing.
-  // Rendering a page never calls the model - see the note in the service.
-  const summary = await getTimesheetSummaryService("overview", request);
+  // Read-only, and built from the data already fetched above rather than
+  // re-querying it. Rendering never calls the model - see the service.
+  const summary = await getOverviewSummaryService(data, overview);
 
   const hasData = report.totals.worklogCount > 0;
 

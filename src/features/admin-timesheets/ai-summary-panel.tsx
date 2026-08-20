@@ -35,11 +35,15 @@ export function AiSummaryPanel({
   summary: initial,
   filters,
   periodLabel,
+  personId,
   index,
 }: {
   summary: TimesheetSummaryDTO;
   filters: TimesheetFiltersDTO;
   periodLabel: string;
+  // Set on the person page only. The scope on `summary` decides whether the
+  // service looks at it, so the two cannot drift apart.
+  personId?: string;
   index: number;
 }) {
   const [summary, setSummary] = useState(initial);
@@ -50,6 +54,7 @@ export function AiSummaryPanel({
       try {
         const response = await generateTimesheetSummaryAction({
           scope: summary.scope,
+          personId,
           granularity: filters.granularity,
           start: filters.start,
           category: filters.category,

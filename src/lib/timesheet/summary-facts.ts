@@ -57,7 +57,7 @@ export interface SummaryPersonFacts {
 }
 
 export interface SummaryFacts {
-  scope: "overview" | "staff";
+  scope: "overview" | "staff" | "person";
   periodLabel: string;
   granularity: string;
   weekdaysInPeriod: number | null;
@@ -73,6 +73,29 @@ export interface SummaryFacts {
     worklogCount: number | null;
   };
   people: SummaryPersonFacts[];
+  // Present on the PERSON scope only: the one person the screen is about,
+  // their day-by-day shape, and the jobs they touched.
+  //
+  // `days` is what lets the prose say WHICH days somebody worked, which the
+  // team dashboard cannot know. It matters most for part-timers: three full
+  // days and five thin ones are the same total and a different story, and
+  // staff_target records how MANY days are contracted but never which.
+  subject: SummaryPersonFacts | null;
+  days: {
+    // 'YYYY-MM-DD'. A DATE from the read model, so a string - never a Date.
+    date: string;
+    weekday: string;
+    hours: number | null;
+    billableHours: number | null;
+    // Against ONE full working day, not against their week. 1 is a full day.
+    dayUtilisationPercent: number | null;
+  }[];
+  jobs: {
+    label: string;
+    hours: number | null;
+    billableHours: number | null;
+    category: string | null;
+  }[];
   // Top jobs and category split, present on the overview only.
   // Each category's billable split as well as its size, so the prose can say
   // that client work is mostly billable and internal work is not, rather than
@@ -163,6 +186,9 @@ export function summaryFingerprint(facts: SummaryFacts): string {
       weekdaysInPeriod: facts.weekdaysInPeriod,
       totals: facts.totals,
       people: facts.people,
+      subject: facts.subject,
+      days: facts.days,
+      jobs: facts.jobs,
       categories: facts.categories,
       topJobs: facts.topJobs,
       readiness: facts.readiness,

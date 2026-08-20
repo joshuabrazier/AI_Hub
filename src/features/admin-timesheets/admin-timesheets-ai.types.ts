@@ -4,10 +4,11 @@ import { z } from "zod";
 // AI period summaries - DTOs and the action schema.
 // -------------------------------------------------------------------
 
-// Which screen asked. Two scopes rather than one because the questions differ:
-// the overview is about the business, the staff view is about people, and a
-// summary that tried to be both would be specific about neither.
-export const TIMESHEET_SUMMARY_SCOPES = ["overview", "staff"] as const;
+// Which screen asked. Three scopes rather than one because the questions
+// differ: the overview is about the business, the staff view compares people,
+// and a person's own page is about their period and their arrangement. A
+// summary that tried to be all three would be specific about none.
+export const TIMESHEET_SUMMARY_SCOPES = ["overview", "staff", "person"] as const;
 
 export type TimesheetSummaryScope = (typeof TIMESHEET_SUMMARY_SCOPES)[number];
 
@@ -52,6 +53,11 @@ export interface TimesheetSummaryDTO {
 // -------------------------------------------------------------------
 export const GenerateTimesheetSummarySchema = z.object({
   scope: z.enum(TIMESHEET_SUMMARY_SCOPES),
+  // Required by the 'person' scope and ignored by the others. Not trusted as
+  // proof of anything: the service forces it into the person filter and the
+  // ordinary dashboard service resolves it, so the worst a caller can ask for
+  // is a summary of somebody an admin can already open.
+  personId: z.string().min(1).max(120).optional(),
   granularity: z.string().min(1).max(20).optional(),
   start: z.string().min(1).max(20).optional(),
   category: z.string().max(120).optional(),

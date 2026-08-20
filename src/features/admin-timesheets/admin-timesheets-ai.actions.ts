@@ -37,10 +37,13 @@ export async function generateTimesheetSummaryAction(
 
     const { scope, ...filters } = parsed.data;
 
+    // personId rides along in `filters`; the service forces it into the person
+    // filter for the person scope and ignores it for the other two.
     const summary = await generateTimesheetSummaryService(scope, filters);
 
-    // 'layout' rather than the bare path: the staff view has a dynamic child
-    // per person, and a page-typed revalidate does not reach it.
+    // 'layout' rather than the bare path: a page-typed revalidate does not
+    // reach the dynamic /staff/[personId] child, and that child is now one of
+    // the three screens carrying a summary.
     revalidatePath(ROUTES.ADMIN_TIMESHEETS, "layout");
     revalidatePath(ROUTES.ADMIN_TIMESHEETS_STAFF, "layout");
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildStaffFacts, buildSummaryPrompt, SUMMARY_SYSTEM_PROMPT } from "./admin-timesheets-ai.facts";
+import {
+  buildPersonFacts,
+  buildStaffFacts,
+  buildSummaryPrompt,
+  SUMMARY_SYSTEM_PROMPT,
+} from "./admin-timesheets-ai.facts";
 import type { AdminTimesheetsDTO, StaffDashboardDTO, StaffSummaryDTO } from "./admin-timesheets.types";
 
 // -------------------------------------------------------------------
@@ -42,7 +47,27 @@ function data(): AdminTimesheetsDTO {
   return {
     period: { label: "17-23 Aug 2026" },
     filters: { granularity: "week", start: "2026-08-17", category: "all", project: "all", person: "all" },
-    report: { totals: { worklogCount: 51 } },
+    report: { totals: { worklogCount: 51 }, byPersonDay: [], byProject: [] },
+  } as unknown as AdminTimesheetsDTO;
+}
+
+// A period with two worked days and three empty ones - the shape a part-timer
+// produces, and the case the person prompt exists to describe correctly.
+function dataWithDays(): AdminTimesheetsDTO {
+  return {
+    period: { label: "17-23 Aug 2026" },
+    filters: { granularity: "week", start: "2026-08-17", category: "all", project: "all", person: "p1" },
+    report: {
+      totals: { worklogCount: 12 },
+      byPersonDay: [
+        { workDate: "2026-08-18", hours: 7.5, worklogCount: 6, utilisation: 1, split: { billableHours: 4 } },
+        { workDate: "2026-08-19", hours: 7, worklogCount: 6, utilisation: 0.9333, split: { billableHours: 4 } },
+      ],
+      byProject: [
+        { parentSummary: "Website changes", parentKey: "WEB-1", projectKey: "WEB", category: "External", hours: 9, split: { billableHours: 8 } },
+        { parentSummary: null, parentKey: null, projectKey: null, category: null, hours: 5.5, split: { billableHours: 0 } },
+      ],
+    },
   } as unknown as AdminTimesheetsDTO;
 }
 
@@ -189,5 +214,81 @@ describe("the prompt", () => {
 
     expect(staff).toMatch(/furthest from their own target/i);
     expect(staff).not.toMatch(/invoice-ready/i);
+  });
+});
+
+describe("buildPersonFacts", () => {
+  it("puts the one person in `subject` rather than in the comparison list", () => {
+    const facts = buildPersonFacts(dataWithDays(), dashboard([person()]), person());
+
+    expect(facts.scope).toBe("person");
+    expect(facts.subject?.name).toBe("Part Timer");
+    // `people` is the team-comparison field. Populating it here would invite
+    // the model to compare somebody with themselves.
+    expect(facts.people).toEqual([]);
+  });
+
+  it("reports THEIR figures as the totals, not the team's", () => {
+    const facts = buildPersonFacts(dataWithDays(), dashboard([person()]), person());
+
+    expect(facts.totals.capacityHours).toBe(22.5);
+    expect(facts.totals.utilisationPercent).toBe(64);
+    expect(facts.totals.peopleCount).toBe(1);
+  });
+
+  it("names the weekday for each worked day, in UTC", () => {
+    // Parsing a DATE in a local zone is what turns a Monday into a Sunday.
+    // 2026-08-18 is a Tuesday; Adelaide is UTC+9:30, so a local parse of
+    // midnight would still be the 18th - but a negative offset would not, and
+    // this is the assertion that would catch it.
+    const facts = buildPersonFacts(dataWithDays(), dashboard([person()]), person());
+
+    expect(facts.days.map((day) => day.weekday)).toEqual(["Tuesday", "Wednesday"]);
+    expect(facts.days.map((day) => day.date)).toEqual(["2026-08-18", "2026-08-19"]);
+  });
+
+  it("gives each day its own utilisation against ONE full day", () => {
+    // A part-timer working a full Tuesday is at 100% for that day, even though
+    // they are at 64% for the week. Both figures are true and they are not the
+    // same figure.
+    const facts = buildPersonFacts(dataWithDays(), dashboard([person()]), person());
+
+    expect(facts.days[0].dayUtilisationPercent).toBe(100);
+    expect(facts.days[1].dayUtilisationPercent).toBe(93);
+  });
+
+  it("labels work with no parent job rather than dropping it", () => {
+    // Unassigned time is a real finding - it was 10 hours on the live data -
+    // so it has to arrive with a name the prose can use.
+    const facts = buildPersonFacts(dataWithDays(), dashboard([person()]), person());
+
+    expect(facts.jobs.map((job) => job.label)).toEqual(["Website changes", "No job"]);
+  });
+
+  it("carries each job's billable split, not just its size", () => {
+    const facts = buildPersonFacts(dataWithDays(), dashboard([person()]), person());
+
+    expect(facts.jobs[0]).toMatchObject({ hours: 9, billableHours: 8, category: "External" });
+    expect(facts.jobs[1]).toMatchObject({ hours: 5.5, billableHours: 0 });
+  });
+});
+
+describe("the person prompt", () => {
+  it("tells the model an empty weekday is not a day missed", () => {
+    // staff_target records how MANY days somebody is contracted to and never
+    // WHICH, so a three-day person has two blank weekdays by arrangement. This
+    // sentence is what stops the summary reading them as absence.
+    const prompt = buildSummaryPrompt(buildPersonFacts(dataWithDays(), dashboard([person()]), person()));
+
+    expect(prompt).toMatch(/never WHICH days/);
+    expect(prompt).toMatch(/do not describe a day with no time logged as a day missed/i);
+  });
+
+  it("asks about the shape of the period, which the team prompts do not", () => {
+    const personPrompt = buildSummaryPrompt(buildPersonFacts(dataWithDays(), dashboard([person()]), person()));
+    const staffPrompt = buildSummaryPrompt(buildStaffFacts(data(), dashboard([person()])));
+
+    expect(personPrompt).toMatch(/SHAPE of the period/);
+    expect(staffPrompt).not.toMatch(/SHAPE of the period/);
   });
 });

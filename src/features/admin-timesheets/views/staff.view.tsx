@@ -1,6 +1,6 @@
 import { ROUTES } from "@/lib/routes";
 
-import { getTimesheetSummaryService } from "../admin-timesheets-ai.service";
+import { getStaffSummaryService } from "../admin-timesheets-ai.service";
 import { AiSummaryPanel } from "../ai-summary-panel";
 import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { StaffList } from "../staff-cards";
@@ -26,9 +26,9 @@ export default async function StaffView(request: TimesheetRequest) {
 
   const { totals } = dashboard;
 
-  // Read-only: whatever is already cached for these filters, or nothing.
-  // Rendering a page never calls the model - see the note in the service.
-  const summary = await getTimesheetSummaryService("staff", request);
+  // Read-only, and built from the data already fetched above rather than
+  // re-querying it. Rendering never calls the model - see the service.
+  const summary = await getStaffSummaryService(data, dashboard);
   const hasAnyone = dashboard.people.length > 0;
 
   return (
