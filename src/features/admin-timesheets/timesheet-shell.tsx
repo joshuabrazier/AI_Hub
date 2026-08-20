@@ -6,10 +6,11 @@ import PortalPage from "@/features/layout/portal-page";
 import { USER_ROLES, USER_ROLE_LABELS } from "@/lib/data/kysely-database-types";
 import { ROUTES } from "@/lib/routes";
 
-import { ALL_CATEGORIES, AdminTimesheetsDTO } from "./admin-timesheets.types";
+import { AdminTimesheetsDTO } from "./admin-timesheets.types";
 import { RefreshButton } from "./refresh-button";
 import { PeriodControl } from "./period-control";
 import { CategorySegmentedControl, ProjectSelect } from "./timesheet-filters";
+import { appendFilterParams } from "./timesheet-url";
 
 // -------------------------------------------------------------------
 // The shell every time-and-billing view sits in.
@@ -32,9 +33,9 @@ import { CategorySegmentedControl, ProjectSelect } from "./timesheet-filters";
 // entry.
 export function filterQuery(filters: AdminTimesheetsDTO["filters"], start?: string): string {
   const params = new URLSearchParams({ granularity: filters.granularity, start: start ?? filters.start });
-  if (filters.category !== ALL_CATEGORIES) params.set("category", filters.category);
-  if (filters.project !== ALL_CATEGORIES) params.set("project", filters.project);
-  if (filters.person !== ALL_CATEGORIES) params.set("person", filters.person);
+
+  appendFilterParams(params, filters);
+
   return params.toString();
 }
 

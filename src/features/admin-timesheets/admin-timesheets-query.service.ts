@@ -8,7 +8,13 @@ import { handleError } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
 import { isGranularity } from "@/lib/timesheet/period";
 
-import { getAdminTimesheetsService, type TimesheetRequest } from "./admin-timesheets.service";
+import {
+  getAdminTimesheetsService,
+  getStaffDashboardService,
+  type TimesheetRequest,
+} from "./admin-timesheets.service";
+import { buildAnswerMeasures, describeScope } from "./admin-timesheets-answer";
+import { getRevenueForFactsService } from "./admin-timesheets-revenue.service";
 import { buildQueryPrompt, QUERY_SYSTEM_PROMPT } from "./admin-timesheets-query.prompt";
 import { ResolvedQuerySchema, type TimesheetQueryResultDTO } from "./admin-timesheets-query.types";
 
@@ -163,6 +169,7 @@ export async function askTimesheetQueryService(
         href: null,
         interpretation: resolved.interpretation,
         rejected: [],
+        answer: null,
       };
     }
 
@@ -172,10 +179,9 @@ export async function askTimesheetQueryService(
       ? resolved.granularity
       : data.filters.granularity;
 
-    const params = new URLSearchParams({
-      granularity,
-      start: admitStart(resolved.start, rejected) ?? data.filters.start,
-    });
+    const start = admitStart(resolved.start, rejected) ?? data.filters.start;
+
+    const params = new URLSearchParams({ granularity, start });
 
     const category = admitOption(
       resolved.category,
@@ -189,31 +195,94 @@ export async function askTimesheetQueryService(
       "that job",
       rejected,
     );
-    const person = admitOption(
-      resolved.person,
-      new Set(data.personOptions.map((option) => option.value)),
-      "that person",
-      rejected,
-    );
+
+    // Each name is admitted INDEPENDENTLY, so asking about three people of
+    // whom one has left narrows to the two who are here and says so - rather
+    // than throwing the whole filter away because one id was unknown.
+    const offeredPeople = new Set(data.personOptions.map((option) => option.value));
+
+    const people = (resolved.people ?? [])
+      .map((value) => admitOption(value, offeredPeople, "that person", rejected))
+      .filter((value): value is string => Boolean(value));
+
+    const billable = resolved.billable && resolved.billable !== "all" ? resolved.billable : undefined;
 
     if (category) params.set("category", category);
     if (project) params.set("project", project);
-    if (person) params.set("person", person);
+    if (people.length > 0) params.set("person", people.join(","));
+    if (billable) params.set("billable", billable);
 
     // Built HERE, from values this service admitted, and always a relative
     // path on this app. A model-supplied URL would be an open redirect; a
     // model-supplied filter tuple cannot be, because the server decides what
     // to do with it.
     //
-    // A person filter lands on their own page, because that is the screen that
-    // measures somebody against their own target. Everything else lands on the
-    // entries list, which is the one view that shows the rows a filter
-    // selected rather than a roll-up of them.
-    const href = person
-      ? `${ROUTES.ADMIN_TIMESHEETS_STAFF}/${encodeURIComponent(person)}?${params.toString()}`
-      : `${ROUTES.ADMIN_TIMESHEETS_ENTRIES}?${params.toString()}`;
+    // ONE person lands on their own page, because that is the screen measuring
+    // somebody against their own target. Two or more lands on the entries
+    // list: there is no screen that compares two people against their separate
+    // capacities, and sending them to one person's page would answer a
+    // narrower question than they asked.
+    const href =
+      people.length === 1
+        ? `${ROUTES.ADMIN_TIMESHEETS_STAFF}/${encodeURIComponent(people[0])}?${params.toString()}`
+        : `${ROUTES.ADMIN_TIMESHEETS_ENTRIES}?${params.toString()}`;
 
-    return { understood: true, href, interpretation: resolved.interpretation, rejected };
+    // -----------------------------------------------------------------
+    // The answer, when figures were asked for.
+    //
+    // Recomputed through the ORDINARY service with the resolved filters, so
+    // the numbers in the card are the same numbers the linked page will show.
+    // Deriving them from the unfiltered `data` above would answer a different
+    // question from the one the link opens.
+    // -----------------------------------------------------------------
+    const measures = resolved.measures ?? [];
+
+    if (measures.length === 0) {
+      return { understood: true, href, interpretation: resolved.interpretation, rejected, answer: null };
+    }
+
+    const scopedRequest: TimesheetRequest = {
+      granularity,
+      start,
+      category,
+      project,
+      person: people.length > 0 ? people.join(",") : undefined,
+      billable,
+    };
+
+    const scoped = await getAdminTimesheetsService(scopedRequest);
+    const revenue = await getRevenueForFactsService(scoped.report.facts);
+
+    // Utilisation needs contracted capacity, which only the staff dashboard
+    // knows. Fetched only when asked for, so an "how much did it cost" question
+    // does not pay for a capacity calculation nobody wanted.
+    const dashboard = measures.includes("utilisation")
+      ? (await getStaffDashboardService(scopedRequest)).dashboard
+      : null;
+
+    const peopleNames = people.map(
+      (id) => data.personOptions.find((option) => option.value === id)?.label ?? id,
+    );
+
+    return {
+      understood: true,
+      href,
+      interpretation: resolved.interpretation,
+      rejected,
+      answer: {
+        periodLabel: scoped.period.label,
+        scope: describeScope({
+          periodLabel: scoped.period.label,
+          peopleNames,
+          category,
+          projectLabel: project
+            ? (data.projectOptions.find((option) => option.value === project)?.summary ?? project)
+            : undefined,
+          billable,
+        }),
+        measures: buildAnswerMeasures(measures, scoped, revenue, dashboard),
+      },
+    };
   } catch (error) {
     throw handleError("askTimesheetQueryService", error);
   }

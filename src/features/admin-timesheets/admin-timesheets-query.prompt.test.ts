@@ -131,7 +131,9 @@ describe("ResolvedQuerySchema", () => {
     start: "2026-07-01",
     category: "External",
     project: null,
-    person: "712020:abc-def",
+    people: ["712020:abc-def"],
+    billable: "Billable",
+    measures: ["value", "cost"],
     interpretation: "External work for Philipp Rohlfshagen in July 2026.",
   };
 
@@ -151,9 +153,39 @@ describe("ResolvedQuerySchema", () => {
   });
 
   it("allows every filter to be null, which is how 'no filter' is said", () => {
-    const bare = { ...valid, granularity: null, start: null, category: null, person: null };
+    const bare = {
+      ...valid,
+      granularity: null,
+      start: null,
+      category: null,
+      people: null,
+      billable: null,
+      measures: null,
+    };
 
     expect(ResolvedQuerySchema.safeParse(bare).success).toBe(true);
+  });
+
+  it("accepts several people, because 'Louis and Josh' is one question", () => {
+    const two = { ...valid, people: ["712020:abc-def", "712020:ghi-jkl"] };
+
+    expect(ResolvedQuerySchema.safeParse(two).success).toBe(true);
+  });
+
+  it("rejects a billable state the filter does not have", () => {
+    // "partially-billable" is a plausible invention and there is no such
+    // state; unset, billable and non-billable are the three the engine keeps.
+    expect(ResolvedQuerySchema.safeParse({ ...valid, billable: "partially-billable" }).success).toBe(false);
+  });
+
+  it("rejects a measure the engine cannot compute", () => {
+    // The model naming a figure nothing computes would render a blank tile
+    // with a confident label on it.
+    expect(ResolvedQuerySchema.safeParse({ ...valid, measures: ["profitPerHead"] }).success).toBe(false);
+  });
+
+  it("treats an empty measures list as a request for a view, not an answer", () => {
+    expect(ResolvedQuerySchema.safeParse({ ...valid, measures: [] }).success).toBe(true);
   });
 
   it("rejects a reply with no interpretation", () => {
@@ -163,6 +195,17 @@ describe("ResolvedQuerySchema", () => {
     delete withoutInterpretation.interpretation;
 
     expect(ResolvedQuerySchema.safeParse(withoutInterpretation).success).toBe(false);
+  });
+
+  it("has no field for the model to put a computed figure in", () => {
+    // `measures` names WHICH figures are wanted; there is deliberately nowhere
+    // for the model to supply a value. If this schema ever grows an "amount"
+    // or "total", the engine has stopped being the only source of numbers.
+    const shape = Object.keys(ResolvedQuerySchema.shape);
+
+    for (const forbidden of ["amount", "total", "value_cents", "result", "answer"]) {
+      expect(shape).not.toContain(forbidden);
+    }
   });
 
   it("has no field a URL could be smuggled in", () => {

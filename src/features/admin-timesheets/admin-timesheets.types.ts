@@ -71,13 +71,29 @@ export interface PersonOptionDTO {
   daysWorked: number;
 }
 
+// The billable states a screen can narrow to. 'unset' is its own option and
+// not folded into non-billable: "nobody has said whether this bills" is a
+// data-quality problem, and hiding it inside "non-billable" writes hours off
+// in silence - the same reasoning the engine's three-way split uses.
+export const BILLABLE_FILTERS = ["all", "Billable", "Non-billable", "unset"] as const;
+
+export type BillableFilter = (typeof BILLABLE_FILTERS)[number];
+
 export interface TimesheetFiltersDTO {
   granularity: Granularity;
   // The period's start, carried in the URL.
   start: string;
   category: string;
   project: string;
+  // THE AUTHORITATIVE person filter, and an array because "Louis and Josh"
+  // is a normal thing to ask for. Empty means everyone.
+  people: string[];
+  // The single-person view of the above, kept because the person page and the
+  // staff cards are about one person by definition. Exactly one selected
+  // gives that id; none or several gives 'all'. Derived in one place so the
+  // two can never disagree.
   person: string;
+  billable: BillableFilter;
 }
 
 // -------------------------------------------------------------------

@@ -7,6 +7,8 @@ import { getPersonSummaryService } from "../admin-timesheets-ai.service";
 import { AiSummaryPanel } from "../ai-summary-panel";
 import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { ProductivityChart } from "../productivity-chart";
+import { getPersonRatesService } from "../admin-timesheets-rate.service";
+import { StaffRateDialog } from "../staff-rate-dialog";
 import { StaffTargetDialog } from "../staff-target-dialog";
 import { ProjectsCard, StatTile, SyncStatusLine } from "../timesheet-panels";
 import TimesheetShell, { filterQuery, periodHref } from "../timesheet-shell";
@@ -43,6 +45,8 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
   // the cache. Rendering never calls the model - see the service.
   const summary = await getPersonSummaryService(data, dashboard, person);
 
+  const rates = await getPersonRatesService(personId);
+
   const backHref = `${ROUTES.ADMIN_TIMESHEETS_STAFF}?${filterQuery({ ...filters, person: "all" })}`;
 
   return (
@@ -65,6 +69,8 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
           target={person.target}
           triggerLabel="Edit target"
         />
+
+        <StaffRateDialog personId={person.personId} personName={person.personName} rates={rates} />
 
         {person.target.isDefault && <Badge variant="warning">Using the company default</Badge>}
         {person.meetsBillableTarget === true && <Badge variant="success">Meeting billable target</Badge>}

@@ -9,8 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 
+import Link from "next/link";
+
 import { askTimesheetQueryAction } from "./admin-timesheets-query.actions";
-import { QUERY_MAX_LENGTH } from "./admin-timesheets-query.types";
+import { QUERY_MAX_LENGTH, type TimesheetQueryResultDTO } from "./admin-timesheets-query.types";
 import type { TimesheetFiltersDTO } from "./admin-timesheets.types";
 
 // -------------------------------------------------------------------
@@ -37,7 +39,7 @@ export function TimesheetAskBox({
 }) {
   const router = useRouter();
   const [question, setQuestion] = useState("");
-  const [interpretation, setInterpretation] = useState<string | null>(null);
+  const [result, setResult] = useState<TimesheetQueryResultDTO | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const ask = () => {
@@ -53,22 +55,28 @@ export function TimesheetAskBox({
         });
 
         if (!response.success) {
-          setInterpretation(null);
+          setResult(null);
           toast.error(response.formError ?? "Could not work that out");
           return;
         }
 
-        const { understood, href, interpretation: read, rejected } = response.data;
+        const { understood, href, rejected, answer } = response.data;
 
-        // Shown whether or not it worked. A question it could not use is still
-        // a question the reader should see its reading of.
-        setInterpretation(read);
+        // Kept whether or not it worked. A question it could not use is still a
+        // question the reader should see its reading of.
+        setResult(response.data);
 
         if (rejected.length > 0) {
           toast.warning(`I could not find ${rejected.join(" or ")}, so that part was ignored.`);
         }
 
         if (!understood || !href) return;
+
+        // A question that asked for FIGURES stays put and shows them. Only a
+        // request for a view navigates: pushing a route out from under an
+        // answer would replace the thing the reader asked for with a page they
+        // then have to read themselves.
+        if (answer) return;
 
         router.push(href);
       } catch (error) {
@@ -107,12 +115,45 @@ export function TimesheetAskBox({
         </Button>
       </form>
 
-      {interpretation && (
+      {result && (
         <p className="text-xs text-muted-foreground">
           {/* A text node, not markup. This is the model's own sentence and it
               is rendered as text for the same reason chat replies are. */}
-          Read as: {interpretation}
+          Read as: {result.interpretation}
         </p>
+      )}
+
+      {result?.answer && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {result.answer.scope}
+          </p>
+
+          <dl className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {result.answer.measures.map((measure) => (
+              <div key={measure.key}>
+                <dt className="text-xs font-medium text-muted-foreground">{measure.label}</dt>
+                <dd className="mt-0.5 font-heading text-xl font-semibold text-foreground">{measure.value}</dd>
+                {/* The caveat sits WITH the figure, not in a footnote. An
+                    understated value or an unavailable margin presented bare
+                    is the thing that actually misleads. */}
+                {measure.caveat && <dd className="mt-0.5 text-xs text-muted-foreground">{measure.caveat}</dd>}
+              </div>
+            ))}
+          </dl>
+
+          {result.href && (
+            <p className="mt-4">
+              <Link href={result.href} className="text-sm underline underline-offset-4">
+                Open this view
+              </Link>
+            </p>
+          )}
+
+          <p className="mt-3 text-xs text-muted-foreground">
+            Figures computed from the timesheet data, not written by the model.
+          </p>
+        </div>
       )}
     </div>
   );

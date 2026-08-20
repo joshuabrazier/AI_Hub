@@ -730,6 +730,38 @@ export interface StaffTargets {
   updatedAt: Generated<Date>;
 }
 
+// -------------------------------------------------------------------
+// Staff Rates
+//
+// What an hour of somebody's time is charged at, with HISTORY: one row per
+// person per effective-from date, and a worklog is valued at whichever row was
+// in force on the day it was worked. See migration 007 and
+// lib/timesheet/revenue.ts.
+//
+// Money is INTEGER CENTS, for the same reason durations are integer seconds:
+// node-postgres returns NUMERIC as a string, so "150.50" + "100" becomes
+// "150.50100". Cents are exact and they sum.
+// -------------------------------------------------------------------
+export interface StaffRates {
+  id: string;
+  personId: string;
+  personName: string | null;
+  // `effective_from` is a DATE, so it arrives as a 'YYYY-MM-DD' string - see
+  // the type parser note in kysely-database-client.ts. Compared
+  // lexicographically, never parsed into a Date.
+  effectiveFrom: string;
+  chargeRateCents: number;
+  // Null means nobody has recorded a cost, so margin is UNKNOWN, not 100%.
+  costRateCents: number | null;
+  notes: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type StaffRate = Selectable<StaffRates>;
+export type NewStaffRate = Insertable<StaffRates>;
+export type UpdateStaffRate = Updateable<StaffRates>;
+
 export type StaffTarget = Selectable<StaffTargets>;
 export type NewStaffTarget = Insertable<StaffTargets>;
 export type UpdateStaffTarget = Updateable<StaffTargets>;
@@ -863,6 +895,7 @@ export interface Database {
   worklogFact: WorklogFacts;
   syncWatermark: SyncWatermarks;
   staffTarget: StaffTargets;
+  staffRate: StaffRates;
   timesheetAiSummary: TimesheetAiSummaries;
   timesheetReport: TimesheetReports;
 }

@@ -15,6 +15,7 @@ import {
   ProjectOptionDTO,
   TimesheetFiltersDTO,
 } from "./admin-timesheets.types";
+import { appendFilterParams } from "./timesheet-url";
 
 // -------------------------------------------------------------------
 // Filter bar
@@ -42,14 +43,11 @@ function buildHref(pathname: string, filters: TimesheetFiltersDTO, change: Parti
   const next = { ...filters, ...change };
   const params = new URLSearchParams({ granularity: next.granularity, start: next.start });
 
-  // Defaults are left out of the URL entirely, so a plain link stays short and
-  // readable rather than carrying "&category=all&project=all&person=all".
-  if (next.category !== ALL_CATEGORIES) params.set("category", next.category);
-  if (next.project !== ALL_CATEGORIES) params.set("project", next.project);
-  if (next.person !== ALL_CATEGORIES) params.set("person", next.person);
+  appendFilterParams(params, next);
 
   return `${pathname || ROUTES.ADMIN_TIMESHEETS}?${params.toString()}`;
 }
+
 
 // -------------------------------------------------------------------
 // Internal vs External, as a segmented control.

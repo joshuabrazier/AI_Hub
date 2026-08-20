@@ -1,6 +1,8 @@
 import { ROUTES } from "@/lib/routes";
 
 import { getOverviewSummaryService } from "../admin-timesheets-ai.service";
+import { getRevenueForFactsService } from "../admin-timesheets-revenue.service";
+import { ConcentrationCard, RevenueTiles } from "../revenue-panels";
 import { ReportCreateDialog } from "../report-create-dialog";
 import { TimesheetAskBox } from "../timesheet-ask-box";
 import { AiSummaryPanel } from "../ai-summary-panel";
@@ -33,6 +35,10 @@ export default async function OverviewView(request: TimesheetRequest) {
   // re-querying it. Rendering never calls the model - see the service.
   const summary = await getOverviewSummaryService(data, overview);
 
+  // Values the facts the report already fetched - one extra query, for the
+  // rate table, which is one row per person per rate change.
+  const revenue = await getRevenueForFactsService(report.facts);
+
   const hasData = report.totals.worklogCount > 0;
 
   return (
@@ -63,6 +69,8 @@ export default async function OverviewView(request: TimesheetRequest) {
 
           {/* The four headline figures. Utilisation is against contracted
               capacity, so a part-time team is not reported as underperforming. */}
+          <RevenueTiles revenue={revenue} index={0} />
+
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatTile
               label="Logged"
@@ -112,6 +120,8 @@ export default async function OverviewView(request: TimesheetRequest) {
             previousHref={periodHref(ROUTES.ADMIN_TIMESHEETS, filters, period.previousStart)}
             nextHref={periodHref(ROUTES.ADMIN_TIMESHEETS, filters, period.nextStart)}
           />
+
+          <ConcentrationCard revenue={revenue} index={4} />
 
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">

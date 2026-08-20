@@ -2,6 +2,30 @@ import { z } from "zod";
 
 import { GRANULARITIES } from "@/lib/timesheet/period";
 
+import { BILLABLE_FILTERS } from "./admin-timesheets.types";
+
+// -------------------------------------------------------------------
+// The figures a question can ask FOR.
+//
+// The model says which of these the question wanted; the ENGINE computes every
+// one of them. That division is the same rule as everywhere else in this
+// feature - the model chooses the shape of the question, never the value of an
+// answer - and it is what lets the box answer "how much has that cost us"
+// without becoming a second source of numbers.
+// -------------------------------------------------------------------
+export const QUERY_MEASURES = [
+  "hours",
+  "billableHours",
+  "nonBillableHours",
+  "value",
+  "cost",
+  "margin",
+  "effectiveRate",
+  "utilisation",
+] as const;
+
+export type QueryMeasure = (typeof QUERY_MEASURES)[number];
+
 // -------------------------------------------------------------------
 // Natural-language filter resolution - DTOs and schemas.
 //
@@ -46,7 +70,14 @@ export const ResolvedQuerySchema = z.object({
   // service - see the note above.
   category: z.string().max(120).nullable(),
   project: z.string().max(120).nullable(),
-  person: z.string().max(120).nullable(),
+  // SEVERAL people, because "Louis and Josh" is a normal thing to ask for.
+  // Each id is checked against the offered options independently, so one
+  // unknown name does not throw away the ones that were recognised.
+  people: z.array(z.string().max(120)).max(50).nullable(),
+  billable: z.enum(BILLABLE_FILTERS).nullable(),
+  // Which figures the question asked for. Empty means it wanted a view rather
+  // than an answer, which is the ordinary case.
+  measures: z.array(z.enum(QUERY_MEASURES)).max(8).nullable(),
   // One sentence, in the model's own words, saying what it took the question
   // to mean. Shown to the reader so a misreading is visible rather than
   // silent.
@@ -73,6 +104,20 @@ export type AskTimesheetQueryRequestDTO = z.infer<typeof AskTimesheetQuerySchema
 // waiting to happen; a model-supplied filter tuple cannot be, because the
 // server decides what to do with it.
 // -------------------------------------------------------------------
+// One figure in an answer. `value` is already FORMATTED, by the same helpers
+// the dashboards use, so the card and the tiles cannot render the same number
+// two different ways - and a null figure arrives as "-" rather than as a zero
+// somebody would act on.
+export interface QueryMeasureDTO {
+  key: QueryMeasure;
+  label: string;
+  value: string;
+  // The caveat that belongs with this figure, if any: unrated hours behind a
+  // value, a partial cost base behind a margin. Shown with the number, because
+  // a qualified figure presented bare is the thing that misleads.
+  caveat: string | null;
+}
+
 export interface TimesheetQueryResultDTO {
   understood: boolean;
   // Present when understood. A relative path on this app.
@@ -83,4 +128,14 @@ export interface TimesheetQueryResultDTO {
   // options. Surfaced rather than swallowed: "I could not find a person called
   // that" is a useful answer and an empty dashboard is not.
   rejected: string[];
+  // Present when the question asked for figures rather than a view. Every one
+  // of them computed by the engine, never by the model.
+  answer: {
+    periodLabel: string;
+    // The filters in words, so the answer states what it is an answer ABOUT.
+    // A number with no scope on it is how "$8,430" gets quoted as the month
+    // when it was one person's week.
+    scope: string;
+    measures: QueryMeasureDTO[];
+  } | null;
 }

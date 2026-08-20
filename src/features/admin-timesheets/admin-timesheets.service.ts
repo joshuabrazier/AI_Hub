@@ -32,6 +32,8 @@ import { todayInAppZone } from "@/lib/timezone";
 
 import {
   ALL_CATEGORIES,
+  BILLABLE_FILTERS,
+  type BillableFilter,
   AdminTimesheetsDTO,
   CategoryOptionDTO,
   PersonOptionDTO,
@@ -88,7 +90,12 @@ export interface TimesheetRequest {
   start?: string;
   category?: string;
   project?: string;
+  // A single id, or several comma-separated - "louis,josh" is a normal ask.
+  // Parsed and validated against this period's own options, so a stale or
+  // invented id falls back to everyone rather than emptying the screen.
   person?: string;
+  // One of BILLABLE_FILTERS. Anything else falls back to 'all'.
+  billable?: string;
 }
 
 // One period drives the whole screen. Before this the month drove the tables
@@ -313,15 +320,36 @@ export async function getAdminTimesheetsService(
     const project = projectOptions.some((option) => option.value === request.project)
       ? (request.project as string)
       : ALL_CATEGORIES;
-    const person = personOptions.some((option) => option.value === request.person)
-      ? (request.person as string)
+    // Several people, comma separated. Each id is checked against this
+    // period's options for the same reason the others are: an id that is not
+    // here should narrow nothing rather than empty the screen.
+    const offeredPeople = new Set(personOptions.map((option) => option.value));
+
+    const people = (request.person ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0 && value !== ALL_CATEGORIES && offeredPeople.has(value));
+
+    // The single-person view, for the screens that are about one person by
+    // definition. Exactly one selected gives that id; none or several give
+    // 'all', because "one person" is not a meaningful answer for two.
+    const person = people.length === 1 ? people[0] : ALL_CATEGORIES;
+
+    const billable = (BILLABLE_FILTERS as readonly string[]).includes(request.billable ?? "")
+      ? (request.billable as BillableFilter)
       : ALL_CATEGORIES;
+
+    const peopleSet = new Set(people);
 
     const filteredRows = factRows.filter(
       (row) =>
         (category === ALL_CATEGORIES || row.category === category) &&
         (project === ALL_CATEGORIES || row.parentKey === project) &&
-        (person === ALL_CATEGORIES || row.personId === person),
+        (people.length === 0 || peopleSet.has(row.personId)) &&
+        // 'unset' means the row's billable flag is null - its own state, never
+        // folded in with non-billable.
+        (billable === ALL_CATEGORIES ||
+          (billable === "unset" ? row.billable === null : row.billable === billable)),
     );
 
     // The issues are filtered to match, so the JOB LIST narrows with the rest
@@ -354,7 +382,7 @@ export async function getAdminTimesheetsService(
     return {
       period,
       todayIso,
-      filters: { granularity, start: period.start, category, project, person },
+      filters: { granularity, start: period.start, category, project, people, person, billable },
       categoryOptions,
       projectOptions,
       personOptions,
