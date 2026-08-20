@@ -88,22 +88,36 @@ export function ForecastChart({
         </CardHeader>
 
         <CardContent className="space-y-4">
-          <div className="flex items-end gap-1.5 sm:gap-2" style={{ height: "10rem" }}>
+          {/* THE COLUMNS MUST STRETCH, not sit at the end.
+              `items-end` here made every column shrink to the height of its
+              own date label, so the bar row's `h-full` resolved against about
+              nothing and the whole chart rendered as invisible slivers. The
+              bars need a box with real height to grow inside, which is what
+              `items-stretch` plus `flex-1` on the bar row gives them. */}
+          {/* A baseline, so the bars are read as standing on something rather
+              than floating in the card. */}
+          <div className="flex h-48 items-stretch gap-1 border-b border-border sm:gap-1.5">
             {points.map((point) => {
               const cost = point.cumulativeCostCents;
               const value = point.cumulativeValueCents;
 
-              const costHeight = cost === null ? 0 : Math.max(1, Math.round((cost / ceiling) * 100));
-              const valueHeight = value === null ? 0 : Math.max(1, Math.round((value / ceiling) * 100));
+              // A floor of 1% only for a NON-ZERO figure, so a small amount
+              // stays visible. A cumulative zero draws nothing: a sliver there
+              // would imply a little of something on a day with none of it.
+              const costHeight = barHeight(cost, ceiling);
+              const valueHeight = barHeight(value, ceiling);
 
               const { weekday, day } = dayLabel(point.date);
+              const isToday = point.date === lastActual?.date;
 
               return (
-                <div key={point.date} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-                  {/* Two bars side by side rather than stacked: cost and value
-                      are not parts of a whole, they are two quantities being
-                      compared, and stacking would imply they sum. */}
-                  <div className="flex h-full w-full items-end justify-center gap-0.5">
+                <div key={point.date} className="flex h-full min-w-0 flex-1 flex-col">
+                  {/* Takes every pixel the labels do not, so the percentages
+                      above are measured against something. */}
+                  <div className="flex min-h-0 flex-1 items-end justify-center gap-0.5">
+                    {/* Side by side rather than stacked: cost and value are not
+                        parts of a whole, they are two quantities being
+                        compared, and stacking would imply they sum. */}
                     <Bar
                       heightPercent={valueHeight}
                       isActual={point.isActual}
@@ -118,15 +132,17 @@ export function ForecastChart({
                     />
                   </div>
 
-                  <span
-                    className={cn(
-                      "text-[10px] leading-none tabular-nums",
-                      point.date === lastActual?.date ? "font-semibold text-foreground" : "text-muted-foreground",
-                    )}
-                  >
-                    {day}
-                  </span>
-                  <span className="text-[10px] leading-none text-muted-foreground">{weekday}</span>
+                  <div className="mt-2 flex flex-col items-center gap-0.5">
+                    <span
+                      className={cn(
+                        "text-[10px] leading-none tabular-nums",
+                        isToday ? "font-semibold text-foreground" : "text-muted-foreground",
+                      )}
+                    >
+                      {day}
+                    </span>
+                    <span className="text-[10px] leading-none text-muted-foreground">{weekday}</span>
+                  </div>
                 </div>
               );
             })}
@@ -189,10 +205,17 @@ function Bar({
   return (
     <div
       title={title}
-      className={cn("w-full max-w-3 rounded-t-sm", isActual ? solid : projected)}
+      // Capped rather than fixed, so five weekdays give substantial bars and
+      // twenty-one give thin ones without either overflowing.
+      className={cn("w-full max-w-[16px] rounded-t-sm", isActual ? solid : projected)}
       style={{ height: `${heightPercent}%` }}
     />
   );
+}
+
+function barHeight(cents: number | null, ceiling: number): number {
+  if (cents === null || cents <= 0) return 0;
+  return Math.max(1, Math.round((cents / ceiling) * 100));
 }
 
 function Key({ className, label }: { className: string; label: string }) {
