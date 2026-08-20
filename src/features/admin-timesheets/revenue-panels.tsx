@@ -64,8 +64,8 @@ export function RevenueTiles({ revenue, index }: { revenue: RevenueDTO; index: n
           value={formatCents(revenue.marginCents)}
           hint={
             revenue.marginRatio === null
-              ? revenue.uncostedBillableHours > 0
-                ? `${revenue.uncostedBillableHours.toFixed(2)}h has no cost rate`
+              ? revenue.uncostedHours > 0
+                ? `${revenue.uncostedHours.toFixed(2)}h has no cost rate`
                 : "No cost rates recorded"
               : `${percent(revenue.marginRatio)} of value`
           }
@@ -75,7 +75,15 @@ export function RevenueTiles({ revenue, index }: { revenue: RevenueDTO; index: n
         <MoneyTile
           label="Cost"
           value={formatCents(revenue.costCents)}
-          hint={revenue.costCents === null ? "Partial or unrecorded" : "At recorded cost rates"}
+          // The absorbed part named on the tile: cost with no income against
+          // it is the figure somebody acts on, and it is invisible in a total.
+          hint={
+            revenue.costCents === null
+              ? "Partial or unrecorded"
+              : revenue.nonBillableCostCents
+                ? `${formatCents(revenue.nonBillableCostCents)} of it non-billable`
+                : "All against billable time"
+          }
           emphasis="muted"
           index={index + 3}
         />

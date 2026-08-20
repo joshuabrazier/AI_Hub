@@ -18,7 +18,13 @@ import type { WorklogFactRow } from "./timesheet.types";
 //    as zero would understate revenue with nothing on screen to say so, which
 //    is the worst kind of wrong.
 //
-// 3. MONEY IS INTEGER CENTS throughout. See migration 007: node-postgres
+// 3. COST APPLIES TO EVERY LOGGED HOUR, revenue only to billable ones. The
+//    business pays for the day whether or not it was chargeable, so
+//    non-billable time is cost with no income against it - which is the
+//    number an executive is looking for. Costing only billable hours makes
+//    internal work look free and overstates margin by what is being absorbed.
+//
+// 4. MONEY IS INTEGER CENTS throughout. See migration 007: node-postgres
 //    returns NUMERIC as a string, and a float pound is a rounding error
 //    waiting to be summed a thousand times.
 // -------------------------------------------------------------------
@@ -85,12 +91,25 @@ export interface RevenueTotals {
   // What the billable time is worth at the rates in force. Null when NOTHING
   // could be valued - distinct from 0, which means valued at nought.
   chargeableValueCents: number | null;
-  // What it cost, where a cost rate exists. Null when no cost rate applied.
+  // What the time COST, across EVERY logged hour - billable or not.
+  //
+  // This is the whole point of the field and it was wrong once: an employer
+  // pays for the day whether or not the day was chargeable. Costing only
+  // billable hours makes internal work, admin, rework and bench time look
+  // free, which flatters margin by exactly the amount the business is
+  // actually absorbing.
+  //
+  // Null when the cost base is incomplete - see the note in computeRevenue.
   costCents: number | null;
-  // value - cost. Null unless both sides are known: a margin computed against
-  // a partial cost base is worse than no margin.
+  // The part of that cost with no revenue against it: what the business wore.
+  // Its own figure because "we absorbed $2,800 of internal time" is the
+  // sentence somebody acts on, and it is invisible inside a total.
+  nonBillableCostCents: number | null;
+  // value - cost, across all logged hours. CAN BE NEGATIVE, and that is not a
+  // bug: a period of mostly internal work loses money, and a margin that
+  // could not go below zero would be hiding the thing worth knowing.
   marginCents: number | null;
-  // margin / value, 0-1. Null on the same condition.
+  // margin / value. Null unless both sides are known.
   marginRatio: number | null;
 
   // Value per BILLABLE hour: the average rate actually achieved.
@@ -100,12 +119,13 @@ export interface RevenueTotals {
   // drags it down, which is the point of looking at it.
   effectiveRatePerLoggedHourCents: number | null;
 
-  // Billable hours no rate could be found for. The honesty field: if this is
-  // non-zero the value above is an understatement, and the UI must say so.
+  // Billable hours no charge rate could be found for. The honesty field: if
+  // this is non-zero the value above is an understatement, and the UI says so.
   unratedBillableHours: number;
-  // Billable hours whose rate had no cost side, so cost and margin are
-  // partial. Same reasoning.
-  uncostedBillableHours: number;
+  // LOGGED hours - billable or not - whose person had no cost rate on the day.
+  // Broadened along with cost itself: an uncosted non-billable hour leaves the
+  // cost base just as incomplete as an uncosted billable one.
+  uncostedHours: number;
 }
 
 function round(value: number, places = 4): number {
@@ -116,10 +136,17 @@ function round(value: number, places = 4): number {
 // -------------------------------------------------------------------
 // Value a set of worklogs.
 //
-// Only BILLABLE rows are valued. Non-billable and unset time is real work and
-// it is counted in the hours, but it is not revenue - and unset in particular
-// must never be valued, because "nobody has said whether this bills" is not
-// "this bills".
+// TWO DIFFERENT RULES, and keeping them apart is the whole of it:
+//
+//   REVENUE counts only BILLABLE rows. Non-billable time is real work but it
+//   is not income, and UNSET time must never be valued because "nobody has
+//   said whether this bills" is not "this bills".
+//
+//   COST counts EVERY logged row. The business pays for the hour whether or
+//   not it was chargeable, so internal work, admin, rework and unset time all
+//   cost exactly what they cost. This is the half that was wrong first time
+//   round: costing only billable hours makes non-billable time look free and
+//   overstates margin by precisely the amount the business is absorbing.
 // -------------------------------------------------------------------
 export function computeRevenue(facts: WorklogFactRow[], rates: StaffRateRow[]): RevenueTotals {
   let loggedSeconds = 0;
@@ -131,26 +158,33 @@ export function computeRevenue(facts: WorklogFactRow[], rates: StaffRateRow[]): 
   // entry at an odd rate does not round on every row.
   let valueCentSeconds = 0;
   let costCentSeconds = 0;
+  let nonBillableCostCentSeconds = 0;
   let valuedAny = false;
   let costedAny = false;
 
   for (const fact of facts) {
     loggedSeconds += fact.timeSpentSeconds;
 
-    if (fact.billable !== BILLABLE_YES) continue;
-
-    billableSeconds += fact.timeSpentSeconds;
+    const isBillable = fact.billable === BILLABLE_YES;
+    if (isBillable) billableSeconds += fact.timeSpentSeconds;
 
     const rate = resolveRateFor(rates, fact.personId, fact.workDate);
 
     if (rate === null) {
-      unratedSeconds += fact.timeSpentSeconds;
+      // No rate at all: it can be neither valued nor costed. Only the
+      // billable share is called out as unvalued, because that is the figure
+      // an understated revenue number belongs to.
+      if (isBillable) unratedSeconds += fact.timeSpentSeconds;
+      uncostedSeconds += fact.timeSpentSeconds;
       continue;
     }
 
-    valuedAny = true;
-    valueCentSeconds += rate.chargeRateCents * fact.timeSpentSeconds;
+    if (isBillable) {
+      valuedAny = true;
+      valueCentSeconds += rate.chargeRateCents * fact.timeSpentSeconds;
+    }
 
+    // COST APPLIES REGARDLESS of the billable flag - the point of the fix.
     if (rate.costRateCents === null) {
       uncostedSeconds += fact.timeSpentSeconds;
       continue;
@@ -158,6 +192,8 @@ export function computeRevenue(facts: WorklogFactRow[], rates: StaffRateRow[]): 
 
     costedAny = true;
     costCentSeconds += rate.costRateCents * fact.timeSpentSeconds;
+
+    if (!isBillable) nonBillableCostCentSeconds += rate.costRateCents * fact.timeSpentSeconds;
   }
 
   const loggedHours = round(loggedSeconds / SECONDS_PER_HOUR, 2);
@@ -165,10 +201,12 @@ export function computeRevenue(facts: WorklogFactRow[], rates: StaffRateRow[]): 
 
   const chargeableValueCents = valuedAny ? Math.round(valueCentSeconds / SECONDS_PER_HOUR) : null;
 
-  // Cost is only reported when EVERY valued hour had a cost rate. A cost base
-  // covering half the hours makes margin look twice as good as it is, and a
-  // partially-costed margin is the number somebody would quote in a board
-  // meeting.
+  // Cost is reported only when EVERY LOGGED hour had a cost rate. A cost base
+  // covering some of the hours makes margin look better than it is, and a
+  // partially-costed margin is exactly the number somebody quotes in a board
+  // meeting. One person without a cost rate withholds the figure for everyone,
+  // which is blunt but honest - and `uncostedHours` says how much is missing so
+  // it is fixable rather than mysterious.
   const costComplete = costedAny && uncostedSeconds === 0;
   const costCents = costComplete ? Math.round(costCentSeconds / SECONDS_PER_HOUR) : null;
 
@@ -180,6 +218,9 @@ export function computeRevenue(facts: WorklogFactRow[], rates: StaffRateRow[]): 
     billableHours,
     chargeableValueCents,
     costCents,
+    nonBillableCostCents: costComplete
+      ? Math.round(nonBillableCostCentSeconds / SECONDS_PER_HOUR)
+      : null,
     marginCents,
     marginRatio:
       marginCents !== null && chargeableValueCents !== null && chargeableValueCents > 0
@@ -194,7 +235,7 @@ export function computeRevenue(facts: WorklogFactRow[], rates: StaffRateRow[]): 
         ? Math.round(chargeableValueCents / (loggedSeconds / SECONDS_PER_HOUR))
         : null,
     unratedBillableHours: round(unratedSeconds / SECONDS_PER_HOUR, 2),
-    uncostedBillableHours: round(uncostedSeconds / SECONDS_PER_HOUR, 2),
+    uncostedHours: round(uncostedSeconds / SECONDS_PER_HOUR, 2),
   };
 }
 

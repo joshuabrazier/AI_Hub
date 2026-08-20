@@ -19,6 +19,8 @@ import type { WorklogFactRow } from "./timesheet.types";
 //
 //   - the rate in force ON THE DAY, not today's rate;
 //   - no rate means UNVALUED, never free;
+//   - COST COVERS EVERY LOGGED HOUR while revenue covers only billable ones,
+//     because the business pays for the day either way;
 //   - a partial cost base yields NO margin rather than a flattering one.
 // -------------------------------------------------------------------
 
@@ -92,13 +94,43 @@ describe("computeRevenue", () => {
     expect(totals.billableHours).toBe(2);
   });
 
-  it("does not value non-billable time", () => {
+  it("does not value non-billable time but DOES cost it", () => {
+    // The correction that matters most. An hour of internal work earns
+    // nothing and costs $60, because the person is paid for it either way.
+    // Costing only billable hours made that hour look free.
     const totals = computeRevenue([fact({ billable: BILLABLE_NO })], [rate()]);
 
     expect(totals.chargeableValueCents).toBeNull();
     expect(totals.billableHours).toBe(0);
-    // The work still happened and still counts as hours.
     expect(totals.loggedHours).toBe(1);
+    expect(totals.costCents).toBe(6_000);
+    expect(totals.nonBillableCostCents).toBe(6_000);
+  });
+
+  it("costs UNSET time too, since somebody was still paid for it", () => {
+    // Unset is never valued - nobody has said it bills - but the wage was
+    // still paid. Leaving it out of cost would be the same mistake again.
+    const totals = computeRevenue([fact({ billable: null })], [rate()]);
+
+    expect(totals.chargeableValueCents).toBeNull();
+    expect(totals.costCents).toBe(6_000);
+    expect(totals.nonBillableCostCents).toBe(6_000);
+  });
+
+  it("reports margin as NEGATIVE when a period is mostly unbillable", () => {
+    // A day of internal work and one chargeable hour: $150 in, $300 of wages
+    // out. A margin floored at zero would hide the only thing worth knowing.
+    const facts = [
+      fact({ worklogId: "a" }),
+      fact({ worklogId: "b", billable: BILLABLE_NO, timeSpentSeconds: 3600 * 4 }),
+    ];
+
+    const totals = computeRevenue(facts, [rate()]);
+
+    expect(totals.chargeableValueCents).toBe(15_000);
+    expect(totals.costCents).toBe(30_000);
+    expect(totals.marginCents).toBe(-15_000);
+    expect(totals.marginRatio).toBe(-1);
   });
 
   it("does not value UNSET time, because nobody has said it bills", () => {
@@ -124,6 +156,9 @@ describe("computeRevenue", () => {
     expect(totals.chargeableValueCents).toBe(15_000);
     // The honesty field. Without this the $150 reads as the full picture.
     expect(totals.unratedBillableHours).toBe(1);
+    // One of the two hours has no rate, so no cost total is offered.
+    expect(totals.costCents).toBeNull();
+    expect(totals.uncostedHours).toBe(1);
   });
 
   it("returns null value, not zero, when nothing could be valued at all", () => {
@@ -131,15 +166,19 @@ describe("computeRevenue", () => {
 
     expect(totals.chargeableValueCents).toBeNull();
     expect(totals.unratedBillableHours).toBe(1);
+    // No rate at all means it cannot be costed either.
+    expect(totals.costCents).toBeNull();
+    expect(totals.uncostedHours).toBe(1);
   });
 
-  it("computes margin only when every valued hour had a cost rate", () => {
+  it("computes margin when every LOGGED hour had a cost rate", () => {
     const totals = computeRevenue([fact({ timeSpentSeconds: 3600 })], [rate()]);
 
-    // $150 charged, $60 cost, $90 margin at 60%.
+    // One billable hour: $150 charged, $60 cost, $90 margin at 60%.
     expect(totals.costCents).toBe(6_000);
     expect(totals.marginCents).toBe(9_000);
     expect(totals.marginRatio).toBe(0.6);
+    expect(totals.nonBillableCostCents).toBe(0);
   });
 
   it("refuses a margin when the cost base is only partial", () => {
@@ -154,7 +193,21 @@ describe("computeRevenue", () => {
     expect(totals.costCents).toBeNull();
     expect(totals.marginCents).toBeNull();
     expect(totals.marginRatio).toBeNull();
-    expect(totals.uncostedBillableHours).toBe(1);
+    expect(totals.uncostedHours).toBe(1);
+  });
+
+  it("counts an uncosted NON-BILLABLE hour as leaving the cost base partial", () => {
+    // Broadened with cost itself. Before, somebody with no cost rate doing
+    // only internal work left the cost base looking complete, and margin was
+    // reported as though their time were free.
+    const facts = [fact({ worklogId: "a", personId: "p1" }), fact({ worklogId: "b", personId: "p2", billable: BILLABLE_NO })];
+    const rates = [rate({ personId: "p1" }), rate({ personId: "p2", costRateCents: null })];
+
+    const totals = computeRevenue(facts, rates);
+
+    expect(totals.costCents).toBeNull();
+    expect(totals.marginCents).toBeNull();
+    expect(totals.uncostedHours).toBe(1);
   });
 
   it("separates the achieved rate from the diluted effective rate", () => {
@@ -167,6 +220,12 @@ describe("computeRevenue", () => {
 
     expect(totals.chargeRatePerBillableHourCents).toBe(15_000);
     expect(totals.effectiveRatePerLoggedHourCents).toBe(7_500);
+
+    // And the honest margin on those two hours: $150 earned against $120 of
+    // wages. Costing only the billable hour would have said $90 at 60%.
+    expect(totals.costCents).toBe(12_000);
+    expect(totals.marginCents).toBe(3_000);
+    expect(totals.marginRatio).toBe(0.2);
   });
 
   it("values a part hour without rounding on every row", () => {

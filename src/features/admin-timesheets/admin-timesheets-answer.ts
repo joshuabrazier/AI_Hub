@@ -82,10 +82,12 @@ export function buildAnswerMeasures(
           value: revenue.configured ? formatCents(revenue.costCents) : "-",
           caveat:
             revenue.configured && revenue.costCents === null
-              ? revenue.uncostedBillableHours > 0
-                ? `${revenue.uncostedBillableHours.toFixed(2)}h has no cost rate, so a total would be partial`
+              ? revenue.uncostedHours > 0
+                ? `${revenue.uncostedHours.toFixed(2)}h has no cost rate, so a total would be partial`
                 : "No cost rates are recorded"
-              : null,
+              : revenue.nonBillableCostCents
+                ? `includes ${formatCents(revenue.nonBillableCostCents)} of non-billable time`
+                : null,
         };
 
       case "margin":
