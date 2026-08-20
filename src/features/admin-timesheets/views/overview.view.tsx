@@ -1,14 +1,14 @@
 import { ROUTES } from "@/lib/routes";
 
 import { getOverviewSummaryService } from "../admin-timesheets-ai.service";
-import { getForecastForScopeService } from "../admin-timesheets-forecast.service";
+import { getForecastFromReportService } from "../admin-timesheets-forecast.service";
 import { getRevenueForFactsService } from "../admin-timesheets-revenue.service";
 import { ForecastChart } from "../forecast-chart";
 import { ConcentrationCard, RevenueTiles } from "../revenue-panels";
 import { ReportCreateDialog } from "../report-create-dialog";
 import { TimesheetAskBox } from "../timesheet-ask-box";
 import { AiSummaryPanel } from "../ai-summary-panel";
-import { getOverviewService, getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
+import { getOverviewService, TimesheetRequest } from "../admin-timesheets.service";
 import { CategorySplitCard, OverviewLegend, ReadinessCard, TopJobsCard } from "../overview-panels";
 import { ProductivityChart } from "../productivity-chart";
 import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
@@ -41,11 +41,17 @@ export default async function OverviewView(request: TimesheetRequest) {
   // rate table, which is one row per person per rate change.
   const revenue = await getRevenueForFactsService(report.facts);
 
-  // The overview is the whole business, so no person scope. getOverviewService
-  // does not carry a staff dashboard, so the forecast comes from its own call -
-  // one query for capacity, one for rates.
-  const { dashboard } = await getStaffDashboardService(request);
-  const forecast = await getForecastForScopeService(dashboard, period, data.todayIso, revenue, report.facts);
+  // From the report this screen ALREADY has, plus one small targets query.
+  // Fetching a whole staff dashboard for the capacity rebuilt the entire report
+  // a second time and took one render to 36 queries - which, because the filter
+  // tabs disable themselves mid-navigation, read as a tab that hangs.
+  const forecast = await getForecastFromReportService({
+    byPerson: report.byPerson,
+    period,
+    today: data.todayIso,
+    revenue,
+    facts: report.facts,
+  });
 
   const hasData = report.totals.worklogCount > 0;
 

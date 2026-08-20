@@ -3,6 +3,7 @@ import "server-only";
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
 import { listStaffRatesRepo } from "@/lib/data/repositories/staff-rate.repository";
+import { getStaffTargetsRepo } from "@/lib/data/repositories/timesheet.repository";
 import { handleError } from "@/lib/handle-errors";
 import {
   buildBurnUp,
@@ -13,7 +14,8 @@ import {
   type BurnUpPoint,
   type PeriodProgress,
 } from "@/lib/timesheet/forecast";
-import { buildDailyMoney, resolveRateFor } from "@/lib/timesheet/revenue";
+import { buildDailyMoney, resolveRateFor, type StaffRateRow } from "@/lib/timesheet/revenue";
+import { toStaffCapacity, type StaffCapacity } from "@/lib/timesheet/staff-capacity";
 import type { WorklogFactRow } from "@/lib/timesheet/timesheet.types";
 
 import { toRateRows } from "./admin-timesheets-rate.service";
@@ -39,6 +41,10 @@ import type { StaffDashboardDTO, TimesheetPeriodDTO } from "./admin-timesheets.t
 //
 // Neither knows about leave, and public holidays are not in this system at
 // all. That assumption travels on the DTO.
+//
+// TWO ENTRY POINTS, one shared core. They differ only in where the per-person
+// capacity comes from, and that difference is a performance one - see the note
+// on getForecastFromReportService.
 // -------------------------------------------------------------------
 
 export interface ForecastDTO {
@@ -67,14 +73,78 @@ export interface ForecastDTO {
   burnUp: BurnUpPoint[];
 }
 
+// What the core needs per person: their arrangement, and what they have
+// already done in this period.
+interface ForecastPerson {
+  personId: string;
+  daysWorked: number;
+  target: StaffCapacity;
+}
+
+// -------------------------------------------------------------------
+// The cheap entry point, for a screen that has a report but no dashboard.
+//
+// WHY IT EXISTS. The overview used to call getStaffDashboardService purely to
+// read each person's capacity - which rebuilds the ENTIRE report: a second full
+// worklog scan, another issue fetch, and another round of service auth. One
+// overview render reached 36 queries against a remote database, and because the
+// filter tabs disable themselves while a navigation is in flight, that read as
+// a tab that HANGS rather than a page that is slow.
+//
+// Everything needed is already on the report - byPerson carries daysWorked - so
+// this adds one small targets query instead of a whole second report.
+// -------------------------------------------------------------------
+export async function getForecastFromReportService(input: {
+  byPerson: { personId: string; daysWorked: number }[];
+  period: TimesheetPeriodDTO;
+  today: string;
+  revenue: RevenueDTO;
+  facts: WorklogFactRow[];
+  personIds?: string[];
+}): Promise<ForecastDTO> {
+  try {
+    await requireUserRole([USER_ROLES.ADMIN]);
+
+    const [rateRows, targets] = await Promise.all([listStaffRatesRepo(), getStaffTargetsRepo()]);
+
+    const targetByPerson = new Map(targets.map((row) => [row.personId, row]));
+    const workedById = new Map(input.byPerson.map((person) => [person.personId, person]));
+
+    // Everyone with time in the period PLUS anybody with a target who logged
+    // none - the same population the dashboard reports on. A contracted person
+    // who has logged nothing still has committed days ahead, and leaving them
+    // out would understate what the period is going to cost.
+    const ids = new Set<string>([...workedById.keys(), ...targetByPerson.keys()]);
+
+    const people: ForecastPerson[] = [...ids].map((personId) => ({
+      personId,
+      daysWorked: workedById.get(personId)?.daysWorked ?? 0,
+      target: toStaffCapacity(targetByPerson.get(personId) ?? null, personId),
+    }));
+
+    return buildForecast({
+      people,
+      period: input.period,
+      today: input.today,
+      revenue: input.revenue,
+      facts: input.facts,
+      rates: toRateRows(rateRows),
+      personIds: input.personIds ?? [],
+    });
+  } catch (error) {
+    throw handleError("getForecastFromReportService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// For a caller that already holds a staff dashboard, so capacity is to hand
+// and nothing beyond the rates needs reading.
+// -------------------------------------------------------------------
 export async function getForecastForScopeService(
   dashboard: StaffDashboardDTO,
   period: TimesheetPeriodDTO,
   today: string,
   revenue: RevenueDTO,
-  // The rows the screen is showing, for the day-by-day series. The same facts
-  // the revenue totals were computed from, so the chart and the tiles cannot
-  // disagree.
   facts: WorklogFactRow[],
   // The people the question resolved to. Empty means everybody.
   //
@@ -88,91 +158,116 @@ export async function getForecastForScopeService(
   try {
     await requireUserRole([USER_ROLES.ADMIN]);
 
-    const rates = toRateRows(await listStaffRatesRepo());
-    const progress = periodProgress(period.from, period.to, today);
-
-    const scopedPeople =
-      personIds.length > 0
-        ? dashboard.people.filter((person) => personIds.includes(person.personId))
-        : dashboard.people;
-
-    let committedHours = 0;
-    let committedCost = 0;
-    let peopleWithoutCostRate = 0;
-    let prorated = false;
-    let anyCosted = false;
-
-    // Per person, because capacity and rate are both per person. Summing a
-    // blended rate over a headcount would hide exactly the variation that
-    // makes the figure worth having.
-    for (const person of scopedPeople) {
-      const forecast = forecastRemainingCost({
-        from: period.from,
-        to: period.to,
-        today,
-        capacity: person.target,
-        // The days they have ALREADY worked in this period. This is what makes
-        // the remainder exact rather than an average - see the note in
-        // forecastRemainingCost.
-        daysAlreadyWorked: person.daysWorked,
+    return buildForecast({
+      people: dashboard.people.map((person) => ({
         personId: person.personId,
-        rates,
-      });
-
-      committedHours += forecast.committedRemainingHours;
-      if (forecast.proratedAcrossWeekdays) prorated = true;
-
-      if (forecast.committedRemainingCostCents === null) {
-        // Only counts as a gap when there was something left to cost. A
-        // finished period legitimately has no remainder.
-        if (forecast.committedRemainingHours > 0) peopleWithoutCostRate += 1;
-        continue;
-      }
-
-      anyCosted = true;
-      committedCost += forecast.committedRemainingCostCents;
-    }
-
-    // Withheld whenever anybody in scope is missing a rate, the same rule the
-    // valuation uses: a total covering four people of five is not a smaller
-    // number, it is a wrong one.
-    const committedRemainingCostCents =
-      progress.weekdaysRemaining === 0 ? 0 : anyCosted && peopleWithoutCostRate === 0 ? committedCost : null;
-
-    // The actual side has to be known too. If the cost base for work already
-    // done is incomplete, adding a solid remainder to it produces a total
-    // whose error is invisible.
-    const projectedCostCents =
-      revenue.costCents !== null && committedRemainingCostCents !== null
-        ? revenue.costCents + committedRemainingCostCents
-        : null;
-
-    // Hoisted so the chart and the figure are the same number rather than two
-    // calls that could drift.
-    const projectedValueCents = projectValue(revenue, progress, scopedPeople, rates, period, today);
-
-    return {
-      progress,
-      committedRemainingHours: Math.round(committedHours * 100) / 100,
-      committedRemainingCostCents,
-      projectedCostCents,
-      projectedValueCents,
-      peopleWithoutCostRate,
-      assumesNoLeave: true,
-      proratedAcrossWeekdays: prorated,
-      burnUp: buildBurnUp({
-        from: period.from,
-        to: period.to,
-        today,
-        daily: buildDailyMoney(facts, rates),
-        committedRemainingCostCents,
-        projectedValueCents,
-        actualValueCents: revenue.chargeableValueCents,
-      }),
-    };
+        daysWorked: person.daysWorked,
+        target: person.target,
+      })),
+      period,
+      today,
+      revenue,
+      facts,
+      rates: toRateRows(await listStaffRatesRepo()),
+      personIds,
+    });
   } catch (error) {
     throw handleError("getForecastForScopeService", error);
   }
+}
+
+// -------------------------------------------------------------------
+// The shared core. No I/O, so the two entry points cannot drift apart in HOW
+// they forecast - only in where they got the capacity from.
+// -------------------------------------------------------------------
+function buildForecast(input: {
+  people: ForecastPerson[];
+  period: TimesheetPeriodDTO;
+  today: string;
+  revenue: RevenueDTO;
+  facts: WorklogFactRow[];
+  rates: StaffRateRow[];
+  personIds: string[];
+}): ForecastDTO {
+  const { period, today, revenue, rates } = input;
+  const progress = periodProgress(period.from, period.to, today);
+
+  const scopedPeople =
+    input.personIds.length > 0
+      ? input.people.filter((person) => input.personIds.includes(person.personId))
+      : input.people;
+
+  let committedHours = 0;
+  let committedCost = 0;
+  let peopleWithoutCostRate = 0;
+  let prorated = false;
+  let anyCosted = false;
+
+  // Per person, because capacity and rate are both per person. Summing a
+  // blended rate over a headcount would hide exactly the variation that makes
+  // the figure worth having.
+  for (const person of scopedPeople) {
+    const forecast = forecastRemainingCost({
+      from: period.from,
+      to: period.to,
+      today,
+      capacity: person.target,
+      // What makes the remainder exact rather than an average - see the note in
+      // forecastRemainingCost.
+      daysAlreadyWorked: person.daysWorked,
+      personId: person.personId,
+      rates,
+    });
+
+    committedHours += forecast.committedRemainingHours;
+    if (forecast.proratedAcrossWeekdays) prorated = true;
+
+    if (forecast.committedRemainingCostCents === null) {
+      // Only a gap when there was something left to cost. A finished period
+      // legitimately has no remainder.
+      if (forecast.committedRemainingHours > 0) peopleWithoutCostRate += 1;
+      continue;
+    }
+
+    anyCosted = true;
+    committedCost += forecast.committedRemainingCostCents;
+  }
+
+  // Withheld whenever anybody in scope is missing a rate, the same rule the
+  // valuation uses: a total covering four people of five is not a smaller
+  // number, it is a wrong one.
+  const committedRemainingCostCents =
+    progress.weekdaysRemaining === 0 ? 0 : anyCosted && peopleWithoutCostRate === 0 ? committedCost : null;
+
+  // The actual side has to be known too. If the cost base for work already done
+  // is incomplete, adding a solid remainder to it produces a total whose error
+  // is invisible.
+  const projectedCostCents =
+    revenue.costCents !== null && committedRemainingCostCents !== null
+      ? revenue.costCents + committedRemainingCostCents
+      : null;
+
+  const projectedValueCents = projectValue({ revenue, progress, scopedPeople, rates, period, today });
+
+  return {
+    progress,
+    committedRemainingHours: Math.round(committedHours * 100) / 100,
+    committedRemainingCostCents,
+    projectedCostCents,
+    projectedValueCents,
+    peopleWithoutCostRate,
+    assumesNoLeave: true,
+    proratedAcrossWeekdays: prorated,
+    burnUp: buildBurnUp({
+      from: period.from,
+      to: period.to,
+      today,
+      daily: buildDailyMoney(input.facts, rates),
+      committedRemainingCostCents,
+      projectedValueCents,
+      actualValueCents: revenue.chargeableValueCents,
+    }),
+  };
 }
 
 // -------------------------------------------------------------------
@@ -184,48 +279,48 @@ export async function getForecastForScopeService(
 //
 // Withheld until MIN_ELAPSED_FOR_PACE of the period has gone, because a
 // billable share measured over one day of twenty-one is not a share, it is a
-// sample of one - and the resulting figure would sit next to measured ones
-// with nothing to say it was a guess.
+// sample of one - and the resulting figure would sit next to measured ones with
+// nothing to say it was a guess.
 // -------------------------------------------------------------------
-function projectValue(
-  revenue: RevenueDTO,
-  progress: PeriodProgress,
-  // Already scoped by the caller - see the note there about why the full
-  // dashboard list is the wrong input.
-  scopedPeople: StaffDashboardDTO["people"],
-  rates: ReturnType<typeof toRateRows>,
-  period: TimesheetPeriodDTO,
-  today: string,
-): number | null {
+function projectValue(input: {
+  revenue: RevenueDTO;
+  progress: PeriodProgress;
+  scopedPeople: ForecastPerson[];
+  rates: StaffRateRow[];
+  period: TimesheetPeriodDTO;
+  today: string;
+}): number | null {
+  const { revenue, progress } = input;
+
   if (revenue.chargeableValueCents === null) return null;
   if (progress.isComplete) return revenue.chargeableValueCents;
   if (progress.elapsedRatio === null || progress.elapsedRatio < MIN_ELAPSED_FOR_PACE) return null;
   if (revenue.loggedHours <= 0) return null;
 
-  // The share of logged time that has been billable so far. Not the target,
-  // and not an aspiration: what actually happened.
+  // The share of logged time that has been billable so far. Not the target and
+  // not an aspiration: what actually happened.
   const billableShare = revenue.billableHours / revenue.loggedHours;
 
   let remainingValue = 0;
 
-  for (const person of scopedPeople) {
+  for (const person of input.scopedPeople) {
     const forecast = forecastRemainingCost({
-      from: period.from,
-      to: period.to,
-      today,
+      from: input.period.from,
+      to: input.period.to,
+      today: input.today,
       capacity: person.target,
       daysAlreadyWorked: person.daysWorked,
       personId: person.personId,
-      rates,
+      rates: input.rates,
     });
 
     if (forecast.committedRemainingHours <= 0) continue;
 
     // Charge rate resolved at the period end: a future-dated rise inside the
-    // remainder is an edge case the committed-cost path handles day by day,
-    // and doing the same here would imply more precision than an assumed
-    // billable share deserves.
-    const rate = resolveRateFor(rates, person.personId, period.to);
+    // remainder is handled day by day on the committed-cost path, and doing the
+    // same here would imply more precision than an assumed billable share
+    // deserves.
+    const rate = resolveRateFor(input.rates, person.personId, input.period.to);
     if (rate === null) return null;
 
     remainingValue += rate.chargeRateCents * forecast.committedRemainingHours * billableShare;
@@ -234,6 +329,6 @@ function projectValue(
   return revenue.chargeableValueCents + Math.round(remainingValue);
 }
 
-// Re-exported so the answer builder can use the same pace rule without
-// reaching into the engine directly.
+// Re-exported so the answer builder can use the same pace rule without reaching
+// into the engine directly.
 export { forecastFromPace };

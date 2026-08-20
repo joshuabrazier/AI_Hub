@@ -21,9 +21,26 @@ import { ALL_CATEGORIES, type TimesheetFiltersDTO } from "./admin-timesheets.typ
 // every link already in somebody's history keeps working and a single
 // selection still reads as `?person=<id>`.
 // -------------------------------------------------------------------
+// DEFENSIVE ABOUT `people` AND `billable`, deliberately, even though the type
+// says they are always there.
+//
+// This runs inside a startTransition in the filter controls, and a throw there
+// does not surface as an error - it leaves isPending true for ever, and the
+// tabs are disabled while pending. So the failure mode of one undefined field
+// is a filter bar that looks permanently stuck rather than anything that says
+// what went wrong.
+//
+// The realistic way it happens is a version skew: a page rendered by one build
+// being navigated by a client bundle from another, which is ordinary during a
+// deploy. Falling back costs nothing and keeps navigation working.
 export function appendFilterParams(params: URLSearchParams, filters: TimesheetFiltersDTO): void {
-  if (filters.category !== ALL_CATEGORIES) params.set("category", filters.category);
-  if (filters.project !== ALL_CATEGORIES) params.set("project", filters.project);
-  if (filters.people.length > 0) params.set("person", filters.people.join(","));
-  if (filters.billable !== ALL_CATEGORIES) params.set("billable", filters.billable);
+  if (filters.category && filters.category !== ALL_CATEGORIES) params.set("category", filters.category);
+  if (filters.project && filters.project !== ALL_CATEGORIES) params.set("project", filters.project);
+
+  // `person` is the single-value field every older link used, so it is the
+  // fallback when `people` is absent.
+  const people = filters.people ?? (filters.person && filters.person !== ALL_CATEGORIES ? [filters.person] : []);
+  if (people.length > 0) params.set("person", people.join(","));
+
+  if (filters.billable && filters.billable !== ALL_CATEGORIES) params.set("billable", filters.billable);
 }
