@@ -191,3 +191,75 @@ as other methods" and recommend OAuth 2.0 3LO for apps - but 3LO is built around
 a person clicking Allow in a browser, and a timer job at 3am has nobody to click
 it. The service account is the deliberate choice; revisit if Atlassian change
 the deprecation position.
+
+## AI period summaries
+
+The overview and staff screens each carry a Summary panel: press the button and
+the model writes a few paragraphs about the period in view. Optional - with no
+`AWS_BEARER_TOKEN_BEDROCK` the panel does not render at all.
+
+### The model never computes a number
+
+Every figure it is given has already been derived by the pure timesheet engine
+(`capacityHoursForPeriod`, `measureAgainstTarget`, the aggregate pass). It is
+handed the finished DTO the dashboard rendered and asked for sentences about
+it. `admin-timesheets-ai.facts.ts` copies, never calculates.
+
+This is not a style preference. Utilisation is logged hours over a capacity
+prorated by contracted days, and a model working that out from parts will
+sometimes divide by five days for somebody contracted to three - which is the
+exact error the whole staff-target feature exists to prevent. A plausible wrong
+number in the prose next to the right one in the tile discredits both.
+
+Two `staff_target` details are carried through for the same reason:
+`usingCompanyDefault` (so an assumed capacity is called assumed, never stated
+as somebody's arrangement) and each person's contracted days, so the prose can
+name the arrangement it is measuring against.
+
+### Nothing generates on render
+
+`getTimesheetSummaryService` reads the cache and never calls the model, so
+paging between weeks is free. `generateTimesheetSummaryService` is the only
+path that spends, it is behind a button, and it short-circuits when the
+fingerprint already matches - so a double click, a refresh, or two admins on
+one screen cost nothing.
+
+### Staleness is a fingerprint, not an age
+
+`timesheet_ai_summary.data_fingerprint` hashes the **figures** that were
+summarised. The next sync that moves them marks the prose stale, and the panel
+keeps showing it with a badge rather than blanking - "here is what it said, the
+numbers have since moved" is more use than an empty box, and it stops a 3am
+sync erasing something somebody was reading.
+
+The fingerprint deliberately excludes the period label. Hashing presentation
+would mean a copy change invalidated every cached summary at once, at one Opus
+call each to restore.
+
+### What leaves the organisation, and what is kept
+
+The prompt carries named individuals' utilisation and billable share. It is
+admin-only, the region and model are pinned to Australia like the rest of the
+AI features, and **every call is recorded in `ai_chat_request_logs`** with kind
+`timesheet_summary` - readable in full at `/admin/ai-chat-log`, the same place
+chat requests are. No worklog narrative and no raw entry row is ever sent: the
+model sees aggregates and labels.
+
+Cached summaries are swept by the monthly retention job after 30 days
+(`TIMESHEET_AI_SUMMARY_RETENTION_DAYS`, a code constant, not configurable).
+Short on purpose: it is derived data holding prose about how individuals are
+performing, and it regenerates in seconds.
+
+### Untrusted input
+
+Job and project names come from Jira, where staff type them, so they are
+untrusted on the same footing as the attachment filenames `sanitizeDocumentName`
+deals with. They travel inside `BEGIN FACTS` / `END FACTS` markers; the system
+prompt states that content there is data and never instruction; the reply
+renders through `AiChatMarkdown`, which emits React elements rather than an
+HTML string. Nothing the model returns drives control flow.
+
+If a natural-language "custom view" is ever added, the model must return a
+Zod-validated **filter object** that the existing repositories already accept -
+never SQL. Repositories are the only database access in this app, and a model
+emitting SQL would break that rule and open an injection surface in one step.

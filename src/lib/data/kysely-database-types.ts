@@ -111,6 +111,10 @@ export type AiChatRole = (typeof AI_CHAT_ROLES)[keyof typeof AI_CHAT_ROLES];
 export const AI_CHAT_REQUEST_KINDS = {
   CHAT: "chat",
   SUMMARY: "summary",
+  // A timesheet period summary. Not a conversation at all - it has no
+  // subject_id - but it is a call to the model on somebody's behalf, so it
+  // belongs in the same log as the rest of the spend.
+  TIMESHEET_SUMMARY: "timesheet_summary",
 } as const;
 
 export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_CHAT_REQUEST_KINDS];
@@ -118,6 +122,7 @@ export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_C
 export const AI_CHAT_REQUEST_KIND_LABELS: Record<AiChatRequestKind, string> = {
   [AI_CHAT_REQUEST_KINDS.CHAT]: "Reply",
   [AI_CHAT_REQUEST_KINDS.SUMMARY]: "Compaction",
+  [AI_CHAT_REQUEST_KINDS.TIMESHEET_SUMMARY]: "Timesheet summary",
 };
 
 // -------------------------------------------------------------------
@@ -721,6 +726,44 @@ export type NewStaffTarget = Insertable<StaffTargets>;
 export type UpdateStaffTarget = Updateable<StaffTargets>;
 
 // -------------------------------------------------------------------
+// Timesheet AI Summaries
+//
+// A cache of model-written prose about one period and filter combination.
+// Derived data: every row can be thrown away and regenerated, which is why
+// the retention sweep is free to be blunt about it.
+//
+// `dataFingerprint` is what makes a row stale, not `createdAt`. It hashes the
+// FIGURES that were summarised, so the next sync that moves them invalidates
+// the paragraph describing them. See migration 004.
+// -------------------------------------------------------------------
+export interface TimesheetAiSummaries {
+  // Hash of scope + period + filters, and the upsert target.
+  cacheKey: string;
+  scope: string;
+  granularity: string;
+  // `period_start` is a DATE, so it arrives as a 'YYYY-MM-DD' string - see
+  // the type parser note in kysely-database-client.ts. Compare it
+  // lexicographically, never as a Date.
+  periodStart: string;
+  category: string;
+  project: string;
+  person: string;
+  dataFingerprint: string;
+  summary: string;
+  modelId: string;
+  region: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  generatedBy: string | null;
+  createdAt: Generated<Date>;
+}
+
+export type TimesheetAiSummary = Selectable<TimesheetAiSummaries>;
+export type NewTimesheetAiSummary = Insertable<TimesheetAiSummaries>;
+
+// -------------------------------------------------------------------
 // Sync Watermarks
 // Where the last successful run of a sync job reached. Advanced last, inside
 // the same transaction as the writes it describes, so a crash repeats a
@@ -768,4 +811,5 @@ export interface Database {
   worklogFact: WorklogFacts;
   syncWatermark: SyncWatermarks;
   staffTarget: StaffTargets;
+  timesheetAiSummary: TimesheetAiSummaries;
 }

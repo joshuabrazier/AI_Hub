@@ -1,5 +1,7 @@
 import { ROUTES } from "@/lib/routes";
 
+import { getTimesheetSummaryService } from "../admin-timesheets-ai.service";
+import { AiSummaryPanel } from "../ai-summary-panel";
 import { getOverviewService, TimesheetRequest } from "../admin-timesheets.service";
 import { CategorySplitCard, OverviewLegend, ReadinessCard, TopJobsCard } from "../overview-panels";
 import { ProductivityChart } from "../productivity-chart";
@@ -24,6 +26,10 @@ import TimesheetShell, { periodHref } from "../timesheet-shell";
 export default async function OverviewView(request: TimesheetRequest) {
   const { data, overview } = await getOverviewService(request);
   const { period, filters, report, syncStatus, periodTotalHours, periodSeries } = data;
+
+  // Read-only: whatever is already cached for these filters, or nothing.
+  // Rendering a page never calls the model - see the note in the service.
+  const summary = await getTimesheetSummaryService("overview", request);
 
   const hasData = report.totals.worklogCount > 0;
 
@@ -102,6 +108,8 @@ export default async function OverviewView(request: TimesheetRequest) {
               <ReadinessCard readiness={overview.readiness} index={7} />
             </div>
           </div>
+
+          <AiSummaryPanel summary={summary} filters={filters} periodLabel={period.label} index={8} />
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
             <OverviewLegend />

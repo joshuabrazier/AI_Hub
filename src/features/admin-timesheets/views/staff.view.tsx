@@ -1,5 +1,7 @@
 import { ROUTES } from "@/lib/routes";
 
+import { getTimesheetSummaryService } from "../admin-timesheets-ai.service";
+import { AiSummaryPanel } from "../ai-summary-panel";
 import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { StaffList } from "../staff-cards";
 import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
@@ -23,6 +25,10 @@ export default async function StaffView(request: TimesheetRequest) {
   const { period, filters, report, syncStatus, periodTotalHours } = data;
 
   const { totals } = dashboard;
+
+  // Read-only: whatever is already cached for these filters, or nothing.
+  // Rendering a page never calls the model - see the note in the service.
+  const summary = await getTimesheetSummaryService("staff", request);
   const hasAnyone = dashboard.people.length > 0;
 
   return (
@@ -78,6 +84,8 @@ export default async function StaffView(request: TimesheetRequest) {
           </div>
 
           <StaffList people={dashboard.people} filters={filters} />
+
+          <AiSummaryPanel summary={summary} filters={filters} periodLabel={period.label} index={4} />
 
           {report.totals.worklogCount === 0 && (
             <EmptyState syncStatus={syncStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
