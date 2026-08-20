@@ -20,7 +20,10 @@ import type { AdminTimesheetsDTO, OverviewDTO, StaffDashboardDTO, StaffSummaryDT
 const MAX_PEOPLE_IN_PROMPT = 12;
 const MAX_JOBS_IN_PROMPT = 8;
 
-function personFacts(person: StaffSummaryDTO): SummaryPersonFacts {
+// Exported because the report builder needs the same mapping with a different
+// cap. The mapping is the part that must not diverge; how many rows each
+// caller wants is its own business.
+export function toPersonFacts(person: StaffSummaryDTO): SummaryPersonFacts {
   return {
     name: person.personName,
     loggedHours: roundHours(person.loggedHours),
@@ -71,7 +74,7 @@ export function buildStaffFacts(data: AdminTimesheetsDTO, dashboard: StaffDashbo
       peopleCount: dashboard.totals.peopleCount,
       worklogCount: data.report.totals.worklogCount,
     },
-    people: ranked.slice(0, MAX_PEOPLE_IN_PROMPT).map(personFacts),
+    people: ranked.slice(0, MAX_PEOPLE_IN_PROMPT).map(toPersonFacts),
     subject: null,
     days: [],
     jobs: [],
@@ -185,7 +188,7 @@ export function buildPersonFacts(
       worklogCount: person.worklogCount,
     },
     people: [],
-    subject: personFacts(person),
+    subject: toPersonFacts(person),
     days: data.report.byPersonDay.map((day) => ({
       date: day.workDate,
       weekday: weekdayName(day.workDate),

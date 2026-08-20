@@ -61,6 +61,7 @@ export const ROUTES = {
   ADMIN_TIMESHEETS_JOBS: "/admin/timesheets/jobs",
   ADMIN_TIMESHEETS_STAFF: "/admin/timesheets/staff",
   ADMIN_TIMESHEETS_REVIEW: "/admin/timesheets/review",
+  ADMIN_TIMESHEETS_REPORTS: "/admin/timesheets/reports",
   ADMIN_TIMESHEETS_EXPORT: "/admin/timesheets/export",
 
   // Manager area. Every one of these is scoped server-side to the teams the

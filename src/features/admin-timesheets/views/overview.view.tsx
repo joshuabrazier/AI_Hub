@@ -1,6 +1,7 @@
 import { ROUTES } from "@/lib/routes";
 
 import { getOverviewSummaryService } from "../admin-timesheets-ai.service";
+import { ReportCreateDialog } from "../report-create-dialog";
 import { AiSummaryPanel } from "../ai-summary-panel";
 import { getOverviewService, TimesheetRequest } from "../admin-timesheets.service";
 import { CategorySplitCard, OverviewLegend, ReadinessCard, TopJobsCard } from "../overview-panels";
@@ -47,6 +48,14 @@ export default async function OverviewView(request: TimesheetRequest) {
         </>
       ) : (
         <>
+          <div className="flex flex-wrap items-center gap-2">
+            <ReportCreateDialog
+              filters={filters}
+              periodLabel={period.label}
+              disabled={!summary.available}
+            />
+          </div>
+
           {/* The four headline figures. Utilisation is against contracted
               capacity, so a part-time team is not reported as underperforming. */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
