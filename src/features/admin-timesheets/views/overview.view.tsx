@@ -2,6 +2,7 @@ import { ROUTES } from "@/lib/routes";
 
 import { getOverviewSummaryService } from "../admin-timesheets-ai.service";
 import { ReportCreateDialog } from "../report-create-dialog";
+import { TimesheetAskBox } from "../timesheet-ask-box";
 import { AiSummaryPanel } from "../ai-summary-panel";
 import { getOverviewService, TimesheetRequest } from "../admin-timesheets.service";
 import { CategorySplitCard, OverviewLegend, ReadinessCard, TopJobsCard } from "../overview-panels";
@@ -48,7 +49,11 @@ export default async function OverviewView(request: TimesheetRequest) {
         </>
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <TimesheetAskBox filters={filters} disabled={!summary.available} />
+            </div>
+
             <ReportCreateDialog
               filters={filters}
               periodLabel={period.label}

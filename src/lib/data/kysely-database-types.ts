@@ -119,6 +119,9 @@ export const AI_CHAT_REQUEST_KINDS = {
   // than a summary, and an admin reading the log should be able to see which
   // of the two spent the tokens.
   TIMESHEET_REPORT: "timesheet_report",
+  // Turning a typed question into dashboard filters. Small and frequent, where
+  // a report is large and rare - telling them apart in the log is the point.
+  TIMESHEET_QUERY: "timesheet_query",
 } as const;
 
 export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_CHAT_REQUEST_KINDS];
@@ -128,6 +131,7 @@ export const AI_CHAT_REQUEST_KIND_LABELS: Record<AiChatRequestKind, string> = {
   [AI_CHAT_REQUEST_KINDS.SUMMARY]: "Compaction",
   [AI_CHAT_REQUEST_KINDS.TIMESHEET_SUMMARY]: "Timesheet summary",
   [AI_CHAT_REQUEST_KINDS.TIMESHEET_REPORT]: "Timesheet report",
+  [AI_CHAT_REQUEST_KINDS.TIMESHEET_QUERY]: "Timesheet question",
 };
 
 // -------------------------------------------------------------------
