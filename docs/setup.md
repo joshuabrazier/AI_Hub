@@ -38,7 +38,7 @@ anything is missing or malformed.
 | --- | --- | --- |
 | `NEXT_PUBLIC_APP_TITLE` | yes | |
 | `NEXT_PUBLIC_APP_DESCRIPTION` | yes | |
-| `NEXT_PUBLIC_APP_URL` | yes | full URL including scheme and port, e.g. `http://localhost:3100`. Source of truth for the port - see "Changing the port" below |
+| `NEXT_PUBLIC_APP_URL` | yes | full URL including scheme and port, e.g. `http://localhost:3000`. Source of truth for the port - see "Changing the port" below |
 | `NEXT_PUBLIC_APP_TIME_ZONE` | no | IANA zone the app renders dates and times in. Defaults to `Australia/Adelaide`. Set it deliberately per project - see `src/lib/timezone.ts`. |
 | `NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX` | yes | non-empty |
 | `NEXT_PUBLIC_PASSWORD_MIN_LENGTH` | yes | keep in sync with the server (8) |
@@ -49,6 +49,7 @@ anything is missing or malformed.
 | Variable | Notes |
 | --- | --- |
 | `E2E_OUTPUT_DIR` | Playwright artefact directory. Keep it OFF any OneDrive-synced path (OneDrive locks files, causing `EPERM`). Defaults to the OS temp dir. |
+| `DEV_PASSWORD_SIGN_IN` | `true` opens a password form on /sign-in so the app runs without Entra. **Local development only** - ignored unless `MODE` is `development` or `test`. See "Without Entra" below. |
 
 > **Warning:** `BETTER_AUTH_SECRET` and `FIELD_ENCRYPTION_KEY` decrypt existing
 > encrypted data and 2FA secrets. Once real data exists, changing either breaks
@@ -66,21 +67,66 @@ Apply it to your database:
 psql "$DATABASE_URL" -f src/lib/data/sql/database-schema.sql
 ```
 
-There is no seed file, so no credentials are ever committed. Sign-up is
-invite-only, so bootstrap the first admin account directly:
+There is no seed file, so no credentials are ever committed.
+
+## 3a. Getting a first account
+
+Sign-in is Microsoft (Entra) only, and new accounts are always members. So a
+fresh database has no admin, and there is no in-app way to make one. Which
+route you take depends on whether you have an Entra app registration yet.
+
+### With Entra configured (the real path)
+
+Set `MICROSOFT_CLIENT_ID` / `MICROSOFT_TENANT_ID` / `MICROSOFT_CLIENT_SECRET`,
+register `http://localhost:3000/api/auth/callback/microsoft` as a redirect URI
+on the app registration, and sign in once - which auto-provisions you as a
+member. Then promote yourself:
 
 ```bash
 ADMIN_EMAIL=you@example.com node --env-file=.env scripts/promote-admin.mjs
 ```
 
-It prints a generated password once, makes no changes if that email already
-exists, and is safe to run against any environment. Sign in, complete the
-mandatory staff 2FA setup, then change the password in Settings.
+It changes nothing if the account is already an admin, and refuses politely if
+no account exists yet - because until somebody signs in, there is nothing to
+promote. A row inserted by hand could not work: it would have no linked Entra
+identity.
+
+### Without Entra (local development only)
+
+With no `MICROSOFT_*` variables the sign-in page has no button on it, so the
+app cannot be run at all. Two steps open a password door instead:
+
+```bash
+# 1. in .env
+DEV_PASSWORD_SIGN_IN=true
+
+# 2. create the account (PowerShell)
+$env:DEV_USER_EMAIL = "you@example.com"
+$env:DEV_USER_ROLE  = "admin"
+node --env-file=.env scripts/create-dev-user.mjs
+```
+
+It prints the generated password once, or uses `DEV_USER_PASSWORD` if you set
+one. Re-running it for the same address resets the password and role rather
+than failing, so it doubles as the password reset the app does not have.
+Restart the dev server after changing the flag - it is read at import time.
+
+Both halves are required and neither is sufficient: the flag is the deliberate
+opt-in, and `MODE` not being `production` is the backstop for an `.env` being
+copied somewhere it should not be. `scripts/create-dev-user.mjs` refuses to run
+against `MODE=production` for the same reason.
+
+**What this costs.** While the flag is on, an account can be signed into without
+Entra ever seeing it, which is the whole reason the app normally has a single
+front door. Nothing else is relaxed - the domain allowlist still gates account
+creation, deactivated accounts are still refused, and sign-ins are still
+audited - and the sign-in page says on screen that the form is a development
+one. Do not set it on anything deployed.
 
 ## 4. Run
 
 ```bash
-pnpm dev          # dev server at http://localhost:3100
+pnpm dev          # dev server at http://localhost:3000
 ```
 
 | Script | Purpose |
@@ -94,13 +140,15 @@ pnpm dev          # dev server at http://localhost:3100
 | `pnpm test:e2e` | end-to-end tests (Playwright) |
 | `pnpm test:all` | unit + end-to-end |
 | `node --env-file=.env scripts/check-bedrock.mjs` | confirm the AI chat key, region and model work |
+| `node --env-file=.env scripts/promote-admin.mjs` | make an existing account an admin (needs `ADMIN_EMAIL`) |
+| `node --env-file=.env scripts/create-dev-user.mjs` | create a local password account (needs `DEV_USER_EMAIL`; local development only) |
 
 Type-check with `pnpm exec tsc --noEmit`.
 
 ### Changing the port
 
-The app runs on **3100** by default, chosen to stay clear of the 3000-3002 range
-most other local servers grab. Changing it takes two edits, and they must agree:
+The app runs on **3000** by default. Changing it takes two edits, and they must
+agree:
 
 1. `NEXT_PUBLIC_APP_URL` in `.env` - include the port, e.g. `http://localhost:4000`
 2. the `-p` flag on **both** the `dev` and `start` scripts in `package.json`

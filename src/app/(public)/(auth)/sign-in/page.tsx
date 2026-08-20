@@ -1,5 +1,5 @@
 import { SignInPage } from "@/features/sign-in/sigin-in.page";
-import { isMicrosoftSignInConfigured } from "@/lib/auth/account-creation-policy";
+import { isMicrosoftSignInConfigured, isPasswordSignInEnabled } from "@/lib/auth/account-creation-policy";
 
 // -------------------------------------------------------------------
 // /sign-in
@@ -20,6 +20,7 @@ export default async function Page({
   return (
     <SignInPage
       microsoftEnabled={isMicrosoftSignInConfigured()}
+      passwordEnabled={isPasswordSignInEnabled()}
       refused={typeof params.error === "string" && params.error.length > 0}
     />
   );

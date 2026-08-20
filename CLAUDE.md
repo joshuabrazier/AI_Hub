@@ -26,7 +26,7 @@ Because it is a base, two things matter more than usual:
 
 ## Commands
 
-- `pnpm dev` - dev server at <http://localhost:3100> (the port is set in the `dev`/`start` scripts and must match `NEXT_PUBLIC_APP_URL`)
+- `pnpm dev` - dev server at <http://localhost:3000> (the port is set in the `dev`/`start` scripts and must match `NEXT_PUBLIC_APP_URL`)
 - `pnpm build` / `pnpm start` - production build / serve
 - `pnpm lint` - ESLint
 - `pnpm test` - unit tests (Vitest, co-located as `src/**/*.test.ts`)
@@ -115,7 +115,8 @@ serving bytes, so the actions rule never applied to it.)
 - **Calendar dates are `'YYYY-MM-DD'` strings, not `Date`.** The pg type parser in `src/lib/data/kysely-database-client.ts` maps Postgres `DATE` to a string on purpose (timezone-safe, React-renderable), and `TIME` to `'HH:MM:SS'`. No table currently has a `DATE` column, but the parser stays so the first one a project adds is safe by default. Type such columns as `string` and compare lexicographically.
 - **The app timezone is `NEXT_PUBLIC_APP_TIME_ZONE`**, read once in `src/lib/timezone.ts` as `APP_TIME_ZONE`. Never hardcode a zone, and never use `new Date()` to decide what calendar day it is - derive it in the app zone (`formatDateTime` in `src/lib/format.ts` is the pattern).
 - **Roles are server-assigned.** `role` / `isActive` are `input:false` in Better Auth - never accept them from the client.
-- **Sign-in is Microsoft (Entra) ONLY.** `emailAndPassword` is disabled, and the forgot/reset/accept-invite/change-password/2FA surfaces are gone with it - Entra owns credentials and MFA. The operational consequence is real: an expired Entra client secret locks everyone out, admins included, and the fix is in Azure. Diarise it.
+- **Sign-in is Microsoft (Entra) ONLY.** The forgot/reset/accept-invite/change-password/2FA surfaces are gone with it - Entra owns credentials and MFA. The operational consequence is real: an expired Entra client secret locks everyone out, admins included, and the fix is in Azure. Diarise it. Because Entra owns MFA and the enrolment screens are gone, the proxy has **no 2FA gate** - one could only redirect staff to a `/setup-2fa` page that does not exist.
+- **The one exception is `DEV_PASSWORD_SIGN_IN`, and it is local-only by construction.** `emailAndPassword` is enabled when that flag is set AND `MODE` is not `production` (`isPasswordSignInEnabled`) - two conditions because an `.env` gets copied. It exists because with no `MICROSOFT_*` variables the sign-in page has no button on it and the app cannot be run at all. It opens a door and hands out no keys: no sign-up, no reset, accounts come from `scripts/create-dev-user.mjs`, and the domain allowlist / deactivated-account check / audit log all still apply. Never set it on a deployed environment.
 - **The app AUTO-PROVISIONS.** Anyone in the tenant on `AUTH_ALLOWED_EMAIL_DOMAINS` gets an account as `member` on first sign-in. That allowlist is the entire access boundary - unset means *no restriction*. It is enforced in `databaseHooks.user.create.before`, the database layer, so it holds for every path.
 - **An invitation is no longer a gate, it is a pre-assignment.** A pending invitation matching the address Entra verified sets the role and team the person lands with (`apply-invitation.ts`); without one they land as a member in no team.
 - **`requireUser` redirects an incomplete profile to `/welcome`.** `users.profile_completed_at` is NULL until first-run setup is done. Anything that must work *during* setup uses `requireSessionUserAllowingSetup` instead, or it redirects to itself.

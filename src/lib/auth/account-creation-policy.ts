@@ -1,5 +1,6 @@
 import "server-only";
 
+import { SITE_MODES } from "@/lib/constants";
 import { envServer } from "@/lib/env-server";
 
 // -------------------------------------------------------------------
@@ -66,4 +67,22 @@ export function isMicrosoftSignInConfigured(): boolean {
   return Boolean(
     envServer.MICROSOFT_CLIENT_ID && envServer.MICROSOFT_CLIENT_SECRET && envServer.MICROSOFT_TENANT_ID,
   );
+}
+
+// -------------------------------------------------------------------
+// Whether password sign-in is available - LOCAL DEVELOPMENT ONLY.
+//
+// Both conditions are required. DEV_PASSWORD_SIGN_IN is the deliberate
+// opt-in; MODE not being production is the backstop for the opt-in having
+// been copied somewhere it should not be. An .env is exactly the kind of
+// file that gets copied, so the flag on its own would be one careless paste
+// away from a password door in production.
+//
+// Read from one place because auth.ts registers the provider from it and the
+// sign-in page decides what to render from it. Two independent checks could
+// disagree, and the failure mode is a form that posts to an endpoint that is
+// not there.
+// -------------------------------------------------------------------
+export function isPasswordSignInEnabled(): boolean {
+  return envServer.DEV_PASSWORD_SIGN_IN && envServer.MODE !== SITE_MODES.PRODUCTION;
 }

@@ -175,9 +175,10 @@ const serverEnvSchema = z.object({
   // -------------------------------------------------------------------
   // Microsoft sign-in (Entra ID)
   //
-  // Optional. With these unset the app is email-and-password only and the
-  // "Continue with Microsoft" button does not render, so a project that
-  // does not use Entra is unaffected.
+  // Optional to the schema, but in a real deployment it is the ONLY way in:
+  // with these unset the "Continue with Microsoft" button does not render
+  // and, unless DEV_PASSWORD_SIGN_IN is on below, the sign-in page has
+  // nothing on it. That is a misconfiguration, not a supported mode.
   //
   // TENANT_ID should be the organisation's own tenant GUID, never
   // "common" - "common" lets ANY Microsoft account in the world reach the
@@ -187,6 +188,28 @@ const serverEnvSchema = z.object({
   MICROSOFT_CLIENT_ID: z.string().min(1).optional(),
   MICROSOFT_CLIENT_SECRET: z.string().min(1).optional(),
   MICROSOFT_TENANT_ID: z.string().min(1).optional(),
+
+  // -------------------------------------------------------------------
+  // Password sign-in, for LOCAL DEVELOPMENT ONLY.
+  //
+  // Microsoft is the single front door in any real environment. This opens
+  // a second one so the app can be run locally without an Entra app
+  // registration - useful before one exists, and for working offline.
+  //
+  // TWO conditions are required and this variable is only one of them: see
+  // isPasswordSignInEnabled in account-creation-policy.ts, which also
+  // requires MODE to not be production. A variable copied into a
+  // production environment by accident must not be able to open a password
+  // door, so neither check is sufficient alone.
+  //
+  // What it opens is a real password door, not a mock: accounts are created
+  // by scripts/create-dev-user.mjs, and the domain allowlist, the
+  // deactivated-account check and the audit log all still apply.
+  // -------------------------------------------------------------------
+  DEV_PASSWORD_SIGN_IN: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
 
   // -------------------------------------------------------------------
   // Email domain allowlist
@@ -246,6 +269,7 @@ export const envServer = serverEnvSchema.parse({
   MICROSOFT_CLIENT_ID: process.env.MICROSOFT_CLIENT_ID,
   MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,
   MICROSOFT_TENANT_ID: process.env.MICROSOFT_TENANT_ID,
+  DEV_PASSWORD_SIGN_IN: process.env.DEV_PASSWORD_SIGN_IN,
   AUTH_ALLOWED_EMAIL_DOMAINS: process.env.AUTH_ALLOWED_EMAIL_DOMAINS,
   // Every key the schema declares must be listed here too. Zod only ever sees
   // this object, so a variable declared above and omitted below is silently

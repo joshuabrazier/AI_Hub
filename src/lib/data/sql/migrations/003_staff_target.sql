@@ -55,4 +55,6 @@ CREATE TABLE staff_target (
     )
 );
 
+INSERT INTO schema_migrations (filename) VALUES ('003_staff_target.sql');
+
 COMMIT;

@@ -34,17 +34,27 @@ export async function proxy(request: NextRequest) {
   const role = session.user.role as UserRole;
   const home = roleHome(role);
 
-  // Staff must have 2FA enrolled before reaching an internal area. Members are
-  // exempt, for whom it is optional.
   const isStaff = (STAFF_ROLES as readonly UserRole[]).includes(role);
-  const twoFactorEnabled = Boolean((session.user as { twoFactorEnabled?: boolean }).twoFactorEnabled);
+
+  // -------------------------------------------------------------------
+  // NO 2FA ENROLMENT GATE HERE, and that is the second half of "sign-in is
+  // Microsoft only".
+  //
+  // Entra owns credentials AND MFA. The app's own 2FA enrolment screens went
+  // when passwords did, so there is no /setup-2fa page left to send anybody
+  // to - a gate here could only ever redirect staff to a 404, locking every
+  // admin out of the area it was meant to protect. Nothing sets
+  // users.two_factor_enabled either, since only those screens ever did.
+  //
+  // The twoFactor plugin stays registered in auth.ts so the capability and
+  // its table survive for a project that wants to bring the enrolment screens
+  // back. If one does, this check belongs here again - and the screen has to
+  // exist before the redirect does.
+  // -------------------------------------------------------------------
 
   if (isAdminRoute(pathname)) {
     if (role !== USER_ROLES.ADMIN) {
       return NextResponse.redirect(new URL(home, request.url));
-    }
-    if (!twoFactorEnabled) {
-      return NextResponse.redirect(new URL(ROUTES.SETUP_TWO_FACTOR, request.url));
     }
     return NextResponse.next();
   }
@@ -52,9 +62,6 @@ export async function proxy(request: NextRequest) {
   if (isManageRoute(pathname)) {
     if (!isStaff) {
       return NextResponse.redirect(new URL(home, request.url));
-    }
-    if (!twoFactorEnabled) {
-      return NextResponse.redirect(new URL(ROUTES.SETUP_TWO_FACTOR, request.url));
     }
     return NextResponse.next();
   }
@@ -77,9 +84,9 @@ export async function proxy(request: NextRequest) {
 // `/admin/:path*` also matches bare `/admin` (the trailing group is
 // zero-or-more), and the same holds for the other two areas.
 //
-// /settings, /onboarding and /setup-2fa are deliberately NOT listed: each
-// guards itself server-side with requireUser. Adding them here would mean a
-// second session lookup per request for no extra safety.
+// /settings, /welcome and the other standalone pages are deliberately NOT
+// listed: each guards itself server-side with requireUser. Adding them here
+// would mean a second session lookup per request for no extra safety.
 // -------------------------------------------------------------------
 export const config = {
   matcher: ["/admin/:path*", "/manage/:path*", "/portal/:path*"],

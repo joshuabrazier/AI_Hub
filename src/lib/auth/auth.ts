@@ -11,7 +11,7 @@ import { sendTwoFactorOtpEmail, sendVerificationEmail } from "../email/send-emai
 import { deleteSessionsByUserIdRepo } from "../data/repositories/sessions.repository";
 import { getUserByUserIdRepo } from "../data/repositories/users.repository";
 import { accessControl, impersonatorOnly } from "./auth-permissions";
-import { isEmailDomainAllowed } from "./account-creation-policy";
+import { isEmailDomainAllowed, isPasswordSignInEnabled } from "./account-creation-policy";
 import { applyInvitationOnFirstSignIn } from "./apply-invitation";
 import { recordAuthAuditEvent } from "../audit/auth-audit";
 import { AUDIT_ACTIONS } from "../audit/audit-log.types";
@@ -180,26 +180,34 @@ export const auth = betterAuth({
       : undefined,
 
   // -------------------------------------------------------------------
-  // Email and Password
-  // -------------------------------------------------------------------
-  // -------------------------------------------------------------------
-  // Email and password: OFF.
+  // Email and password: OFF in production, opt-in locally.
   //
-  // Microsoft is the only way in. Turning this back on is a one-line change
-  // here, but note what it would mean: an account could then be created or
-  // signed into without Entra ever seeing it, which is the whole reason
-  // this is a single front door.
+  // Microsoft is the only way into a real environment. Password sign-in is
+  // registered only when DEV_PASSWORD_SIGN_IN is set AND MODE is not
+  // production - see isPasswordSignInEnabled. It exists because without an
+  // Entra app registration the sign-in page has no button on it and there is
+  // no way in at all, which makes the app unrunnable locally.
   //
-  // THE OPERATIONAL RISK THIS CREATES, stated plainly because it is not
-  // visible from the code: if the Entra client secret expires or the app
-  // registration breaks, NOBODY can sign in, including admins, and the fix
-  // is in Azure rather than in this app. Diarise the secret's expiry.
+  // WHAT IT COSTS, stated plainly: while it is on, an account can be signed
+  // into without Entra ever seeing it, which is the whole reason this is
+  // normally a single front door. Nothing else is relaxed - the domain
+  // allowlist still gates account creation, the deactivated-account check
+  // still runs, and sign-ins are still audited - but the door is no longer
+  // single, so do not turn it on anywhere that matters.
   //
-  // The settings below are retained rather than deleted so re-enabling is
-  // one flag, and because they still bound what Better Auth would accept.
+  // There is no sign-up surface and no password-reset surface, and adding
+  // one is not the intent. A local account is created by
+  // scripts/create-dev-user.mjs, which writes the credential row directly.
+  // So the flag opens a door; it does not hand out keys, and a project that
+  // never runs that script gains nothing by setting it.
+  //
+  // THE OPERATIONAL RISK ON THE ENTRA SIDE is unchanged and is not visible
+  // from the code: if the Entra client secret expires or the app
+  // registration breaks, NOBODY can sign in to production, including admins,
+  // and the fix is in Azure rather than in this app. Diarise the expiry.
   // -------------------------------------------------------------------
   emailAndPassword: {
-    enabled: false,
+    enabled: isPasswordSignInEnabled(),
     // Keep the server-side password bounds in sync with the client Zod schemas
     minPasswordLength: PASSWORD_MIN_LENGTH,
     maxPasswordLength: PASSWORD_MAX_LENGTH,
