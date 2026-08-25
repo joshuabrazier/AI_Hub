@@ -32,11 +32,11 @@ export default async function TranscriptionPage({
     <PortalPage
       eyebrow={eyebrow}
       title="Transcription"
-      // Says plainly what happens to the recording, because deleting it is
-      // a promise rather than an implementation detail - and because it is
-      // the answer to the question somebody is about to ask before they
-      // record a meeting.
-      description="Record a meeting or upload one, and get a transcript and a summary. Your transcriptions are private from other users, and the recording is deleted once its transcript is saved."
+      // Says plainly how long a recording is kept, because that is the
+      // question somebody is entitled to an answer to before they record a
+      // room full of people - and because "private from other users" is a
+      // promise the app has to keep rather than a nicety.
+      description="Record a meeting or upload one, and get a transcript and a summary. Your transcriptions are private from other users, and the recording is kept so you can download it."
     >
       <TranscriptionWorkspace page={page} />
     </PortalPage>

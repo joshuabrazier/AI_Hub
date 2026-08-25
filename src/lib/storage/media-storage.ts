@@ -30,11 +30,13 @@ import { envServer } from "@/lib/env-server";
 // another blob. The worst a leaked one does is let somebody overwrite a
 // file whose exact name they already knew, inside a short window.
 //
-// NOTHING HANDS OUT A READ URL. There is deliberately no way to play or
-// download a recording back: the transcript is the product, and the audio
-// is the most sensitive thing this feature ever holds. It is deleted as
-// soon as its transcript is safely stored - see the service - so for a
-// finished transcription there is no file left to serve anyway.
+// NOTHING HANDS OUT A READ URL, and that asymmetry is the point. A
+// recording CAN be downloaded, but it is streamed back through the app's
+// own download route, never signed. An upload SAS is write-only, scoped to
+// one blob that does not exist yet, and worthless without the exact name; a
+// read URL would be a bearer token for the recording of a private meeting,
+// working for anybody who came across it long after the session that
+// produced it had gone.
 // -------------------------------------------------------------------
 
 // One blob per transcription, namespaced by owner. The owner prefix keeps
@@ -242,6 +244,40 @@ export async function getMediaInfo(key: string): Promise<{ exists: boolean; byte
   const properties = await blob.getProperties();
 
   return { exists: true, byteSize: properties.contentLength ?? null };
+}
+
+// -------------------------------------------------------------------
+// Open a recording for reading, as a STREAM.
+//
+// Streamed rather than buffered, and that is not a detail: chat attachments
+// are read into memory because they are at most 4.5 MB, whereas a meeting
+// recording is hundreds. Reading one of those into a Buffer to hand to a
+// Response would hold the whole file in the instance's memory for the
+// length of the transfer, and two people downloading at once could take the
+// process down.
+//
+// Null when the blob is gone - a row whose recording has aged out, or one
+// transcribed before recordings were kept.
+// -------------------------------------------------------------------
+export async function openMediaStream(key: string): Promise<{
+  stream: NodeJS.ReadableStream;
+  byteSize: number | null;
+  mediaType: string | null;
+} | null> {
+  const container = await getContainer();
+  const blob = container.getBlockBlobClient(key);
+
+  if (!(await blob.exists())) return null;
+
+  const download = await blob.download();
+
+  if (!download.readableStreamBody) return null;
+
+  return {
+    stream: download.readableStreamBody,
+    byteSize: download.contentLength ?? null,
+    mediaType: download.contentType ?? null,
+  };
 }
 
 // -------------------------------------------------------------------

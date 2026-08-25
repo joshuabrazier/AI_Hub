@@ -421,8 +421,8 @@ export function TranscriptionRecorder({
 
       {state === "idle" ? (
         <p className="mt-4 max-w-sm text-xs text-muted-foreground">
-          The audio is saved on this device as you record, uploaded when you press stop, then deleted once the
-          transcript is saved. If anything goes wrong, the recording is still here.
+          The audio is saved on this device as you record, and uploaded when you press stop. If anything goes
+          wrong, the recording is still here.
         </p>
       ) : null}
     </div>

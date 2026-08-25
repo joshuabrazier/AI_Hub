@@ -33,6 +33,7 @@ import {
 } from "@/lib/data/repositories/transcriptions.repository";
 import { envServer } from "@/lib/env-server";
 import { DisplayErrorMessage } from "@/lib/errors";
+import { safeDownloadName } from "@/lib/download-blob";
 import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
@@ -44,6 +45,7 @@ import {
   isMediaStorageConfigured,
   mediaBlobUrl,
   mediaStorageKey,
+  openMediaStream,
 } from "@/lib/storage/media-storage";
 import {
   deleteTranscriptionJob,
@@ -58,6 +60,7 @@ import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from ".
 import {
   MAX_MEDIA_BYTES,
   TRANSCRIPTION_TIMEOUT_HOURS,
+  extensionForMediaType,
   formatTimestamp,
   mediaTypeForFileName,
   speakerLabel,
@@ -94,11 +97,11 @@ import {
 // hundreds of megabytes; proxying that through this app would tie up an
 // instance for the length of the transfer. See media-storage.ts.
 //
-// THE MEDIA IS DELETED THE MOMENT ITS TRANSCRIPT IS SAFE. The transcript is
-// what the person wanted, the audio is the most sensitive thing this feature
-// ever holds, and keeping it would mean paying to store meetings forever. A
-// FAILED job keeps its file on purpose - that is the one case where being
-// able to try again matters, and a meeting cannot be re-recorded.
+// THE RECORDING IS KEPT for the retention window, and can be downloaded.
+// The transcript is the deliverable, but speech recognition makes mistakes,
+// so being able to hear what was actually said is worth the storage - which
+// at any realistic volume is pennies a month. It is served by streaming it
+// back through this app, never as a signed URL; see the download route.
 // -------------------------------------------------------------------
 
 // The feature is mounted in all three areas, so a change has to refresh all
@@ -571,16 +574,17 @@ async function advanceTranscription(
   // now that ours is stored. Best-effort by design - see the client.
   await deleteTranscriptionJob(transcription.speechJobId);
 
-  // And the recording itself. This is the point the audio stops being worth
-  // its risk: the transcript is in the database, and a meeting recording is
-  // the most sensitive thing this feature touches. Guarded rather than
-  // awaited blindly - a storage failure here must not fail a transcript that
-  // is already safe, and the reconciliation pass collects what is left.
-  try {
-    await deleteMedia(stored.storageKey);
-  } catch (error) {
-    console.error(`advanceTranscription: could not delete the media for ${stored.id}`, error);
-  }
+  // THE RECORDING IS KEPT. It used to be deleted here, on the reasoning that
+  // the transcript was the deliverable and the audio was the most sensitive
+  // thing this feature holds - but that traded away something people
+  // actually want (the audio of their own meeting) for a cost that turned
+  // out to be pennies a month, and for a transcript that automatic speech
+  // recognition guarantees will contain mistakes. Being able to go back to
+  // what was actually said is worth more than the storage.
+  //
+  // It is not kept forever: TRANSCRIPTION_RETENTION_DAYS removes the row and
+  // its recording together, deleting a transcription clears the blob first,
+  // and the reconciliation pass collects anything a cascade orphaned.
 
   // The transcript is safe. If this caller may not spend a model call, stop
   // here and let the poll finish the job - the row is already in
@@ -978,6 +982,50 @@ export async function deleteTranscriptionService(requestDTO: TranscriptionIdRequ
     revalidateTranscriptionViews();
   } catch (error) {
     throw handleError("deleteTranscriptionService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The recording itself, for download.
+//
+// Returns an open STREAM rather than bytes. A meeting recording is hundreds
+// of megabytes and reading one into memory to hand back would hold all of
+// it in the instance for the length of the transfer.
+//
+// Null when the recording is gone - a row whose media has aged out, or one
+// transcribed back when recordings were deleted on success. The caller
+// answers 404, which is what it looks like from the reader's side.
+// -------------------------------------------------------------------
+export async function getTranscriptionMediaService(requestDTO: TranscriptionIdRequestDTO): Promise<{
+  stream: NodeJS.ReadableStream;
+  mediaType: string;
+  byteSize: number | null;
+  fileName: string;
+} | null> {
+  try {
+    const user = await requireUser();
+
+    // Ownership FIRST. Storage is only touched once the row has been proved
+    // to be this caller's, so an id that is not theirs never reaches a blob.
+    const transcription = await requireOwnedTranscription(requestDTO.transcriptionId, user.id);
+
+    if (!isMediaStorageConfigured()) return null;
+
+    const media = await openMediaStream(transcription.storageKey);
+
+    if (!media) return null;
+
+    return {
+      stream: media.stream,
+      // The type recorded on the row, which the server derived from the
+      // filename at upload - never the one storage reports back, which is
+      // whatever the browser set on the blob.
+      mediaType: transcription.mediaType,
+      byteSize: media.byteSize ?? transcription.byteSize,
+      fileName: `${safeDownloadName(transcription.title, "")}${extensionForMediaType(transcription.mediaType)}`,
+    };
+  } catch (error) {
+    throw handleError("getTranscriptionMediaService", error);
   }
 }
 

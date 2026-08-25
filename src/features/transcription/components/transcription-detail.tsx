@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { Download, FileText, Loader2, RefreshCw, Sparkles, TriangleAlert } from "lucide-react";
+import { AudioLines, FileText, Loader2, RefreshCw, Sparkles, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { ModelMarkdown } from "@/components/model-markdown";
@@ -167,8 +167,26 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
 
           {isCompleted ? (
             <Button type="button" variant="outline" size="sm" onClick={download} disabled={isPending}>
-              <Download size={14} aria-hidden="true" />
-              Download
+              <FileText size={14} aria-hidden="true" />
+              Transcript
+            </Button>
+          ) : null}
+
+          {/* A plain link, not a fetch. The response is a large streamed
+              file, and letting the browser handle it means the download
+              manager shows progress and can resume - where pulling it
+              through JavaScript would buffer the whole recording in the
+              tab before saving it.
+
+              The route re-checks the session and the owner, so nothing is
+              granted by this being an ordinary href. It 404s if the
+              recording has aged out of the retention window. */}
+          {current.transcript !== null || isFailed ? (
+            <Button asChild type="button" variant="outline" size="sm">
+              <a href={`/api/transcription/${current.id}/media`} download>
+                <AudioLines size={14} aria-hidden="true" />
+                Recording
+              </a>
             </Button>
           ) : null}
         </div>
