@@ -319,5 +319,20 @@ admits gets an account, and nothing on the sign-in screen would show it.
 ### Every deployment after that
 
 1. Confirm CI is green.
-2. Run the **Deploy to Azure App Service** workflow from the Actions tab.
-3. Verify the site loads and sign-in works.
+2. **Apply any new migrations FIRST, before deploying the code.** Compare
+   `src/lib/data/sql/migrations/` against the `schema_migrations` table:
+
+   ```sql
+   SELECT filename FROM schema_migrations ORDER BY filename;
+   ```
+
+   Anything in the directory that is not in that table has to be run against
+   this environment's database. Each file wraps itself in `BEGIN`/`COMMIT`, so a
+   failure rolls back rather than leaving half a schema.
+
+   Deploying code that expects a table the database does not have takes the
+   affected page down with a generic "A server error occurred", and nothing on
+   the screen says which table is missing - **App Service → Monitoring → Log
+   stream** does.
+3. Run the **Deploy to Azure App Service** workflow from the Actions tab.
+4. Verify the site loads and sign-in works.
