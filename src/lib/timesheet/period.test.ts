@@ -21,27 +21,51 @@ describe("startOfPeriod", () => {
     expect(startOfPeriod("year", "2026-08-18")).toBe("2026-01-01");
   });
 
-  it("anchors a fortnight to a fixed epoch, not to the anchor's own week", () => {
-    // Two dates a week apart must NOT produce two different fortnights that
-    // both claim to contain them. Whatever the pairing, both resolve to the
-    // same start, so "this fortnight" means one thing to everybody.
-    const first = startOfPeriod("fortnight", "2026-08-17");
-    const second = startOfPeriod("fortnight", "2026-08-24");
-
-    expect(first).not.toBe(second);
-    // Stepping a week inside one fortnight lands on the same start.
-    expect(startOfPeriod("fortnight", "2026-08-18")).toBe(first);
-    expect(startOfPeriod("fortnight", "2026-08-23")).toBe(first);
+  // -------------------------------------------------------------------
+  // A fortnight is THIS WEEK AND LAST WEEK, never this week and next.
+  //
+  // TODAY is 2026-08-18, a Tuesday, so this week runs 17-23 Aug and last week
+  // runs 10-16. The fortnight containing today is therefore 10-23 Aug.
+  // -------------------------------------------------------------------
+  it("ends the current fortnight with the current week", () => {
+    // The behaviour this replaced: a fixed epoch put today in the first half
+    // half the time, so "this fortnight" showed a week that had not happened.
+    expect(startOfPeriod("fortnight", TODAY, TODAY)).toBe("2026-08-10");
+    expect(endOfPeriod("fortnight", startOfPeriod("fortnight", TODAY, TODAY))).toBe("2026-08-23");
   });
 
-  it("keeps fortnights aligned across a year boundary", () => {
-    // Every fortnight start is an even number of weeks from the epoch, so the
-    // grid never slips.
-    const start = startOfPeriod("fortnight", "2027-03-15");
-    const weeks = (new Date(`${start}T00:00:00Z`).getTime() - new Date("2024-01-01T00:00:00Z").getTime()) / (7 * 864e5);
+  it("resolves both weeks of a fortnight to the same start", () => {
+    // Otherwise a link built from a date inside the period would open a
+    // different period from the one it was copied out of.
+    const start = startOfPeriod("fortnight", TODAY, TODAY);
 
-    expect(Number.isInteger(weeks)).toBe(true);
-    expect(weeks % 2).toBe(0);
+    // Both weeks: Mon-Sun of last week, and Mon-Sun of this one.
+    for (const day of ["2026-08-10", "2026-08-13", "2026-08-16", "2026-08-17", "2026-08-18", "2026-08-23"]) {
+      expect(startOfPeriod("fortnight", day, TODAY)).toBe(start);
+    }
+  });
+
+  it("is idempotent, so a reload cannot walk the period backwards", () => {
+    // The trap in a trailing definition: if resolving a START shifted it again,
+    // every reload would slide the fortnight a week earlier.
+    const once = startOfPeriod("fortnight", TODAY, TODAY);
+
+    expect(startOfPeriod("fortnight", once, TODAY)).toBe(once);
+    expect(startOfPeriod("fortnight", startOfPeriod("fortnight", once, TODAY), TODAY)).toBe(once);
+  });
+
+  it("partitions earlier fortnights cleanly, two weeks at a time", () => {
+    // The day before the current fortnight begins falls in the previous one.
+    expect(startOfPeriod("fortnight", "2026-08-09", TODAY)).toBe("2026-07-27");
+    expect(startOfPeriod("fortnight", "2026-08-02", TODAY)).toBe("2026-07-27");
+    expect(startOfPeriod("fortnight", "2026-07-26", TODAY)).toBe("2026-07-13");
+  });
+
+  it("puts a future week in its own fortnight rather than the current one", () => {
+    // Next week must not be dragged into "this fortnight" - that was the whole
+    // complaint about the epoch alignment.
+    expect(startOfPeriod("fortnight", "2026-08-24", TODAY)).toBe("2026-08-24");
+    expect(startOfPeriod("fortnight", "2026-09-01", TODAY)).toBe("2026-08-24");
   });
 });
 
@@ -89,7 +113,7 @@ describe("resolvePeriod", () => {
   it("steps by its own granularity", () => {
     expect(resolvePeriod("week", "2026-08-18", TODAY).previousStart).toBe("2026-08-10");
     expect(resolvePeriod("fortnight", "2026-08-18", TODAY).previousStart).toBe(
-      startOfPeriod("fortnight", "2026-08-04"),
+      startOfPeriod("fortnight", "2026-08-04", TODAY),
     );
     expect(resolvePeriod("month", "2026-08-18", TODAY).previousStart).toBe("2026-07-01");
     expect(resolvePeriod("year", "2026-08-18", TODAY).previousStart).toBe("2025-01-01");

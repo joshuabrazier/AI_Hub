@@ -96,26 +96,49 @@ function addMonths(date: string, months: number): string {
 // Snapping means any date in a period resolves to the same period, so a link
 // carrying the 15th and a link carrying the 20th both open the same month.
 //
-// A fortnight is anchored to a FIXED epoch Monday rather than to whatever
-// Monday the anchor happens to fall in. Without that, stepping back a
-// fortnight then forward again could land on a different pair of weeks, and
-// two people comparing "this fortnight" would see different spans.
+// A FORTNIGHT ENDS WITH THE CURRENT WEEK: "this fortnight" is this week and
+// last week, never this week and next week.
+//
+// That is what somebody means when they ask for a fortnight - a look back over
+// two weeks of work. It was previously aligned to a fixed epoch Monday, which
+// partitioned the calendar consistently but put today in the FIRST half half
+// the time, so the current fortnight showed a week that had not happened yet.
+//
+// The alignment reference is therefore the week containing `today` rather than
+// a constant: boundaries fall every 14 days counting back from the start of
+// last week. Within one request that is still a clean partition, and snapping
+// is still idempotent - both weeks of a fortnight resolve to its start, and
+// resolving a start returns itself. Stepping back and forward lands where it
+// began.
+//
+// THE COST, and it is a real one: the partition is relative to the current
+// week, so it shifts by seven days each week. A fortnight URL bookmarked today
+// will show a span one week over in a fortnight's time. Saved reports are
+// unaffected - they snapshot their own period label and start - but a shared
+// link is not a stable identifier for a fortnight the way it is for a month.
 // -------------------------------------------------------------------
-const FORTNIGHT_EPOCH = "2024-01-01"; // A Monday.
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
-export function startOfPeriod(granularity: Granularity, anchor: string): string {
+export function startOfPeriod(granularity: Granularity, anchor: string, today: string = anchor): string {
   switch (granularity) {
     case "week":
       return mondayOf(anchor);
 
     case "fortnight": {
-      const monday = mondayOf(anchor);
-      const epoch = new Date(`${FORTNIGHT_EPOCH}T00:00:00Z`).getTime();
-      const current = new Date(`${monday}T00:00:00Z`).getTime();
-      const weeksSinceEpoch = Math.floor((current - epoch) / (7 * 24 * 60 * 60 * 1000));
-      // Round down to an even number of weeks from the epoch.
-      const aligned = weeksSinceEpoch - (((weeksSinceEpoch % 2) + 2) % 2);
-      return addDays(FORTNIGHT_EPOCH, aligned * 7);
+      // The current fortnight starts at the Monday of LAST week, so it ends on
+      // the Sunday of this one.
+      const base = addDays(mondayOf(isValidDate(today) ? today : anchor), -7);
+
+      const weeksFromBase = Math.round(
+        (new Date(`${mondayOf(anchor)}T00:00:00Z`).getTime() - new Date(`${base}T00:00:00Z`).getTime()) /
+          MS_PER_WEEK,
+      );
+
+      // Floor to an even number of weeks from that base, which is what makes a
+      // date in either week of a fortnight resolve to the same start.
+      const aligned = weeksFromBase - (((weeksFromBase % 2) + 2) % 2);
+
+      return addDays(base, aligned * 7);
     }
 
     case "month":
@@ -183,7 +206,7 @@ export function resolvePeriod(granularity: Granularity, anchor: string, today: s
   // hand-edited link should show the current period, not an error page.
   const safeAnchor = isValidDate(anchor) ? anchor : today;
 
-  const start = startOfPeriod(granularity, safeAnchor);
+  const start = startOfPeriod(granularity, safeAnchor, today);
   const end = endOfPeriod(granularity, start);
   const nextStart = step(granularity, start, 1);
 
@@ -196,7 +219,7 @@ export function resolvePeriod(granularity: Granularity, anchor: string, today: s
     nextStart,
     // Only offer the next period once it has actually begun.
     hasNext: nextStart <= today,
-    isCurrent: start === startOfPeriod(granularity, today),
+    isCurrent: start === startOfPeriod(granularity, today, today),
   };
 }
 

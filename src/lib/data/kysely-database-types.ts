@@ -216,6 +216,12 @@ export interface Users {
   // NULL until the first-run setup screen has been completed. See the note
   // on the column in database-schema.sql.
   profileCompletedAt: Date | null;
+  // The Atlassian accountId this person's time is filed under, linking an app
+  // account to the read model - which is keyed on accountId and knows nothing
+  // about app users. SERVER-ASSIGNED like `role`: letting somebody choose it
+  // would let them log hours as somebody else. NULL means unlinked, and
+  // self-service time entry is unavailable rather than guessed at.
+  atlassianAccountId: string | null;
   // Data retention: set once this person's data has been de-identified
   // (irreversible). NULL = still identifiable.
   deidentifiedAt: Date | null;
@@ -758,6 +764,37 @@ export interface StaffRates {
   updatedAt: Generated<Date>;
 }
 
+// -------------------------------------------------------------------
+// Manual Worklogs
+//
+// Time entered IN THIS APP rather than synced from Jira. The one timesheet
+// table that is NOT derived and NOT rebuildable - it is the only copy of what
+// it holds, so it belongs in the backup. See migration 008.
+//
+// `billable` is deliberately absent: it is resolved from the issue at read
+// time, exactly as the Jira read model does, so nobody can mark their own
+// hours chargeable.
+// -------------------------------------------------------------------
+export interface ManualWorklogs {
+  id: string;
+  personId: string;
+  personName: string | null;
+  enteredBy: string | null;
+  enteredByName: string | null;
+  issueKey: string;
+  // `work_date` is a DATE, so it arrives as a 'YYYY-MM-DD' string - see the
+  // type parser note in kysely-database-client.ts. Compared lexicographically.
+  workDate: string;
+  timeSpentSeconds: number;
+  notes: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type ManualWorklog = Selectable<ManualWorklogs>;
+export type NewManualWorklog = Insertable<ManualWorklogs>;
+export type UpdateManualWorklog = Updateable<ManualWorklogs>;
+
 export type StaffRate = Selectable<StaffRates>;
 export type NewStaffRate = Insertable<StaffRates>;
 export type UpdateStaffRate = Updateable<StaffRates>;
@@ -896,6 +933,7 @@ export interface Database {
   syncWatermark: SyncWatermarks;
   staffTarget: StaffTargets;
   staffRate: StaffRates;
+  manualWorklog: ManualWorklogs;
   timesheetAiSummary: TimesheetAiSummaries;
   timesheetReport: TimesheetReports;
 }
