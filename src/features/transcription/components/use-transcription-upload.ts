@@ -99,7 +99,22 @@ export function useTranscriptionUpload() {
           else reject(new Error(`The upload was rejected (${xhr.status}).`));
         });
 
-        xhr.addEventListener("error", () => reject(new Error("The upload failed. Check your connection.")));
+        // Status 0 with an error event is what a BLOCKED CROSS-ORIGIN
+        // request looks like from here. The browser refuses to tell a page
+        // why - that is the point of the same-origin policy - so there is
+        // no status, no headers, and nothing distinguishing it from the
+        // network being down. It is named anyway, because the two fixes are
+        // completely different and only one of them is the reader's to make:
+        // a dropped connection is theirs, a missing CORS rule on the
+        // storage account is an administrator's. The real reason is printed
+        // in the browser console by the browser itself.
+        xhr.addEventListener("error", () =>
+          reject(
+            new Error(
+              "The upload could not reach storage. Check your connection - and if this keeps happening, storage may not be configured to accept uploads from this site.",
+            ),
+          ),
+        );
         // Fired when the page navigates away mid-transfer. Rejecting rather
         // than hanging means the row is left in "Uploading" and can be
         // retried, instead of a promise nothing ever settles.
