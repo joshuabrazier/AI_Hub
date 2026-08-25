@@ -190,6 +190,79 @@ identity, so it could never be signed into.
   emulator connection string from `.env.example`. Azurite lags the SDK's API
   version, which is why the script passes `--skipApiVersionCheck`.
 
+## Meeting transcription (Azure AI Speech)
+
+Optional. With it unset the transcription screen says so and nothing else
+changes. Two pieces, and **the second is the one that gets forgotten**:
+
+### 1. The Speech resource
+
+- Create an **Azure AI Speech** resource in an Australian region
+  (`australiaeast`) so meeting audio does not leave the country. It can live in
+  the same resource group as everything else.
+- Take **Key 1** and the region into Key Vault, then reference them from App
+  Service as `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION`.
+- `AZURE_SPEECH_LOCALE` defaults to `en-AU`. Batch transcription is told one
+  language up front - it does not detect it - so set this if the meetings are
+  not in Australian English.
+- The media container (`AZURE_MEDIA_CONTAINER`, default `transcription-media`)
+  is created on first use in the **same storage account** as attachments. Never
+  enable anonymous read on it.
+
+### 2. Let the Speech resource read the storage account
+
+The app hands the Speech service a **plain blob URL with no SAS token on it**.
+The service reads it with its own managed identity, so without this step every
+job fails with an access error and nothing else will explain why.
+
+1. On the **Speech resource** -> Identity -> System assigned -> **On**. Save.
+2. On the **storage account** -> Access Control (IAM) -> Add role assignment.
+3. Role: **Storage Blob Data Reader**. Members: Managed identity -> the Speech
+   resource. Review + assign.
+
+This is deliberately not a SAS. A role assignment is revocable in one place and
+does not expire mid-job, whereas a signed URL is a bearer credential in flight
+with a window that a long transcription can outlive.
+
+### 3. Allow the browser to upload to storage (CORS)
+
+Recordings go **browser-to-blob**, so the browser makes a cross-origin request
+to the storage account and the blob service has to answer a preflight. A storage
+account has **no CORS rules by default**, and without them the upload fails
+before it starts - in the browser, with nothing in the app's logs to explain it.
+
+1. Storage account → **Settings** → **Resource sharing (CORS)** → **Blob service** tab.
+2. **Add a row. Do not edit or delete the rows already there** - the account is
+   shared, and those belong to other applications.
+3. Fill it in:
+
+| Field | Value |
+| --- | --- |
+| Allowed origins | `https://<your app hostname>` (the full one, including the random suffix) |
+| Allowed methods | `PUT`, `OPTIONS` (`GET` and `HEAD` are harmless to include) |
+| Allowed headers | `x-ms-blob-type,content-type,x-ms-blob-content-type` |
+| Exposed headers | leave blank |
+| Max age | `3600` |
+
+4. **Save**. Rules take a minute or two to apply.
+
+The origin must match exactly - scheme, host and port. A trailing slash or the
+wrong hostname produces the same silent failure as having no rule at all.
+
+Note that chat attachments do **not** need this. Those are proxied through the
+app, so the browser only ever talks to the app's own origin. This is the cost of
+the browser-direct upload, and it applies only to transcription.
+
+### What to expect once it is on
+
+- The recording is **deleted as soon as its transcript is stored**, so steady
+  state in that container is only in-flight and failed jobs.
+- Jobs are advanced by somebody opening the page, not by a worker. Nothing to
+  deploy, nothing to monitor - see `docs/architecture.md`.
+- Summarising the transcript is a **Bedrock** call, so it needs
+  `AWS_BEARER_TOKEN_BEDROCK` as well. Without it the transcript still arrives
+  and the summary says why it did not.
+
 ## Database
 
 - Azure Database for PostgreSQL Flexible Server. Keep `sslmode=verify-full` in `DATABASE_URL`.
@@ -214,7 +287,8 @@ specs too. A broken spec fails the build before the tests even run.
 
 1. **Create the Azure resources**: App Service (Linux, Node 20, B2+), Azure
    Database for PostgreSQL Flexible Server, a Storage account with a private
-   container, and a Key Vault.
+   container, a Key Vault, and - if transcription is wanted - an Azure AI
+   Speech resource with `Storage Blob Data Reader` on that storage account.
 2. **Postgres firewall**: allow public access from Azure services, or add the
    App Service outbound IPs. A connection timeout at runtime is almost always
    this.
@@ -234,6 +308,9 @@ specs too. A broken spec fails the build before the tests even run.
 10. **Verify in this order**: the site loads; Microsoft sign-in works; you land
     on `/welcome` first time and not again afterwards; you can reach `/admin`
     after promoting; a tenant account on a **different** domain is refused.
+11. **If transcription is on**, record a two-minute test. A failure at "Uploading"
+    is CORS or the storage connection string; a failure at "Queued" is the
+    Speech resource's role assignment on the storage account.
 
 That last check is the one worth doing deliberately. The domain allowlist is
 the entire access boundary now - if it is unset or wrong, anyone the Entra app

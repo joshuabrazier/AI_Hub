@@ -137,6 +137,47 @@ Uploads exist in exactly one place - files attached to an AI chat turn - and
 - **Size is bounded twice** on upload, once on the declared `Content-Length` and
   again on what actually arrived, because the header is client-supplied.
 
+## Meeting recordings (transcription)
+
+Recordings do **not** follow the rule above, and the difference is deliberate.
+A chat attachment is at most 4.5 MB and is proxied through the app, so the only
+way to read one is a live session that owns it. A meeting recording is hundreds
+of megabytes: proxying it would hold an instance for the length of the transfer,
+and an hour of video would simply fail. So the upload is a **SAS URL**, and that
+is a real reduction in guarantees taken because the alternative does not work at
+this size. Do not copy it for small files.
+
+What keeps it defensible:
+
+- **The SAS is write-only, single-blob and short-lived.** `cw` permissions, one
+  blob name, one hour. It cannot read anything - not that file, not any other -
+  cannot list, and expires. The worst a leaked one does is let somebody
+  overwrite a file whose exact random name they already knew.
+- **The client never names the destination.** The row is created first and the
+  key is `transcription/{userId}/{transcriptionId}` derived from ids the server
+  generated, so a caller cannot aim an upload at another user's prefix.
+- **Nothing hands out a read URL, ever.** There is no play-back or download path
+  for the media. `createReadUrl` does not exist, and adding one would mean
+  minting a bearer credential that outlives the session check that produced it.
+- **The size limit is checked after the upload, from storage.** A SAS grants a
+  write; it does not cap one. The first moment the real size is known is when
+  the app asks the container, which is what it does before creating a job.
+- **The Speech service is not given a token at all.** It gets a plain blob URL
+  and reads it with its own managed identity, which needs `Storage Blob Data
+  Reader` on the account. That authorization is an Azure role assignment
+  revocable in one place, not a signed string in flight.
+- **The recording is deleted as soon as its transcript is stored.** The
+  transcript is the deliverable; the audio is the most sensitive thing the
+  feature holds. Only failed and abandoned jobs keep their media, so that a
+  failure can be retried without asking somebody to hold the meeting again.
+- **The transcript is untrusted text like a chat message.** It is a record of
+  what people said, rendered as text nodes; the model's summary goes through the
+  same `ModelMarkdown` renderer as a chat reply, which emits React elements and
+  never an HTML string.
+- **Summarising is logged like any other model call**, in `ai_chat_request_logs`
+  with kind `transcription`. Admins can read it, for the same accountability
+  reason chat is logged, and the transcription screen does not claim otherwise.
+
 ## Response headers
 
 Applied to every route in `next.config.ts`:
@@ -148,7 +189,7 @@ Applied to every route in `next.config.ts`:
 | `Content-Security-Policy` | `base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'` | Lock down tag-injection and form hijacking |
 | `X-Content-Type-Options` | `nosniff` | Stop MIME sniffing |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Do not leak full URLs cross-origin |
-| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), browsing-topics=()` | Switch off unused device APIs |
+| `Permissions-Policy` | `camera=(), microphone=(self), geolocation=(), browsing-topics=()` | Switch off unused device APIs. The microphone is allowed for **same-origin documents only**, because the transcription recorder needs it; `(self)` still denies every embedded third-party frame, which omitting the directive would allow. |
 
 The CSP is deliberately **partial**: it does not yet restrict `script-src` /
 `style-src`, because a strict policy needs per-request nonces (Next injects inline
@@ -249,6 +290,7 @@ the user's own content on a window they can see.
 | `AI_CHAT_RETENTION_DAYS` | 365 | Conversations idle longer than this. Messages and their attachments cascade. |
 | `AI_CHAT_LOG_RETENTION_DAYS` | 30 | Request-log rows. Much shorter on purpose: the table duplicates private content that admins can read, and grows with the **square** of thread length. |
 | `AI_CHAT_STAGED_ATTACHMENT_HOURS` | 24 | Files uploaded but never sent. Nothing else collects these - the cascades only reach a file once it belongs to a turn. |
+| `TRANSCRIPTION_RETENTION_DAYS` | 90 | Transcriptions and any recording still held for them. Shorter than chat on purpose: a meeting transcript is a record of other people, who did not choose to be recorded. |
 
 Attachment BYTES live in Azure Blob, not Postgres - the database holds
 metadata and a `storage_key`. That means a Postgres cascade removes the row and
@@ -263,6 +305,13 @@ involved at all, so it is the only thing standing between that and files paid fo
 forever. A steadily non-zero `aiChatOrphanedBlobsPurged` in the job log means
 something is deleting rows without clearing files first, and is worth
 investigating rather than tolerating.
+
+Transcription media has the same problem and the same three answers, in its own
+container: expiring rows have their recordings cleared first, every delete path
+clears storage before the row, and a reconciliation pass removes anything the
+database no longer claims. `transcriptionOrphanedMediaPurged` reads exactly like
+`aiChatOrphanedBlobsPurged` - steadily non-zero means a delete path is missing
+its storage cleanup.
 
 ## Supply chain and CI
 
