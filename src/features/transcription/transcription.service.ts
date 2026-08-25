@@ -470,20 +470,6 @@ async function advanceTranscription(
     return updated ?? (await getTranscriptionForUserRepo(transcription.id, userId)) ?? transcription;
   }
 
-  // A job that has been in flight far longer than any real one takes is not
-  // coming back. Without this the row would say "transcribing" forever and
-  // its media would never be swept, because the retention pass only clears
-  // what has aged out of the whole window.
-  const ageHours = (Date.now() - transcription.createdAt.getTime()) / (60 * 60 * 1000);
-
-  if (ageHours > TRANSCRIPTION_TIMEOUT_HOURS) {
-    if (transcription.speechJobId) await deleteTranscriptionJob(transcription.speechJobId);
-
-    return failWith(
-      `This did not finish within ${TRANSCRIPTION_TIMEOUT_HOURS} hours and has been stopped. The recording is still here, so you can try again.`,
-    );
-  }
-
   if (!transcription.speechJobId) {
     // Queued with no job id means startTranscription did not get as far as
     // writing one. The file is still there, so this is retryable.
@@ -513,6 +499,28 @@ async function advanceTranscription(
   }
 
   if (job.state !== "Succeeded") {
+    // A job still running far longer than any real one takes is not coming
+    // back. Without this the row would say "transcribing" forever and its
+    // recording would never be swept, because the retention pass only
+    // clears what has aged out of the whole window.
+    //
+    // CHECKED HERE, AFTER ASKING AZURE, AND ONLY WHEN IT IS STILL RUNNING.
+    // It used to run before the status call, which was wrong in a way that
+    // lost transcripts: jobs only advance when somebody opens the screen, so
+    // a meeting recorded on Friday afternoon and not looked at until Monday
+    // would be marked failed on the first sweep - even though Azure had
+    // finished it successfully minutes after it started, and the transcript
+    // was sitting there waiting to be collected.
+    const ageHours = (Date.now() - transcription.createdAt.getTime()) / (60 * 60 * 1000);
+
+    if (ageHours > TRANSCRIPTION_TIMEOUT_HOURS) {
+      await deleteTranscriptionJob(transcription.speechJobId);
+
+      return failWith(
+        `This did not finish within ${TRANSCRIPTION_TIMEOUT_HOURS} hours and has been stopped. The recording is still here, so you can try again.`,
+      );
+    }
+
     // Still working. Move `queued` on to `transcribing` the first time the
     // service says it has started, so the screen shows progress rather than
     // sitting on the same word for ten minutes.
