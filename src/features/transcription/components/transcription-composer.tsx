@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { FileAudio, Mic, TriangleAlert, Upload } from "lucide-react";
+import { Download, FileAudio, Mic, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TRANSCRIPTION_SOURCES } from "@/lib/data/kysely-database-types";
+import { downloadBlob, safeDownloadName } from "@/lib/download-blob";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -18,10 +19,17 @@ import {
   MAX_MEDIA_BYTES,
   MEDIA_ACCEPT_ATTRIBUTE,
   TITLE_MAX_CHARS,
+  formatDuration,
   isGuaranteedFormat,
   mediaTypeForFileName,
 } from "../transcription.types";
-import { TranscriptionRecorder } from "./transcription-recorder";
+import {
+  assembleRecording,
+  discardRecording,
+  listPendingRecordings,
+  type PendingRecording,
+} from "./recording-store";
+import { TranscriptionRecorder, type FinishedRecording } from "./transcription-recorder";
 import { useTranscriptionUpload } from "./use-transcription-upload";
 
 // -------------------------------------------------------------------
@@ -35,6 +43,14 @@ import { useTranscriptionUpload } from "./use-transcription-upload";
 // Neither path sends media through this app. Both hand their bytes to
 // useTranscriptionUpload, which puts them straight into storage. See the
 // note there for why.
+//
+// A RECORDING IS NEVER THROWN AWAY. If the upload fails, the file stays on
+// the device and this screen says so, with a button to save it and a button
+// to try again - it is not discarded until the server has confirmed it. The
+// same panel appears on load if a previous visit left one behind, which is
+// what a crashed tab or a closed laptop looks like from here. A meeting
+// cannot be recorded twice, so "it failed, start again" is not an answer
+// this feature is allowed to give.
 // -------------------------------------------------------------------
 
 const MEGABYTE = 1024 * 1024;
@@ -53,6 +69,48 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+
+  // A recording that is on this device and not yet safely uploaded. Set
+  // when an upload fails, and on load when a previous visit left one - a
+  // crashed tab, a closed laptop, a refresh mid-upload.
+  const [pending, setPending] = useState<PendingRecording | null>(null);
+  const [isRecovering, setIsRecovering] = useState(false);
+
+  // The default name for a recording. A function, not a value, because it
+  // reads the clock - computing it during render would differ between
+  // server and client and break hydration.
+  const defaultRecordingTitle = useCallback(() => `Meeting - ${formatDateTime(new Date())}`, []);
+
+  // The newest held recording is the one worth offering. Anything older is
+  // still in the store and still recoverable, but stacking a panel for
+  // every one would bury the thing somebody just lost.
+  const refreshPending = useCallback(
+    () =>
+      listPendingRecordings()
+        .then((held) => setPending(held[0] ?? null))
+        .catch((error) => console.warn("[composer] could not read the local recording store", error)),
+    [],
+  );
+
+  // Checked once on mount. This is what turns a crashed tab from "an hour
+  // of my meeting is gone" into a panel offering it back.
+  //
+  // The read is an external system, so the state lands in its callback
+  // rather than in the effect body - and the cancelled flag means a store
+  // that answers slowly cannot set state on an unmounted component.
+  useEffect(() => {
+    let cancelled = false;
+
+    listPendingRecordings()
+      .then((held) => {
+        if (!cancelled) setPending(held[0] ?? null);
+      })
+      .catch((error) => console.warn("[composer] could not read the local recording store", error));
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const chooseFile = (chosen: File | null) => {
     if (!chosen) return;
@@ -94,31 +152,109 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
     }
   };
 
-  const submitRecording = async (recording: { media: Blob; extension: string; durationSeconds: number }) => {
-    // Named for when it was recorded, because nobody types a title before a
-    // meeting and this is the only fact about it that is known for certain.
-    // In the app timezone, via formatDateTime - never from a raw Date.
-    const defaultTitle = `Meeting - ${formatDateTime(new Date())}`;
-
+  const submitRecording = async (recording: FinishedRecording) => {
     const transcriptionId = await upload({
       media: recording.media,
       // The extension is what the server derives the media type from, so it
       // has to be the one the recorder actually produced.
       fileName: `recording${recording.extension}`,
-      title: title.trim().length > 0 ? title.trim() : defaultTitle,
+      // Named for when it was recorded when nobody has typed anything,
+      // because that is the only fact known for certain about a meeting
+      // that has just finished.
+      title: title.trim().length > 0 ? title.trim() : defaultRecordingTitle(),
       source: TRANSCRIPTION_SOURCES.RECORDING,
     });
 
     if (transcriptionId) {
+      // The server has it. Only now is the device copy dropped - this is
+      // the single place that happens on a successful path.
+      await discardRecording(recording.recordingId).catch((error) => {
+        console.warn("[composer] could not clear the uploaded recording", error);
+      });
+
       setTitle("");
+      setPending(null);
       onStarted(transcriptionId);
+      return;
     }
+
+    // The upload failed and the reason has already been shown. The
+    // recording is still on the device, so surface it rather than letting
+    // the screen go quiet as though nothing had happened.
+    await refreshPending();
+  };
+
+  // -------------------------------------------------------------------
+  // Recovering a recording that is still on the device.
+  // -------------------------------------------------------------------
+  const retryPending = async () => {
+    if (!pending) return;
+
+    setIsRecovering(true);
+
+    try {
+      const media = await assembleRecording(pending);
+
+      if (!media) {
+        toast.error("That recording could not be read back from this device.");
+        return;
+      }
+
+      const transcriptionId = await upload({
+        media,
+        fileName: `recording${pending.extension}`,
+        title: title.trim().length > 0 ? title.trim() : pending.title,
+        source: TRANSCRIPTION_SOURCES.RECORDING,
+      });
+
+      if (transcriptionId) {
+        await discardRecording(pending.id);
+        setTitle("");
+        setPending(null);
+        onStarted(transcriptionId);
+      }
+    } finally {
+      setIsRecovering(false);
+    }
+  };
+
+  const savePending = async () => {
+    if (!pending) return;
+
+    const media = await assembleRecording(pending);
+
+    if (!media) {
+      toast.error("That recording could not be read back from this device.");
+      return;
+    }
+
+    downloadBlob(media, safeDownloadName(pending.title, pending.extension));
+  };
+
+  const dropPending = async () => {
+    if (!pending) return;
+
+    await discardRecording(pending.id);
+    setPending(null);
+    toast.success("Recording deleted from this device.");
   };
 
   const warnAboutFormat = file !== null && !isGuaranteedFormat(file.name);
 
   return (
     <div className="rounded-xl border border-border p-5">
+      {/* Above the tabs, because a recording that has not made it off this
+          device is more urgent than anything else on the screen. */}
+      {pending ? (
+        <PendingRecordingPanel
+          recording={pending}
+          isBusy={isUploading || isRecovering}
+          onRetry={retryPending}
+          onSave={savePending}
+          onDiscard={dropPending}
+        />
+      ) : null}
+
       <Tabs defaultValue="upload">
         <TabsList>
           <TabsTrigger value="upload">
@@ -233,7 +369,11 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
             Record
             ---------------------------------------------------------- */}
         <TabsContent value="record" className="space-y-4">
-          <TranscriptionRecorder onRecorded={submitRecording} disabled={isUploading} />
+          <TranscriptionRecorder
+            onRecorded={submitRecording}
+            defaultTitle={defaultRecordingTitle}
+            disabled={isUploading || isRecovering}
+          />
 
           <div className="grid gap-2">
             <Label htmlFor="transcription-recording-title">Name (optional)</Label>
@@ -276,6 +416,75 @@ function UploadProgress({ progress }: { progress: number | null }) {
         <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
       </div>
       <p className="mt-1.5 text-xs text-muted-foreground">Uploading, {progress}%. Keep this page open.</p>
+    </div>
+  );
+}
+
+// -------------------------------------------------------------------
+// A recording that is on this device and not yet on the server.
+//
+// THE POINT OF THIS COMPONENT is that a meeting cannot be recorded twice.
+// Everything else in this feature can be retried from scratch; this cannot,
+// so the recording is held rather than dropped, and the panel gives three
+// ways out: send it again, save it to disk, or deliberately let it go.
+//
+// "Save a copy" is deliberately not the last resort. If the upload is
+// failing because of something the reader cannot fix - storage
+// misconfigured, no network at a client site - then getting the file onto
+// their disk is the thing that actually rescues the meeting, and they can
+// upload it from the other tab later.
+// -------------------------------------------------------------------
+function PendingRecordingPanel({
+  recording,
+  isBusy,
+  onRetry,
+  onSave,
+  onDiscard,
+}: {
+  recording: PendingRecording;
+  isBusy: boolean;
+  onRetry: () => void;
+  onSave: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      className="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950"
+    >
+      <div className="flex items-start gap-2">
+        <TriangleAlert size={16} className="mt-0.5 shrink-0 text-amber-700 dark:text-amber-300" aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+            A recording is still on this device
+          </p>
+          <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
+            <span className="font-medium">{recording.title}</span>
+            {recording.durationSeconds > 0 ? ` - ${formatDuration(recording.durationSeconds)}` : ""}
+            {recording.byteSize > 0 ? ` - ${formatSize(recording.byteSize)}` : ""}
+          </p>
+          <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+            {recording.complete
+              ? "It has not been uploaded yet. Send it now, or save a copy first if you would rather not rely on this."
+              : "It was interrupted before it finished, so the end may be missing. Everything captured up to that point is here."}
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="button" size="sm" onClick={onRetry} disabled={isBusy} loading={isBusy}>
+              <Upload size={14} aria-hidden="true" />
+              Upload and transcribe
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={onSave} disabled={isBusy}>
+              <Download size={14} aria-hidden="true" />
+              Save a copy
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={onDiscard} disabled={isBusy}>
+              <Trash2 size={14} aria-hidden="true" />
+              Delete
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

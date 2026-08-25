@@ -8,6 +8,13 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
 import { RECORDING_FORMAT_CANDIDATES, formatDuration } from "../transcription.types";
+import {
+  appendChunk,
+  beginRecording,
+  completeRecording,
+  discardRecording,
+  isRecordingStoreAvailable,
+} from "./recording-store";
 
 // -------------------------------------------------------------------
 // TranscriptionRecorder
@@ -16,18 +23,21 @@ import { RECORDING_FORMAT_CANDIDATES, formatDuration } from "../transcription.ty
 // This component's whole job is producing a Blob; it does not upload, name
 // or navigate, so it can sit inside whatever screen needs a recording.
 //
-// THE RECORDING ONLY EXISTS IN MEMORY UNTIL IT IS STOPPED, and everything
-// awkward here follows from that. A meeting cannot be re-recorded: if this
-// component loses its chunks, an hour of somebody's time is gone. So it
-// warns before an unload, keeps the microphone stream in a ref rather than
-// in state where a re-render could drop it, and releases the track only
-// once the recorder has actually handed over its final chunk.
+// A MEETING CANNOT BE RECORDED TWICE, and everything awkward here follows
+// from that. Chunks are written to IndexedDB as they arrive rather than
+// only being accumulated in memory, so a crashed tab, a closed laptop or a
+// stray refresh costs the last ten seconds instead of the whole meeting.
+// See recording-store.ts.
+//
+// The rest is the same instinct: warn before an unload, keep the microphone
+// stream in a ref rather than in state where a re-render could drop it, and
+// release the track only once the recorder has handed over its final chunk.
 // -------------------------------------------------------------------
 
-// How often MediaRecorder is asked to hand over what it has. Without a
-// timeslice it holds the entire recording as one buffer and produces
-// nothing until stop, which means a crash mid-meeting loses everything and
-// there is no evidence it was ever working.
+// How often MediaRecorder is asked to hand over what it has, and therefore
+// how much a crash can cost. Without a timeslice it holds the whole
+// recording as one buffer and produces nothing at all until stop, so there
+// would be nothing to persist and a crash would take the lot.
 const CHUNK_INTERVAL_MS = 10_000;
 
 type RecorderState = "idle" | "recording" | "paused";
@@ -102,12 +112,30 @@ function pickFormat(): { mimeType: string; extension: string } | null {
   return supported ? { ...supported } : null;
 }
 
+export type FinishedRecording = {
+  /** The id under which this is held on the device, so the caller can clear it once uploaded. */
+  recordingId: string;
+  media: Blob;
+  extension: string;
+  durationSeconds: number;
+};
+
 export function TranscriptionRecorder({
   onRecorded,
+  defaultTitle,
   disabled,
 }: {
-  /** Called once, with the finished recording and the extension it should be saved under. */
-  onRecorded: (recording: { media: Blob; extension: string; durationSeconds: number }) => void;
+  /** Called once, with the finished recording. The caller owns clearing it from the store. */
+  onRecorded: (recording: FinishedRecording) => void;
+  // A FUNCTION rather than a string, because the default name is built from
+  // the current time. Computing that during render would produce different
+  // markup on the server and the client and break hydration; calling it in
+  // the event handler that starts a recording does not.
+  //
+  // Only used for the device-held copy, so that a recording recovered after
+  // a crash has something to call itself. A recording that survives to the
+  // upload is named from the field on screen.
+  defaultTitle: () => string;
   disabled?: boolean;
 }) {
   const [state, setState] = useState<RecorderState>("idle");
@@ -128,6 +156,11 @@ export function TranscriptionRecorder({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  // The device-held copy this recording is being written to, and the next
+  // chunk number. Refs because they are read inside the recorder's own
+  // handlers, which close over the render that created them.
+  const recordingIdRef = useRef<string | null>(null);
+  const sequenceRef = useRef(0);
   // Read inside the recorder's own stop handler, which closes over the
   // render it was created in - a ref is the only thing that reads back the
   // duration as it stands at the moment of stopping.
@@ -197,10 +230,56 @@ export function TranscriptionRecorder({
       chunksRef.current = [];
       elapsedRef.current = 0;
 
+      // Held on the device from the first chunk. The id is generated here so
+      // every chunk can be filed against it as it arrives, rather than at
+      // stop - which is far too late to help anything that goes wrong
+      // during the meeting.
+      const recordingId = crypto.randomUUID();
+      recordingIdRef.current = recordingId;
+      sequenceRef.current = 0;
+
+      const canPersist = isRecordingStoreAvailable();
+
+      if (canPersist) {
+        try {
+          await beginRecording({
+            id: recordingId,
+            title: defaultTitle(),
+            extension: format.extension,
+            mimeType: format.mimeType,
+            durationSeconds: 0,
+            createdAt: Date.now(),
+          });
+        } catch (error) {
+          // Recording still works without the safety net, so this warns
+          // rather than refuses. Losing the net is much better than losing
+          // the ability to record at all.
+          console.warn("[recorder] could not open the local recording store", error);
+          toast.warning("This recording cannot be saved on the device. Do not close the tab before it uploads.");
+        }
+      }
+
       const recorder = new MediaRecorder(stream, { mimeType: format.mimeType });
 
       recorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
+        if (event.data.size === 0) return;
+
+        // Kept in memory as well, so the common path assembles without
+        // touching the database at all.
+        chunksRef.current.push(event.data);
+
+        if (!canPersist) return;
+
+        const seq = sequenceRef.current;
+        sequenceRef.current += 1;
+
+        // Deliberately not awaited: this fires on the recorder's own
+        // schedule and must not hold it up. A write that fails is logged and
+        // the in-memory copy still carries the recording through a normal
+        // stop - what is lost is only the protection against a crash.
+        appendChunk(recordingId, seq, event.data).catch((error) => {
+          console.warn(`[recorder] could not persist chunk ${seq}`, error);
+        });
       });
 
       recorder.addEventListener("stop", () => {
@@ -209,6 +288,7 @@ export function TranscriptionRecorder({
         // recorded, so the Blob describes itself correctly even though the
         // server derives its own from the filename.
         const media = new Blob(chunksRef.current, { type: format.mimeType });
+        const durationSeconds = elapsedRef.current;
 
         chunksRef.current = [];
         releaseStream();
@@ -217,10 +297,20 @@ export function TranscriptionRecorder({
 
         if (media.size === 0) {
           toast.error("Nothing was recorded. Check that the microphone is working.");
+          if (canPersist) void discardRecording(recordingId);
           return;
         }
 
-        onRecorded({ media, extension: format.extension, durationSeconds: elapsedRef.current });
+        // Marked complete before it is handed on, so that if the upload
+        // fails - or the tab dies between here and there - recovery finds a
+        // finished recording rather than one that looks abandoned.
+        if (canPersist) {
+          completeRecording(recordingId, durationSeconds).catch((error) => {
+            console.warn("[recorder] could not mark the recording complete", error);
+          });
+        }
+
+        onRecorded({ recordingId, media, extension: format.extension, durationSeconds });
       });
 
       recorder.addEventListener("error", () => {
@@ -307,7 +397,7 @@ export function TranscriptionRecorder({
           ? "Press record, then leave this page open until the meeting ends."
           : state === "paused"
             ? "Paused. Nothing is being recorded."
-            : "Recording. Keep this page open."}
+            : "Recording, and saving to this device as it goes."}
       </p>
 
       <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
@@ -331,7 +421,8 @@ export function TranscriptionRecorder({
 
       {state === "idle" ? (
         <p className="mt-4 max-w-sm text-xs text-muted-foreground">
-          The audio is uploaded when you press stop, transcribed, then deleted once the transcript is saved.
+          The audio is saved on this device as you record, uploaded when you press stop, then deleted once the
+          transcript is saved. If anything goes wrong, the recording is still here.
         </p>
       ) : null}
     </div>
