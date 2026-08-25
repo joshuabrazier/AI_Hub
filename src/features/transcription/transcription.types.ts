@@ -110,6 +110,24 @@ export function mediaTypeForFileName(fileName: string): string | null {
   return MEDIA_TYPES_BY_EXTENSION[extensionOf(fileName)] ?? null;
 }
 
+// -------------------------------------------------------------------
+// The extension for a stored media type, for naming a download.
+//
+// The reverse of the table above. Several extensions can share a type
+// (.webm is the only one for video/webm, but .m4a and .mp4 are close
+// cousins), so the FIRST match wins and the table order decides - which is
+// why audio types are listed before video ones.
+//
+// Falls back to .bin rather than guessing. A file saved under the wrong
+// extension is worse than one the person has to rename: the wrong extension
+// makes a player refuse it and looks like a corrupt download.
+// -------------------------------------------------------------------
+export function extensionForMediaType(mediaType: string): string {
+  const match = Object.entries(MEDIA_TYPES_BY_EXTENSION).find(([, type]) => type === mediaType);
+
+  return match?.[0] ?? ".bin";
+}
+
 /** Whether Microsoft documents support for this format, as opposed to it merely tending to work. */
 export function isGuaranteedFormat(fileName: string): boolean {
   return GUARANTEED_EXTENSIONS.includes(extensionOf(fileName));

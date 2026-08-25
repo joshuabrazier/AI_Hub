@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ConverseCommand, type Message, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
+import { ConverseStreamCommand, type Message, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
 import { generateId } from "better-auth";
 import { revalidatePath } from "next/cache";
 
@@ -33,6 +33,7 @@ import {
 } from "@/lib/data/repositories/transcriptions.repository";
 import { envServer } from "@/lib/env-server";
 import { DisplayErrorMessage } from "@/lib/errors";
+import { safeDownloadName } from "@/lib/download-blob";
 import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
@@ -44,6 +45,7 @@ import {
   isMediaStorageConfigured,
   mediaBlobUrl,
   mediaStorageKey,
+  openMediaStream,
 } from "@/lib/storage/media-storage";
 import {
   deleteTranscriptionJob,
@@ -58,6 +60,7 @@ import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from ".
 import {
   MAX_MEDIA_BYTES,
   TRANSCRIPTION_TIMEOUT_HOURS,
+  extensionForMediaType,
   formatTimestamp,
   mediaTypeForFileName,
   speakerLabel,
@@ -94,11 +97,11 @@ import {
 // hundreds of megabytes; proxying that through this app would tie up an
 // instance for the length of the transfer. See media-storage.ts.
 //
-// THE MEDIA IS DELETED THE MOMENT ITS TRANSCRIPT IS SAFE. The transcript is
-// what the person wanted, the audio is the most sensitive thing this feature
-// ever holds, and keeping it would mean paying to store meetings forever. A
-// FAILED job keeps its file on purpose - that is the one case where being
-// able to try again matters, and a meeting cannot be re-recorded.
+// THE RECORDING IS KEPT for the retention window, and can be downloaded.
+// The transcript is the deliverable, but speech recognition makes mistakes,
+// so being able to hear what was actually said is worth the storage - which
+// at any realistic volume is pennies a month. It is served by streaming it
+// back through this app, never as a signed URL; see the download route.
 // -------------------------------------------------------------------
 
 // The feature is mounted in all three areas, so a change has to refresh all
@@ -152,6 +155,19 @@ const SUMMARY_MAX_TOKENS = 4_000;
 // meeting whole. It is a guard against a pathological input - a day-long
 // recording, a stuck microphone - rather than a limit anybody will meet.
 const MAX_SUMMARY_INPUT_CHARS = 400_000;
+
+// How long one attempt at a summary may take before it is abandoned.
+const SUMMARY_TIMEOUT_MS = 120_000;
+
+// How long a transcription may sit in `summarising` before the summary is
+// written off and the row is completed without one.
+//
+// Something has to end this. Every attempt costs a model call, and a row
+// that cannot be summarised - too long, a persistent service problem, a
+// request killed halfway every time - would otherwise be retried by every
+// poll forever, spending money on the same failure. The transcript is
+// already stored by this point, so giving up costs nobody their meeting.
+const SUMMARY_GIVE_UP_MINUTES = 15;
 
 const SUMMARY_SYSTEM_PROMPT = [
   "You summarise transcripts of meetings.",
@@ -288,36 +304,73 @@ async function summariseTranscript(
   const startedAt = Date.now();
 
   try {
+    // STREAMED, and this is not a preference - it is the fix for a real
+    // failure. A non-streaming ConverseCommand sends nothing at all until
+    // the model has finished, and the client is configured to abandon a
+    // stream with no activity for READ_TIMEOUT_MS - 120 seconds, in
+    // bedrock-client.ts. Opus writing up to SUMMARY_MAX_TOKENS from an
+    // hour-long transcript takes longer than that, so every summary of a
+    // real meeting timed out, five times over, because `maxAttempts: 5`
+    // retried a request that was never going to be any faster.
+    //
+    // Streaming puts a token on the socket every few milliseconds, so the
+    // inactivity timer never fires. The text is accumulated here; nothing
+    // downstream knows or cares that it arrived in pieces.
     const response = await getBedrockClient().send(
-      new ConverseCommand({
+      new ConverseStreamCommand({
         modelId: BEDROCK_MODEL_ID,
         system,
         messages,
         inferenceConfig: { maxTokens: SUMMARY_MAX_TOKENS },
       }),
+      // A hard ceiling on the whole thing, independent of the SDK's
+      // per-stream timers. Summarising happens while somebody is watching a
+      // spinner, so it has to end - successfully or not - in a length of
+      // time a person will wait.
+      { abortSignal: AbortSignal.timeout(SUMMARY_TIMEOUT_MS) },
     );
+
+    if (!response.stream) throw new Error("Bedrock returned no stream");
+
+    let summary = "";
+    let inputTokens: number | null = null;
+    let outputTokens: number | null = null;
+    let cacheReadTokens: number | null = null;
+    let cacheWriteTokens: number | null = null;
+
+    for await (const event of response.stream) {
+      const chunk = event.contentBlockDelta?.delta?.text;
+
+      if (chunk) {
+        summary += chunk;
+        continue;
+      }
+
+      // Usage arrives once, at the end, on its own event.
+      if (event.metadata?.usage) {
+        inputTokens = event.metadata.usage.inputTokens ?? null;
+        outputTokens = event.metadata.usage.outputTokens ?? null;
+        cacheReadTokens = event.metadata.usage.cacheReadInputTokens ?? null;
+        cacheWriteTokens = event.metadata.usage.cacheWriteInputTokens ?? null;
+      }
+    }
 
     await recordSummaryRequest({
       userId,
       system,
       messages,
-      usage: {
-        inputTokens: response.usage?.inputTokens ?? null,
-        outputTokens: response.usage?.outputTokens ?? null,
-        cacheReadTokens: response.usage?.cacheReadInputTokens ?? null,
-        cacheWriteTokens: response.usage?.cacheWriteInputTokens ?? null,
-      },
+      usage: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens },
       error: null,
       startedAt,
     });
 
-    const summary = response.output?.message?.content?.[0]?.text?.trim();
+    const trimmed = summary.trim();
 
-    if (!summary) {
+    if (!trimmed) {
       return { summary: null, error: "The summariser returned nothing." };
     }
 
-    return { summary, error: null };
+    return { summary: trimmed, error: null };
   } catch (error) {
     await recordSummaryRequest({
       userId,
@@ -346,7 +399,20 @@ async function summariseTranscript(
 // or writes the same thing twice. The one operation that is not idempotent -
 // creating a Speech job - happens in startTranscription, not here.
 // -------------------------------------------------------------------
-async function advanceTranscription(transcription: Transcription, userId: string): Promise<Transcription> {
+async function advanceTranscription(
+  transcription: Transcription,
+  userId: string,
+  // Whether this caller may spend a model call. FALSE from the page-load
+  // sweep, which renders a server component - a summary takes tens of
+  // seconds, and a page that waits for one shows the reader a blank tab
+  // until it finishes. Worse, if the request dies first, the row never
+  // moves and the next page load starts the whole thing again.
+  //
+  // The poll passes true. It is a client-initiated action behind a spinner,
+  // which is the right place for slow work: the screen keeps rendering, and
+  // the reader can see that something is happening.
+  { allowSummarise }: { allowSummarise: boolean },
+): Promise<Transcription> {
   const { AWAITING_MEDIA, QUEUED, TRANSCRIBING, SUMMARISING, COMPLETED, FAILED } = TRANSCRIPTION_STATUSES;
 
   // Nothing to advance. `awaiting_media` is the browser's turn, not ours.
@@ -372,6 +438,26 @@ async function advanceTranscription(transcription: Transcription, userId: string
   // it. Nothing can be stuck here anyway - summariseTranscript does not
   // throw, so this branch always resolves the row.
   if (transcription.status === SUMMARISING) {
+    // Long enough in this state that the summary is not coming. The row is
+    // completed WITHOUT one rather than left to be retried forever - the
+    // transcript is already stored, so this loses nothing but the summary,
+    // and the screen offers to try it again by hand.
+    const summarisingMinutes = (Date.now() - transcription.updatedAt.getTime()) / (60 * 1000);
+
+    if (summarisingMinutes > SUMMARY_GIVE_UP_MINUTES) {
+      const givenUp = await claimTranscriptionTransitionRepo(transcription.id, userId, [SUMMARISING], {
+        status: COMPLETED,
+        error: "The summary could not be generated. The transcript is unaffected.",
+        completedAt: new Date(),
+      });
+
+      return givenUp ?? transcription;
+    }
+
+    // Left where it is for the poll to pick up. Nothing is lost by waiting:
+    // the transcript is stored and the screen already says "Summarising".
+    if (!allowSummarise) return transcription;
+
     const { summary, error } = await summariseTranscript(transcription, userId);
 
     const updated = await claimTranscriptionTransitionRepo(transcription.id, userId, [SUMMARISING], {
@@ -488,16 +574,22 @@ async function advanceTranscription(transcription: Transcription, userId: string
   // now that ours is stored. Best-effort by design - see the client.
   await deleteTranscriptionJob(transcription.speechJobId);
 
-  // And the recording itself. This is the point the audio stops being worth
-  // its risk: the transcript is in the database, and a meeting recording is
-  // the most sensitive thing this feature touches. Guarded rather than
-  // awaited blindly - a storage failure here must not fail a transcript that
-  // is already safe, and the reconciliation pass collects what is left.
-  try {
-    await deleteMedia(stored.storageKey);
-  } catch (error) {
-    console.error(`advanceTranscription: could not delete the media for ${stored.id}`, error);
-  }
+  // THE RECORDING IS KEPT. It used to be deleted here, on the reasoning that
+  // the transcript was the deliverable and the audio was the most sensitive
+  // thing this feature holds - but that traded away something people
+  // actually want (the audio of their own meeting) for a cost that turned
+  // out to be pennies a month, and for a transcript that automatic speech
+  // recognition guarantees will contain mistakes. Being able to go back to
+  // what was actually said is worth more than the storage.
+  //
+  // It is not kept forever: TRANSCRIPTION_RETENTION_DAYS removes the row and
+  // its recording together, deleting a transcription clears the blob first,
+  // and the reconciliation pass collects anything a cascade orphaned.
+
+  // The transcript is safe. If this caller may not spend a model call, stop
+  // here and let the poll finish the job - the row is already in
+  // `summarising`, which is exactly where the poll expects to find it.
+  if (!allowSummarise) return stored;
 
   const { summary, error } = await summariseTranscript(stored, userId);
 
@@ -518,33 +610,24 @@ async function advanceTranscription(transcription: Transcription, userId: string
 // back to the most recent one, so a stale link or a tampered id lands on a
 // working screen and reveals nothing either way.
 //
-// It also SWEEPS this user's unfinished jobs before reading the list. That
-// is what makes the feature survive a closed tab: the work carries on at
-// the Speech service whether or not anybody is watching, and coming back to
-// the page is the moment the answer is wanted.
+// THIS READS THE DATABASE AND NOTHING ELSE. No Speech call, no blob call,
+// no model call - and that restriction is the whole reason the screen is
+// reliable.
+//
+// It did sweep unfinished jobs here once, and it was wrong in a way that
+// only showed up in production: a server component that awaits an external
+// service renders NOTHING until that service answers, so one stuck job
+// meant the tab sat blank. Worse, when the request was eventually killed,
+// the work it was part-way through was never written, so the row stayed
+// exactly as it was and the next page load began the same doomed attempt.
+//
+// The sweep now runs from the browser instead - see sweepTranscriptionsService
+// below. The page paints immediately from stored state, and jobs move
+// forward in a request nobody is watching a blank screen for.
 // -------------------------------------------------------------------
 export async function getTranscriptionPageService(transcriptionId?: string): Promise<TranscriptionPageDTO> {
   try {
     const user = await requireUser();
-
-    const speechConfigured = isSpeechConfigured();
-
-    if (speechConfigured) {
-      const inFlight = await getInFlightTranscriptionsForUserRepo(user.id);
-
-      // Sequential rather than parallel. Somebody with several jobs running
-      // is the exception, and each of these is a call to an external service
-      // plus a write - fanning them out would turn one slow page load into a
-      // burst against the Speech API.
-      for (const row of inFlight) {
-        try {
-          await advanceTranscription(row, user.id);
-        } catch (error) {
-          // One stuck job must not take the page down with it.
-          console.error(`getTranscriptionPageService: could not advance transcription ${row.id}`, error);
-        }
-      }
-    }
 
     const rows = await getTranscriptionsForUserRepo(user.id);
     const transcriptions = rows.map(mapDBTranscriptionToSummaryDTO);
@@ -562,13 +645,64 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
 
     return {
       isStorageConfigured: isMediaStorageConfigured(),
-      isSpeechConfigured: speechConfigured,
+      isSpeechConfigured: isSpeechConfigured(),
       isStorageReachableByAzure: isMediaReachableByAzureServices(),
       transcriptions,
       active: activeRow ? mapDBTranscriptionToDetailDTO(activeRow) : null,
     };
   } catch (error) {
     throw handleError("getTranscriptionPageService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Move every unfinished job of this user's forward.
+//
+// THE ONE PLACE JOBS ADVANCE. Called from the browser on the transcription
+// screen, on a timer while anything is unfinished. Everything slow lives
+// here - Speech status checks, fetching a finished transcript, deleting the
+// recording, summarising - and none of it is in the path of rendering a
+// page. A slow or stuck job now delays this request only; the screen it
+// belongs to is already on the reader's display, showing stored state.
+//
+// It is also what makes "close the tab and come back" work. The Speech
+// service carries on whether or not anybody is watching, and this is what
+// collects the result when somebody returns.
+//
+// Returns whether anything actually changed, so the caller can re-render
+// once instead of on every tick.
+// -------------------------------------------------------------------
+export async function sweepTranscriptionsService(): Promise<{ changed: boolean }> {
+  try {
+    const user = await requireUser();
+
+    if (!isSpeechConfigured()) return { changed: false };
+
+    const inFlight = await getInFlightTranscriptionsForUserRepo(user.id);
+
+    let changed = false;
+
+    // Sequential rather than parallel. Somebody with several jobs running at
+    // once is the exception, and each of these is a call to an external
+    // service plus a write - fanning them out would turn one sweep into a
+    // burst against the Speech API and, when they all finish together, a
+    // burst of model calls too.
+    for (const row of inFlight) {
+      try {
+        const advanced = await advanceTranscription(row, user.id, { allowSummarise: true });
+
+        if (advanced.status !== row.status) changed = true;
+      } catch (error) {
+        // One stuck job must not stop the others being collected.
+        console.error(`sweepTranscriptionsService: could not advance transcription ${row.id}`, error);
+      }
+    }
+
+    if (changed) revalidateTranscriptionViews();
+
+    return { changed };
+  } catch (error) {
+    throw handleError("sweepTranscriptionsService", error);
   }
 }
 
@@ -756,35 +890,6 @@ export async function startTranscriptionService(
 }
 
 // -------------------------------------------------------------------
-// Where one transcription has got to, advancing it on the way.
-//
-// What the browser polls while a job is running. Scoped to one row rather
-// than sweeping, because the page already swept on load and this is asking
-// about the thing somebody is watching.
-// -------------------------------------------------------------------
-export async function refreshTranscriptionService(
-  requestDTO: TranscriptionIdRequestDTO,
-): Promise<TranscriptionDetailDTO> {
-  try {
-    const user = await requireUser();
-
-    const transcription = await requireOwnedTranscription(requestDTO.transcriptionId, user.id);
-
-    const advanced = await advanceTranscription(transcription, user.id);
-
-    // Only when something actually moved. Revalidating on every poll would
-    // rebuild the page every few seconds for no reason.
-    if (advanced.status !== transcription.status) {
-      revalidateTranscriptionViews();
-    }
-
-    return mapDBTranscriptionToDetailDTO(advanced);
-  } catch (error) {
-    throw handleError("refreshTranscriptionService", error);
-  }
-}
-
-// -------------------------------------------------------------------
 // Try the summary again.
 //
 // For a completed row whose transcript is fine and whose summary would not
@@ -877,6 +982,50 @@ export async function deleteTranscriptionService(requestDTO: TranscriptionIdRequ
     revalidateTranscriptionViews();
   } catch (error) {
     throw handleError("deleteTranscriptionService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The recording itself, for download.
+//
+// Returns an open STREAM rather than bytes. A meeting recording is hundreds
+// of megabytes and reading one into memory to hand back would hold all of
+// it in the instance for the length of the transfer.
+//
+// Null when the recording is gone - a row whose media has aged out, or one
+// transcribed back when recordings were deleted on success. The caller
+// answers 404, which is what it looks like from the reader's side.
+// -------------------------------------------------------------------
+export async function getTranscriptionMediaService(requestDTO: TranscriptionIdRequestDTO): Promise<{
+  stream: NodeJS.ReadableStream;
+  mediaType: string;
+  byteSize: number | null;
+  fileName: string;
+} | null> {
+  try {
+    const user = await requireUser();
+
+    // Ownership FIRST. Storage is only touched once the row has been proved
+    // to be this caller's, so an id that is not theirs never reaches a blob.
+    const transcription = await requireOwnedTranscription(requestDTO.transcriptionId, user.id);
+
+    if (!isMediaStorageConfigured()) return null;
+
+    const media = await openMediaStream(transcription.storageKey);
+
+    if (!media) return null;
+
+    return {
+      stream: media.stream,
+      // The type recorded on the row, which the server derived from the
+      // filename at upload - never the one storage reports back, which is
+      // whatever the browser set on the blob.
+      mediaType: transcription.mediaType,
+      byteSize: media.byteSize ?? transcription.byteSize,
+      fileName: `${safeDownloadName(transcription.title, "")}${extensionForMediaType(transcription.mediaType)}`,
+    };
+  } catch (error) {
+    throw handleError("getTranscriptionMediaService", error);
   }
 }
 
