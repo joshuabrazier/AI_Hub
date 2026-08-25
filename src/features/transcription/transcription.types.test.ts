@@ -43,6 +43,26 @@ describe("mediaTypeForFileName", () => {
     expect(mediaTypeForFileName("minutes.docx")).toBeNull();
     expect(mediaTypeForFileName("script.js")).toBeNull();
   });
+
+  it("takes what real devices actually produce", () => {
+    // Each of these is something somebody will genuinely arrive with, and
+    // each was a silent rejection before: iPhone and Windows voice memos,
+    // Android recorders, Teams and Zoom exports, screen recorders.
+    const realWorld = [
+      "voice memo.m4a", // iPhone, Windows Voice Recorder
+      "meeting.mp4", // Teams, Zoom
+      "screen recording.mov", // macOS
+      "recording.3gp", // older Android recorders
+      "capture.mkv", // OBS and most screen recorders
+      "dictation.wma", // dictaphones and older Windows
+      "call.amr", // phone call recorders
+      "notes.aiff", // macOS uncompressed
+    ];
+
+    for (const fileName of realWorld) {
+      expect(mediaTypeForFileName(fileName), fileName).not.toBeNull();
+    }
+  });
 });
 
 describe("isGuaranteedFormat", () => {
@@ -51,12 +71,27 @@ describe("isGuaranteedFormat", () => {
     expect(isGuaranteedFormat("call.webm")).toBe(true);
   });
 
-  it("is false for MP4 and MOV, which are accepted but not promised", () => {
+  it("is false for the MP4 family, which is accepted but not promised", () => {
     // These are what a phone and a meeting tool actually produce, so they
     // are accepted - but the UI warns, because the Speech service does not
     // list them and may refuse one.
-    expect(isGuaranteedFormat("meeting.mp4")).toBe(false);
-    expect(isGuaranteedFormat("meeting.mov")).toBe(false);
+    //
+    // .m4a is in here deliberately. It is AAC in an MP4 container and it
+    // almost always works, but what Microsoft documents is AAC, which
+    // conventionally means raw ADTS - so claiming it is guaranteed would be
+    // putting words in their mouth.
+    for (const fileName of ["meeting.mp4", "meeting.mov", "memo.m4a", "clip.m4v", "call.3gp"]) {
+      expect(isGuaranteedFormat(fileName), fileName).toBe(false);
+    }
+  });
+
+  it("is true for every format Microsoft lists, including the ones nobody remembers", () => {
+    // SPEEX and Ogg audio are on the documented list and were missing from
+    // the table entirely, so a .spx or .oga file was refused outright even
+    // though the service handles both.
+    for (const fileName of ["a.wav", "a.mp3", "a.flac", "a.ogg", "a.oga", "a.opus", "a.spx", "a.wma", "a.aac", "a.amr", "a.webm"]) {
+      expect(isGuaranteedFormat(fileName), fileName).toBe(true);
+    }
   });
 });
 
