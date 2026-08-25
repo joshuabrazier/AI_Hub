@@ -156,9 +156,13 @@ What keeps it defensible:
 - **The client never names the destination.** The row is created first and the
   key is `transcription/{userId}/{transcriptionId}` derived from ids the server
   generated, so a caller cannot aim an upload at another user's prefix.
-- **Nothing hands out a read URL, ever.** There is no play-back or download path
-  for the media. `createReadUrl` does not exist, and adding one would mean
-  minting a bearer credential that outlives the session check that produced it.
+- **Nothing hands out a read URL, ever.** A recording can be downloaded, but it
+  is streamed back through `/api/transcription/[id]/media` after the service has
+  resolved the row against the session user - never signed. The asymmetry with
+  the upload is deliberate: a write-only SAS scoped to one not-yet-existing blob
+  is worthless to anybody without the exact name, whereas a read URL would be a
+  bearer token for a private meeting, working for whoever came across it long
+  after the session behind it had gone.
 - **The size limit is checked after the upload, from storage.** A SAS grants a
   write; it does not cap one. The first moment the real size is known is when
   the app asks the container, which is what it does before creating a job.
@@ -166,10 +170,12 @@ What keeps it defensible:
   and reads it with its own managed identity, which needs `Storage Blob Data
   Reader` on the account. That authorization is an Azure role assignment
   revocable in one place, not a signed string in flight.
-- **The recording is deleted as soon as its transcript is stored.** The
-  transcript is the deliverable; the audio is the most sensitive thing the
-  feature holds. Only failed and abandoned jobs keep their media, so that a
-  failure can be retried without asking somebody to hold the meeting again.
+- **The recording is kept for `TRANSCRIPTION_RETENTION_DAYS` and then deleted
+  with its row.** Deleting it on success was tried first, on data-minimisation
+  grounds, and reversed: automatic speech recognition guarantees mistakes, so
+  being able to hear what was actually said is worth more than the storage,
+  which is pennies a month at any realistic volume. The page says plainly that
+  the recording is kept, so the promise on screen matches the behaviour.
 - **The transcript is untrusted text like a chat message.** It is a record of
   what people said, rendered as text nodes; the model's summary goes through the
   same `ModelMarkdown` renderer as a chat reply, which emits React elements and
