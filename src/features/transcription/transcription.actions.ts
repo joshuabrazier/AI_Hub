@@ -9,10 +9,10 @@ import {
   createTranscriptionService,
   deleteTranscriptionService,
   getTranscriptTextService,
-  refreshTranscriptionService,
   renameTranscriptionService,
   retryTranscriptionSummaryService,
   startTranscriptionService,
+  sweepTranscriptionsService,
 } from "./transcription.service";
 import {
   CreateTranscriptionRequestDTO,
@@ -87,23 +87,27 @@ export async function startTranscriptionAction(
 }
 
 // -------------------------------------------------------------------
-// Where a running job has got to. Polled by the page while one is in
-// flight; the service advances the row as a side effect of being asked.
+// Move this user's unfinished jobs forward.
+//
+// Polled by the screen while anything is unfinished, and the ONLY thing
+// that advances a job. It deliberately does not take an id: the page knows
+// which of its rows are running, but a sweep that took one would leave the
+// others stalled whenever somebody was looking at a different transcription.
+//
+// This is where all the slow work happens - Speech calls, blob deletes, a
+// model call to summarise. That is the point. Rendering the page touches
+// nothing but the database, so none of this can leave somebody staring at a
+// blank tab.
 // -------------------------------------------------------------------
-export async function refreshTranscriptionAction(
-  requestDTO: TranscriptionIdRequestDTO,
-): Promise<ServerApiResponse<TranscriptionDetailDTO>> {
+export async function sweepTranscriptionsAction(): Promise<ServerApiResponse<{ changed: boolean }>> {
   try {
     await requireUser();
 
-    const validatedRequest = await validateRequest(TranscriptionIdSchema, requestDTO);
-    if (!validatedRequest.success) return validatedRequest.response;
+    const result = await sweepTranscriptionsService();
 
-    const transcription = await refreshTranscriptionService(validatedRequest.data);
-
-    return { success: true, data: transcription } satisfies ServerApiResponse<TranscriptionDetailDTO>;
+    return { success: true, data: result } satisfies ServerApiResponse<{ changed: boolean }>;
   } catch (error) {
-    return handleServerApiError("refreshTranscriptionAction", error);
+    return handleServerApiError("sweepTranscriptionsAction", error);
   }
 }
 

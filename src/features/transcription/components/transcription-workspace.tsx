@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -14,12 +14,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MESSAGES } from "@/lib/constants";
-import { TRANSCRIPTION_STATUSES, TRANSCRIPTION_STATUS_LABELS } from "@/lib/data/kysely-database-types";
+import {
+  TRANSCRIPTION_IN_FLIGHT_STATUSES,
+  TRANSCRIPTION_STATUSES,
+  TRANSCRIPTION_STATUS_LABELS,
+} from "@/lib/data/kysely-database-types";
 import { formatDateTime } from "@/lib/format";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import { cn } from "@/lib/utils";
 
-import { deleteTranscriptionAction, renameTranscriptionAction } from "../transcription.actions";
+import {
+  deleteTranscriptionAction,
+  renameTranscriptionAction,
+  sweepTranscriptionsAction,
+} from "../transcription.actions";
 import {
   TITLE_MAX_CHARS,
   formatDuration,
@@ -45,7 +53,21 @@ import { TranscriptionDetail } from "./transcription-detail";
 // this differs. A recording in progress only exists in the browser's
 // memory; a route change would end it. Keeping the composer out of the URL
 // means nothing about navigation can silently discard a meeting.
+//
+// IT ALSO OWNS THE SWEEP, and it is the only thing that does. Rendering the
+// page reads the database and nothing else, so unfinished jobs are carried
+// forward from here instead: on mount, and then on a timer for as long as
+// anything is unfinished. Every slow call in this feature - the Speech
+// service, deleting a recording, summarising - happens inside that request,
+// where a delay costs a late update rather than a blank screen.
 // -------------------------------------------------------------------
+
+// Slow enough not to hammer the Speech API for a job measured in minutes,
+// quick enough that a finished transcript appears while somebody is still
+// looking at the screen.
+const SWEEP_INTERVAL_MS = 6_000;
+
+const IN_FLIGHT: readonly string[] = TRANSCRIPTION_IN_FLIGHT_STATUSES;
 export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO }) {
   const router = useRouter();
   // The area this is mounted under (/admin/transcription, ...). Read rather
@@ -62,6 +84,60 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
   const [deleting, setDeleting] = useState<TranscriptionSummaryDTO | null>(null);
 
   const activeId = page.active?.id ?? null;
+
+  // Anything the server last saw as unfinished. `awaiting_media` is not in
+  // this list on purpose: that is a browser-side upload, not something a
+  // sweep can move on.
+  const hasUnfinished = page.transcriptions.some((item) => IN_FLIGHT.includes(item.status));
+
+  // -------------------------------------------------------------------
+  // Carry unfinished jobs forward.
+  //
+  // Runs immediately on mount - which is what makes coming back to a job
+  // started an hour ago collect its result - and then on a timer while any
+  // remain. The interval stops the moment nothing is unfinished, so a
+  // screen full of completed transcriptions makes no requests at all.
+  // -------------------------------------------------------------------
+  const isSweeping = useRef(false);
+
+  useEffect(() => {
+    if (!hasUnfinished) return;
+
+    let cancelled = false;
+
+    const sweep = async () => {
+      // A sweep can take far longer than the interval between them: the one
+      // that finds a transcript finished goes on to summarise it. Without
+      // this guard the next tick would start a second sweep over the same
+      // rows, and pay for a second summary of the same recording.
+      if (isSweeping.current) return;
+
+      isSweeping.current = true;
+
+      try {
+        const response = await sweepTranscriptionsAction();
+
+        // Re-read only when something actually moved. Refreshing on every
+        // tick would rebuild the page every six seconds for nothing.
+        if (!cancelled && response.success && response.data.changed) router.refresh();
+      } catch {
+        // Swallowed deliberately. A sweep that fails is retried on the next
+        // tick, and a toast every six seconds during a network blip would be
+        // worse than the blip.
+      } finally {
+        isSweeping.current = false;
+      }
+    };
+
+    void sweep();
+
+    const timer = setInterval(sweep, SWEEP_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [hasUnfinished, router]);
 
   const isReady = page.isStorageConfigured && page.isSpeechConfigured && page.isStorageReachableByAzure;
 
