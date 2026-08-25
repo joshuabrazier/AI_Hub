@@ -23,11 +23,7 @@ import { formatDateTime } from "@/lib/format";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import { cn } from "@/lib/utils";
 
-import {
-  deleteTranscriptionAction,
-  renameTranscriptionAction,
-  sweepTranscriptionsAction,
-} from "../transcription.actions";
+import { deleteTranscriptionAction, renameTranscriptionAction } from "../transcription.actions";
 import {
   TITLE_MAX_CHARS,
   formatDuration,
@@ -68,6 +64,7 @@ import { TranscriptionDetail } from "./transcription-detail";
 const SWEEP_INTERVAL_MS = 6_000;
 
 const IN_FLIGHT: readonly string[] = TRANSCRIPTION_IN_FLIGHT_STATUSES;
+
 export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO }) {
   const router = useRouter();
   // The area this is mounted under (/admin/transcription, ...). Read rather
@@ -115,11 +112,19 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
       isSweeping.current = true;
 
       try {
-        const response = await sweepTranscriptionsAction();
+        // A route handler rather than a server action, deliberately. Actions
+        // run one at a time, and this one can take a minute - as an action
+        // it would hold every rename, delete and retry behind it. See the
+        // note on the route.
+        const response = await fetch("/api/transcription/sweep", { method: "POST" });
+
+        if (!response.ok) return;
+
+        const result = (await response.json()) as { changed?: boolean };
 
         // Re-read only when something actually moved. Refreshing on every
         // tick would rebuild the page every six seconds for nothing.
-        if (!cancelled && response.success && response.data.changed) router.refresh();
+        if (!cancelled && result.changed) router.refresh();
       } catch {
         // Swallowed deliberately. A sweep that fails is retried on the next
         // tick, and a toast every six seconds during a network blip would be
