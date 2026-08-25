@@ -79,6 +79,7 @@ export function ProductivityChart({
   title,
   previousHref,
   nextHref,
+  showFigures = true,
   className,
 }: {
   series: DailySeries;
@@ -90,6 +91,12 @@ export function ProductivityChart({
   // page at runtime for exactly that reason.
   previousHref: string;
   nextHref: string;
+  // Utilisation and billable share are printed in the header by default,
+  // because on a person or a job this chart is the only place they appear.
+  // The overview carries both as headline tiles immediately above, and the
+  // same number twice on one screen reads as two numbers that happen to
+  // agree - so that screen turns them off.
+  showFigures?: boolean;
   className?: string;
 }) {
   const [showTable, setShowTable] = useState(false);
@@ -170,18 +177,20 @@ export function ProductivityChart({
         {/* Two figures, both defined. The tool this replaces shows a "billable
             target" percentage against a target we do not hold, so it is not
             invented here. */}
-        <div className="flex flex-wrap gap-x-8 gap-y-2">
-          <Figure
-            label="Utilisation"
-            value={totals.utilisation === null ? "n/a" : `${Math.round(totals.utilisation * 100)}%`}
-            detail={`${formatHours(totals.loggedHours)} of ${formatHours(totals.availableHours)}`}
-          />
-          <Figure
-            label="Billable share"
-            value={totals.billableShare === null ? "n/a" : `${Math.round(totals.billableShare * 100)}%`}
-            detail={`${formatHours(totals.billableHours)} billable`}
-          />
-        </div>
+        {showFigures && (
+          <div className="flex flex-wrap gap-x-8 gap-y-2">
+            <Figure
+              label="Utilisation"
+              value={totals.utilisation === null ? "n/a" : `${Math.round(totals.utilisation * 100)}%`}
+              detail={`${formatHours(totals.loggedHours)} of ${formatHours(totals.availableHours)}`}
+            />
+            <Figure
+              label="Billable share"
+              value={totals.billableShare === null ? "n/a" : `${Math.round(totals.billableShare * 100)}%`}
+              detail={`${formatHours(totals.billableHours)} billable`}
+            />
+          </div>
+        )}
       </CardHeader>
 
       <CardContent>

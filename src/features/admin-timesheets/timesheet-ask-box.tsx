@@ -2,12 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Search } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
+import { cn } from "@/lib/utils";
 
 import Link from "next/link";
 
@@ -94,20 +95,30 @@ export function TimesheetAskBox({
         }}
         className="flex flex-wrap items-center gap-2"
       >
-        <div className="relative min-w-0 flex-1">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            maxLength={QUERY_MAX_LENGTH}
-            disabled={disabled || isPending}
-            className="pl-9"
-            aria-label="Ask for a view"
-            placeholder="Ask for a view - e.g. Philipp's external work last month"
-          />
+        {/* The gradient edge is on the WRAPPER, not the input - see .ask-bar
+            in globals.css for why a real gradient border cannot be rounded.
+            A sparkle rather than a magnifier: this asks a model a question, it
+            does not filter a list, and a magnifying glass promises the wrong
+            thing. */}
+        <div className="ask-bar min-w-0 flex-1">
+          <div className="relative bg-background">
+            <Sparkles
+              className={cn(
+                "pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 transition-colors",
+                isPending ? "animate-pulse text-primary" : "text-primary/70",
+              )}
+              aria-hidden="true"
+            />
+            <Input
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              maxLength={QUERY_MAX_LENGTH}
+              disabled={disabled || isPending}
+              className="border-transparent bg-transparent pl-9 shadow-none focus-visible:ring-0"
+              aria-label="Ask for a view"
+              placeholder="Ask a question - e.g. what did Philipp cost us last month?"
+            />
+          </div>
         </div>
 
         <Button type="submit" variant="outline" disabled={disabled || isPending || !question.trim()} loading={isPending}>

@@ -42,10 +42,15 @@ function percent(ratio: number | null): string {
 export function RevenueTiles({
   revenue,
   billableFilter = "all",
+  showValue = true,
   index,
 }: {
   revenue: RevenueDTO;
   billableFilter?: string;
+  // Chargeable value leads this row everywhere except the overview, which
+  // promoted it to a headline tile. Repeating it below the fold made the
+  // detail row look like a second, disagreeing set of totals.
+  showValue?: boolean;
   index: number;
 }) {
   const marginIsMeaningful = billableFilter === "all";
@@ -66,13 +71,15 @@ export function RevenueTiles({
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MoneyTile
-          label="Chargeable value"
-          value={formatCents(revenue.chargeableValueCents)}
-          hint={`${revenue.billableHours.toFixed(2)}h billable`}
-          index={index}
-        />
+      <div className={cn("grid gap-4", showValue ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-1 sm:grid-cols-3")}>
+        {showValue && (
+          <MoneyTile
+            label="Chargeable value"
+            value={formatCents(revenue.chargeableValueCents)}
+            hint={`${revenue.billableHours.toFixed(2)}h billable`}
+            index={index}
+          />
+        )}
         <MoneyTile
           label="Effective rate"
           value={formatRate(revenue.effectiveRatePerLoggedHourCents)}

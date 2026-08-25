@@ -98,10 +98,14 @@ export function StatTile({
   hint,
   ratio,
   emphasis = "normal",
-  // "hours" renders "18.75 h", "count" renders "7", "percent" renders "64%".
-  // A count shown with a unit reads as a duration; a percentage shown without
-  // its sign reads as a count, which is how "14" ended up on screen where
-  // "14%" was meant.
+  // "hours" renders "18.75 h", "count" renders "7", "percent" renders "64%",
+  // "currency" renders "$12,480". A count shown with a unit reads as a
+  // duration; a percentage shown without its sign reads as a count, which is
+  // how "14" ended up on screen where "14%" was meant.
+  //
+  // A currency tile takes WHOLE UNITS, not cents, because AnimatedNumber
+  // counts up to the value it is given and nobody wants to watch it climb
+  // through a million cents.
   format = "hours",
   index = 0,
 }: {
@@ -110,7 +114,7 @@ export function StatTile({
   hint?: string;
   ratio?: number | null;
   emphasis?: "normal" | "muted" | "alert";
-  format?: "hours" | "count" | "percent";
+  format?: "hours" | "count" | "percent" | "currency";
   index?: number;
 }) {
   return (
@@ -131,6 +135,8 @@ export function StatTile({
               <AnimatedNumber
                 value={hours}
                 decimals={format === "hours" ? 2 : 0}
+                prefix={format === "currency" ? "$" : undefined}
+                grouped={format === "currency"}
                 suffix={format === "hours" ? " h" : format === "percent" ? "%" : ""}
               />
             </p>

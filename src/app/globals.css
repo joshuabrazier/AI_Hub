@@ -119,16 +119,39 @@
   /* Chart FILLS for the billable split. Separate from --chart-* because those
      are tuned to read as text and lines: --chart-1 has an OKLCH chroma of
      0.085, under the 0.10 floor a large fill needs, so it renders gray-ish as
-     a block. These two were stepped until a validator passed all six checks
-     against this surface - lightness band, chroma floor, CVD separation
-     (deutan dE 18.1), normal-vision separation (dE 24.1) and contrast.
-     Warm-vs-cool on purpose, so the pair survives colour-vision deficiency.
+     a block.
+
+     CHROMATIC AGAINST NEUTRAL, not warm against cool. Billable carries the
+     only colour in the pair; non-billable is a plain slate. That is a
+     semantic choice as much as a visual one - non-billable time is overhead,
+     and it should recede rather than compete with the thing that earns. A
+     stacked bar now reads as "how much of this is chargeable" at a glance,
+     because only one band is coloured.
+
+     THEY ALSO SEPARATE ON LIGHTNESS, not only on chroma, and that part is not
+     optional. "Coloured against grey" reads well in colour and collapses in
+     greyscale - printed, photocopied, or seen by somebody with achromatopsia -
+     if the two sit at the same lightness. The first attempt at this pair did
+     exactly that: 1.13:1 between the two fills, which is no separation at all
+     once the colour is gone.
+
+     Measured, against their own surface and each other:
+       light  #0b5f78 on white 7.19:1   #7b8798 on white 3.65:1   pair 1.97:1
+       dark   #22b8cf on card  7.08:1   #64748b on card  3.54:1   pair 2.00:1
+     Both clear the 3:1 a large graphical fill needs (WCAG 1.4.11), and the
+     pair clears 1.6:1 between themselves so the bands stay distinct with no
+     colour at all.
+
+     NOTE: the previous values cited dE figures from a validator that is not in
+     this repo. These were chosen by contrast ratio and by eye against the same
+     criteria; if that tool still exists, re-run it before treating them as
+     certified.
 
      Non-billable is deliberately NOT red. Training, leave and internal admin
      are legitimate work, and a danger colour would say they were a mistake.
      Red stays reserved for an actual data error - billable status unset. */
-  --data-billable: #0e9aab;
-  --data-nonbillable: #c2691a;
+  --data-billable: #0b5f78;
+  --data-nonbillable: #7b8798;
   --radius: 0.875rem;
   /* Near-white, separated from the content by its border rather than by a
      fill, so the app chrome does not darken the page. */
@@ -173,11 +196,12 @@
   --chart-3: var(--primary);
   --chart-4: #1c8b9c;
   --chart-5: #e0a34b;
-  /* Chosen for the dark card surface, not flipped from light: the dark
-     lightness band is tighter (L 0.48-0.67), and the light-mode pair sits
-     above it. Validated against #131f22 - all six checks pass, CVD dE 17.3. */
-  --data-billable: #119db1;
-  --data-nonbillable: #c48228;
+  /* Chosen for the dark card surface, not flipped from light: on #131f22 both
+     have to move UP in lightness to stay legible, where the light pair moves
+     down. The same chromatic-against-neutral rule applies - see the light
+     block for why non-billable carries no colour. */
+  --data-billable: #22b8cf;
+  --data-nonbillable: #64748b;
   --sidebar: #0f1a1c;
   --sidebar-foreground: #e6eff0;
   --sidebar-primary: var(--primary);
@@ -229,3 +253,80 @@ html body[data-scroll-locked] {
   padding-right: 0 !important;
 }
 
+
+/* -------------------------------------------------------------------
+   The ask bar.
+
+   It looks like a search box and it is not one - it sends a question to a
+   model - so it needs to read as something other than a filter field. A
+   moving gradient edge does that without a badge or a label taking up room.
+
+   Built as a PARENT with a gradient background and 1.5px of padding, with the
+   field sitting on an opaque surface inside it. A real gradient border would
+   need border-image, which cannot be rounded; this is the usual way round it
+   and it keeps the corner radius.
+
+   MOTION IS OPTIONAL, not decoration on top. Under prefers-reduced-motion the
+   gradient holds still - the edge still marks the control as different, it
+   just stops travelling. A vestibular trigger is not worth a hint.
+   ------------------------------------------------------------------- */
+@keyframes ask-sheen {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+.ask-bar {
+  position: relative;
+  padding: 2px;
+  border-radius: calc(var(--radius) - 2px);
+  /* A BRIGHT TRAVELLING BAND against a dim rest-of-edge. The contrast between
+     the two is what makes the sweep readable; an evenly bright gradient just
+     looks like a coloured border sitting still. */
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklch, var(--primary) 20%, var(--border)) 0%,
+    color-mix(in oklch, var(--primary) 20%, var(--border)) 30%,
+    var(--primary) 42%,
+    color-mix(in oklch, var(--data-billable) 80%, white) 50%,
+    var(--primary) 58%,
+    color-mix(in oklch, var(--primary) 20%, var(--border)) 70%,
+    color-mix(in oklch, var(--primary) 20%, var(--border)) 100%
+  );
+  background-size: 250% 100%;
+  animation: ask-sheen 6s linear infinite;
+  transition: box-shadow 220ms ease;
+  /* Lit at rest, not only on focus: the whole point is to be noticed BEFORE
+     anybody clicks it. */
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 9%, transparent);
+}
+
+.ask-bar:has(input:focus-visible),
+.ask-bar:has(input:focus) {
+  box-shadow:
+    0 0 0 4px color-mix(in oklch, var(--primary) 18%, transparent),
+    0 2px 18px -4px color-mix(in oklch, var(--primary) 45%, transparent);
+  animation-duration: 3s;
+}
+
+/* A disabled control must not be the liveliest thing on the page. */
+.ask-bar:has(input:disabled) {
+  animation: none;
+  background: var(--border);
+  box-shadow: none;
+  opacity: 0.7;
+}
+
+.ask-bar > * {
+  border-radius: calc(var(--radius) - 3.5px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-bar {
+    animation: none;
+    background-position: 25% 50%;
+  }
+}

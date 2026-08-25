@@ -258,22 +258,3 @@ export function ReadinessCard({ readiness, index }: { readiness: InvoiceReadines
   );
 }
 
-// The shared legend for the overview's bars, stated once rather than on each.
-export function OverviewLegend() {
-  const keys = [
-    { label: "Billable", fill: "var(--data-billable)" },
-    { label: "Non-billable", fill: "var(--data-nonbillable)" },
-    { label: "Unset", fill: "var(--destructive)" },
-  ];
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-      {keys.map((key) => (
-        <span key={key.label} className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="inline-block size-2.5 rounded-sm" style={{ background: key.fill }} aria-hidden />
-          {key.label}
-        </span>
-      ))}
-    </div>
-  );
-}

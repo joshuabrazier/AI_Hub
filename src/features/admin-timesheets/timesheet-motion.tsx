@@ -37,12 +37,18 @@ const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 export function AnimatedNumber({
   value,
   decimals = 2,
+  prefix = "",
   suffix = "",
+  // Group thousands. Off by default because an hours figure does not want it
+  // and a four-digit money figure is unreadable without it.
+  grouped = false,
   className,
 }: {
   value: number;
   decimals?: number;
+  prefix?: string;
   suffix?: string;
+  grouped?: boolean;
   className?: string;
 }) {
   const reduceMotion = useReducedMotion();
@@ -69,16 +75,23 @@ export function AnimatedNumber({
     return () => controls.stop();
   }, [value, reduceMotion]);
 
-  const formatted = display.toFixed(decimals);
+  const render = (input: number) =>
+    grouped
+      ? input.toLocaleString("en-AU", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+      : input.toFixed(decimals);
 
   return (
     <span className={className}>
       <span aria-hidden="true" className="tabular-nums">
-        {formatted}
+        {prefix}
+        {render(display)}
         {suffix}
       </span>
+      {/* The settled value, for a screen reader: announcing every frame of a
+          count-up would be unusable. */}
       <span className="sr-only">
-        {value.toFixed(decimals)}
+        {prefix}
+        {render(value)}
         {suffix}
       </span>
     </span>
