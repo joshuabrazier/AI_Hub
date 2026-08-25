@@ -111,6 +111,10 @@ export type AiChatRole = (typeof AI_CHAT_ROLES)[keyof typeof AI_CHAT_ROLES];
 export const AI_CHAT_REQUEST_KINDS = {
   CHAT: "chat",
   SUMMARY: "summary",
+  // Summarising a meeting transcript. Not a chat call, but a call to the
+  // same model on the organisation's account, so it belongs in the same
+  // record rather than in a second log nobody remembers to read.
+  TRANSCRIPTION: "transcription",
 } as const;
 
 export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_CHAT_REQUEST_KINDS];
@@ -118,6 +122,7 @@ export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_C
 export const AI_CHAT_REQUEST_KIND_LABELS: Record<AiChatRequestKind, string> = {
   [AI_CHAT_REQUEST_KINDS.CHAT]: "Reply",
   [AI_CHAT_REQUEST_KINDS.SUMMARY]: "Compaction",
+  [AI_CHAT_REQUEST_KINDS.TRANSCRIPTION]: "Meeting summary",
 };
 
 // -------------------------------------------------------------------
@@ -501,6 +506,93 @@ export type NewAiChatAttachment = Insertable<AiChatAttachments>;
 export type AiChatAttachmentMeta = Omit<AiChatAttachment, "storageKey">;
 
 // -------------------------------------------------------------------
+// Transcription status and source
+//
+// A transcription is a long-running job rather than a request, so the row
+// exists before the work is done and moves through these states. See the
+// note on the enum in migrations/008_transcription.sql.
+// -------------------------------------------------------------------
+export const TRANSCRIPTION_STATUSES = {
+  AWAITING_MEDIA: "awaiting_media",
+  QUEUED: "queued",
+  TRANSCRIBING: "transcribing",
+  SUMMARISING: "summarising",
+  COMPLETED: "completed",
+  FAILED: "failed",
+} as const;
+
+export type TranscriptionStatus = (typeof TRANSCRIPTION_STATUSES)[keyof typeof TRANSCRIPTION_STATUSES];
+
+export const TRANSCRIPTION_STATUS_LABELS: Record<TranscriptionStatus, string> = {
+  [TRANSCRIPTION_STATUSES.AWAITING_MEDIA]: "Uploading",
+  [TRANSCRIPTION_STATUSES.QUEUED]: "Queued",
+  [TRANSCRIPTION_STATUSES.TRANSCRIBING]: "Transcribing",
+  [TRANSCRIPTION_STATUSES.SUMMARISING]: "Summarising",
+  [TRANSCRIPTION_STATUSES.COMPLETED]: "Ready",
+  [TRANSCRIPTION_STATUSES.FAILED]: "Failed",
+};
+
+// The states a job can still move on from, so the sweep that advances
+// abandoned jobs has one definition rather than a repeated list.
+export const TRANSCRIPTION_IN_FLIGHT_STATUSES: readonly TranscriptionStatus[] = [
+  TRANSCRIPTION_STATUSES.QUEUED,
+  TRANSCRIPTION_STATUSES.TRANSCRIBING,
+  TRANSCRIPTION_STATUSES.SUMMARISING,
+];
+
+export const TRANSCRIPTION_SOURCES = {
+  UPLOAD: "upload",
+  RECORDING: "recording",
+} as const;
+
+export type TranscriptionSource = (typeof TRANSCRIPTION_SOURCES)[keyof typeof TRANSCRIPTION_SOURCES];
+
+// -------------------------------------------------------------------
+// One speaker turn.
+//
+// Azure Speech diarization labels speakers by number, not by name - it
+// can tell voices apart but has no idea who they belong to. The UI says
+// "Speaker 1" for that reason rather than inventing an identity.
+// -------------------------------------------------------------------
+export type TranscriptionSegment = {
+  speaker: number | null;
+  startMs: number;
+  endMs: number;
+  text: string;
+};
+
+// -------------------------------------------------------------------
+// Transcriptions
+//
+// The MEDIA is not here: `storageKey` points at a blob. A Postgres
+// cascade therefore removes the row and leaves the file, so every delete
+// path clears storage first - the same rule as chat attachments.
+// -------------------------------------------------------------------
+export interface Transcriptions {
+  id: string;
+  userId: string;
+  title: string;
+  source: TranscriptionSource;
+  status: Generated<TranscriptionStatus>;
+  storageKey: string;
+  mediaType: string;
+  byteSize: number | null;
+  durationSeconds: number | null;
+  speechJobId: string | null;
+  transcript: string | null;
+  segments: ColumnType<TranscriptionSegment[] | null, string | null, string | null>;
+  summary: string | null;
+  error: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+  completedAt: Date | null;
+}
+
+export type Transcription = Selectable<Transcriptions>;
+export type NewTranscription = Insertable<Transcriptions>;
+export type UpdateTranscription = Updateable<Transcriptions>;
+
+// -------------------------------------------------------------------
 // AI Chat Request Logs
 // What was ACTUALLY sent to the model, for admin review.
 //
@@ -761,6 +853,7 @@ export interface Database {
   aiChatMessages: AiChatMessages;
   aiChatAttachments: AiChatAttachments;
   aiChatRequestLogs: AiChatRequestLogs;
+  transcriptions: Transcriptions;
   auditLogs: AuditLogs;
   // Timesheet read model, derived from Jira and rebuildable from it.
   jiraProject: JiraProjects;

@@ -194,6 +194,12 @@ precompiled and stable, then shuts it down when the run finishes.
 and Better Auth trusts the same in non-production. So you can expose `pnpm dev`
 through a Cloudflare quick tunnel or a LAN IP to test on a phone over HTTPS.
 
+This is not optional for **transcription**: `getUserMedia` is a secure-context
+API, so the browser will refuse the microphone over plain `http://` to anything
+but `localhost`. On a phone that means a tunnel, not a LAN IP. Without one the
+record tab correctly says recording is unavailable, which looks like a bug and
+is not.
+
 ## File attachments in local development
 
 Chat file attachments need blob storage. Locally that is **Azurite**, the
@@ -213,3 +219,50 @@ the paperclip.
 
 Emulator data lands in `.azurite/`, which is git-ignored. Delete the directory to
 start clean.
+
+### CORS, which transcription needs and chat does not
+
+Transcription uploads go **browser-to-blob**, so the browser makes a cross-origin
+request to storage and the blob service has to answer a preflight. Neither
+Azurite nor a fresh Azure account has any CORS rules, so without this the upload
+fails before it starts - and it fails in the browser, with nothing in the app's
+logs to say why.
+
+```bash
+pnpm dev:storage:cors   # once, with Azurite already running
+```
+
+Chat attachments do not need it: those are proxied through the app, so the
+browser only ever talks to the app's own origin.
+
+The script **refuses to run against anything but the emulator**, on purpose.
+CORS is set on the storage ACCOUNT and `setProperties` replaces the whole rule
+set, so pointing it at a shared account would delete the rules every other
+application on it depends on. Real environments get their rules from the Portal
+instead - see `docs/deployment.md`.
+
+## Transcription in local development
+
+Two things, and they fail differently:
+
+1. **Storage**, as above. The media goes in its own container
+   (`AZURE_MEDIA_CONTAINER`, default `transcription-media`), created on first
+   use, so Azurite covers it with no extra setup.
+2. **An Azure AI Speech resource.** There is no emulator for this one. Create a
+   Speech resource in an Australian region, then set `AZURE_SPEECH_KEY` and
+   `AZURE_SPEECH_REGION`.
+
+With storage but no Speech key, the screen says so rather than accepting a
+recording nothing will read. With neither, it says that instead.
+
+**The local catch.** Batch transcription takes a URL and the Speech service
+fetches it *itself*, so it has to be able to reach the blob - and it cannot
+reach Azurite on your laptop. Transcribing end to end locally therefore needs a
+real storage account rather than the emulator, and that account's access granted
+to the Speech resource. Everything up to the point of creating the job - the
+recorder, the upload, the row, the states - works against Azurite.
+
+In a real environment the app hands over a plain blob URL with no token on it,
+and the Speech resource reads it with its **own managed identity**. Grant that
+identity `Storage Blob Data Reader` on the storage account or every job fails
+with an access error. See `docs/deployment.md`.

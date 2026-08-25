@@ -68,6 +68,17 @@ users, so the guard is `requireUser` and the boundary is the `userId` predicate
 on every query. Mounted in all three areas at `/{admin,manage,portal}/ai-chat`,
 all rendering one feature page.
 
+**Transcription** is the other feature with its own data, and the only one
+whose work outlives its request:
+
+```text
+transcriptions   one recording, owned by one user (+ its transcript,
+                 speaker segments and model-written summary)
+```
+
+Same boundary as chat - per-person, `requireUser`, a `userId` predicate on
+every query - mounted at `/{admin,manage,portal}/transcription`.
+
 `ai_chat_request_logs` is the deliberate exception: it records **what was
 actually sent to the model** on every call, and **admins can read it in full**
 at `/admin/ai-chat-log`. So chat is confidential from peers, not from the
@@ -144,6 +155,16 @@ serving bytes, so the actions rule never applied to it.)
 - **The chat cache point goes LAST in the request**, so the cached prefix is the whole conversation. Opus 4.6 needs 4,096 tokens minimum (below that it silently does not cache, which is fine) and has a **5-minute TTL with no 1-hour option** - that short TTL is why compaction exists alongside caching.
 - **Anthropic's server-side compaction is not reachable over Bedrock Converse** - it is a Messages-API beta needing an `anthropic-beta` header, and Converse cannot send one. `compactIfNeeded` in the chat service is the client-side equivalent. Compaction only changes what is SENT; the original turns stay in the database and stay readable.
 - **Never change `BETTER_AUTH_SECRET` on a live environment** - it invalidates sessions and breaks enrolled 2FA, which Better Auth encrypts under it. `NEXT_PUBLIC_APP_TITLE` is the TOTP issuer, so changing it relabels every enrolled authenticator.
+- **Transcription is a state machine on a row, advanced by whoever looks at it.** `awaiting_media -> queued -> transcribing -> summarising -> completed | failed`. There is NO background worker: the page sweeps this user's unfinished rows on load, and the open one polls. That is why the thing displaying a job is the thing advancing it, and why a 6-hour timeout exists for one nobody comes back to.
+- **The transcription media goes browser-to-blob on a write-only SAS, and that is the one place this app signs a URL.** `cw`, one blob, one hour, on a key derived from a row the caller already owns - the row is created BEFORE the URL is signed for exactly that reason. Nothing hands out a read URL; there is no playback path, and adding one would mint a bearer credential that outlives the session check behind it. Do not copy the pattern for small files - chat attachments are proxied on purpose.
+- **A browser-direct upload needs CORS on the storage ACCOUNT, and a SAS whose protocol matches the endpoint.** Both fail silently in the browser with nothing in the server logs. CORS is set per account and `setProperties` replaces the whole rule set, so it is never done from app code - `pnpm dev:storage:cors` for the emulator (which refuses any other target), the Portal for real environments. The SAS protocol is derived from the connection string because pinning `https` is right for Azure and rejected by Azurite's plain-HTTP endpoint.
+- **A SAS grants a write, it does not cap one**, so the size limit is checked from storage after the upload lands and before a job is created. The app never sees the bytes go past.
+- **Azure Speech reads the blob with its OWN managed identity, not a token from us.** It needs `Storage Blob Data Reader` on the storage account; without it every job fails with an access error. `contentUrl` is deliberately a plain URL with nothing on it.
+- **A recording is deleted the moment its transcript is stored. A FAILED one is kept on purpose** - that is the only case where retrying matters, and a meeting cannot be re-recorded. Same cascade problem as chat attachments, same three answers: blob-first deletes, a retention pass, and a reconciliation sweep (`transcriptionOrphanedMediaPurged`).
+- **`completed` means the TRANSCRIPT is stored, not the summary.** Summarising is a second model call and is allowed to fail: a completed row with `summary` NULL and `error` set is that case, and the screen offers to try again. A failed summary must never cost somebody their transcript.
+- **Azure Speech does not document MP4 or MOV** - only WAV, MP3, OPUS/OGG, FLAC, WMA, AAC, AMR, WebM, SPEEX. They are accepted anyway (they are what phones and meeting tools produce), flagged in the UI, and allowed to fail with the service's own message. `RECORDING_FORMAT_CANDIDATES` is ordered documented-first so only Safari, which supports none of them, ever lands on MP4/AAC.
+- **`Permissions-Policy` in `next.config.ts` gates the recorder.** It reads `microphone=(self)`, and `(self)` is load-bearing in both directions: tightening it to `()` makes the browser refuse `getUserMedia` with no prompt and nothing in the UI to explain why, and removing the directive entirely would let embedded third-party frames use the microphone. Camera and geolocation stay `()`. Changing `next.config.ts` needs a dev-server restart - it does not hot-reload.
+- **Model output renders through `ModelMarkdown`** (`src/components/model-markdown.tsx`), shared by chat replies and meeting summaries. Its three controls - no `rehype-raw`, a `safeUrl` protocol allowlist, images as links - are asserted against rendered output in `model-markdown.test.ts`. A transcript is untrusted text like a chat message and renders as text nodes.
 - **`FIELD_ENCRYPTION_KEY` has no callers in the base** (`src/lib/crypto/field-encryption.ts` is kept as domain-neutral, tested infrastructure - its only user was signable documents, removed). It is unrelated to 2FA. The moment a project encrypts its first value with it, it becomes permanent: rotating it makes that value unreadable.
 
 ## Writing style
@@ -155,7 +176,7 @@ docs, commit messages, and UI copy.
 
 - `src/app` - routes: `(admin)` / `(manage)` / `(portal)` / `(public)`.
 - `src/features/<x>` - feature modules (page / service / actions / types / components).
-- `src/lib` - `auth`, `data` (Kysely client + types + repositories + `sql/`), `ai` (the pinned Bedrock client), `email`, `crypto`, `audit`, `brand`, `env`.
+- `src/lib` - `auth`, `data` (Kysely client + types + repositories + `sql/`), `ai` (the pinned Bedrock client), `speech` (Azure batch transcription), `storage` (blob), `email`, `crypto`, `audit`, `brand`, `env`.
 - `src/components` - `ui/` (shadcn), `form/`, `brand/`, shared tables and dialogs.
 - Unit tests are co-located (`src/**/*.test.ts`); Playwright lives in `tests/e2e`.
 - Schema: `src/lib/data/sql/database-schema.sql` (no migration runner; applied manually). No seed file - the first admin signs in with Microsoft, then is promoted with `scripts/promote-admin.mjs`.

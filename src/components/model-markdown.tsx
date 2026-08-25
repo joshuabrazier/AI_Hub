@@ -7,13 +7,19 @@ import { safeUrl } from "@/lib/safe-url";
 import { cn } from "@/lib/utils";
 
 // -------------------------------------------------------------------
-// Markdown for one assistant reply.
+// Markdown for something a model wrote.
 //
-// HOW THIS KEEPS THE "NEVER RENDER CHAT AS HTML" RULE
+// SHARED, and deliberately not named for one feature: an assistant reply
+// and a meeting summary are the same kind of thing - text this app asked a
+// model to produce - and they need the same treatment for the same reason.
+// A second copy of this file would be a second place for one of the three
+// controls below to be quietly dropped.
+//
+// HOW THIS KEEPS THE "NEVER RENDER MODEL OUTPUT AS HTML" RULE
 //
 // The rule that matters here is that a model repeats back whatever it was
-// given, so a reply is untrusted text - and this app must never hand it to
-// the browser as markup. That rule is intact, because react-markdown does
+// given, so its output is untrusted text - and this app must never hand it
+// to the browser as markup. That rule is intact, because react-markdown does
 // not produce an HTML string at any point: it parses to an AST and renders
 // REACT ELEMENTS from it. There is no dangerouslySetInnerHTML anywhere in
 // this path, and text still reaches the DOM as a text node, escaped by
@@ -30,14 +36,14 @@ import { cn } from "@/lib/utils";
 //      `[click](javascript:...)` becomes a working script link.
 //   3. Images are rendered as LINKS, not fetched. See the note on `img`.
 //
-// USER TURNS ARE NOT RENDERED THROUGH THIS. What somebody typed is shown
-// exactly as they typed it - if they write **stars** they meant stars, and
+// NOTHING A PERSON TYPED GOES THROUGH THIS. What somebody wrote is shown
+// exactly as they wrote it - if they write **stars** they meant stars, and
 // silently reformatting a person's own words is both surprising and a way
-// to make two different inputs look identical. Only the model's half is
-// markdown, which is also what it was trained to emit.
+// to make two different inputs look identical. Only model output is
+// markdown, which is also what the model was asked to emit.
 // -------------------------------------------------------------------
 
-export function AiChatMarkdown({ content, className }: { content: string; className?: string }) {
+export function ModelMarkdown({ content, className }: { content: string; className?: string }) {
   return (
     <div className={cn("text-sm text-foreground", className)}>
       <Markdown

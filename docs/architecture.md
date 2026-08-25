@@ -48,8 +48,8 @@ manager to a team by creating a `team_members` row with `team_role = 'manager'`.
 
 That is the whole domain. Everything else is cross-cutting: `user_invitations`,
 `site_content`, `enquiry_categories` / `enquiry_submissions`, `audit_logs`, the
-`ai_chat_*` tables, plus Better Auth's `sessions` / `accounts` /
-`verifications`.
+`ai_chat_*` tables, `transcriptions`, plus Better Auth's `sessions` /
+`accounts` / `verifications`.
 
 **Adding a domain.** A new project's own tables go alongside these, not inside
 them. The pattern to copy is `admin-teams`: a table, a `*.repository.ts`, a
@@ -115,6 +115,44 @@ the same two-layer arrangement every guarded page uses.
 
 `GET /api/ai-chat/attachments/[attachmentId]` is a route handler too, but it is
 a read that returns bytes, so the mutations rule never applied to it.
+
+### Work that outlives its request - transcription
+
+Transcription is the one feature whose work does not finish inside the request
+that started it. Transcribing an hour of audio takes minutes, so `transcriptions`
+is a **state machine on a row**, and nothing waits:
+
+```text
+awaiting_media -> queued -> transcribing -> summarising -> completed
+                                                        \-> failed
+```
+
+Four steps, and the middle one does not touch this app at all:
+
+1. `createTranscriptionService` writes the row and signs a **write-only, single-blob**
+   upload URL. The row exists first, so the blob key is derived from an id the
+   server generated against a row this user owns - the browser never names its
+   own destination in a shared container.
+2. **The browser PUTs the media straight to Azure Blob.** A meeting recording is
+   hundreds of megabytes; proxying it would tie up an instance for the length of
+   the transfer.
+3. `startTranscriptionService` asks storage whether the file actually landed -
+   the app never saw it go past - checks the size, and creates the Speech job.
+4. `advanceTranscription` moves the row along. It runs from **two places, both
+   of which are just somebody looking at the screen**: the page sweeps this
+   user's unfinished rows when it loads, and the open transcription polls while
+   it is still running.
+
+There is deliberately **no background worker**. The thing that advances a job is
+the thing that displays it, so there is no queue to be down while the page
+cheerfully reports progress - and the monthly job's only role here is retention.
+The cost is that a job nobody ever looks at again stays unfinished until the
+6-hour timeout marks it failed, which is the right trade for a feature where
+somebody is always waiting for the answer.
+
+Note also that all of this is **server actions**, including the one that hands
+out the upload URL. Neither exception above applies: nothing streams, and the
+media never passes through the app, so nothing here is near the body limit.
 
 ## Authentication and authorization
 
