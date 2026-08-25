@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Download, FileText, Loader2, RefreshCw, Sparkles, TriangleAlert } from "lucide-react";
@@ -22,7 +22,6 @@ import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 
 import {
   downloadTranscriptAction,
-  refreshTranscriptionAction,
   retryTranscriptionSummaryAction,
   startTranscriptionAction,
 } from "../transcription.actions";
@@ -33,23 +32,12 @@ import { formatDuration, formatTimestamp, speakerLabel, type TranscriptionDetail
 //
 // One transcription: how it is going, and what came back.
 //
-// IT POLLS, and that is the interesting part. Transcribing an hour of audio
-// takes minutes, so there is nothing to render when the page first loads -
-// the work is happening at the Speech service, which has no way to call
-// back into this app. Asking is the only option available.
-//
-// Two things keep that honest. The interval only runs while this row is
-// actually unfinished, so a screen full of completed transcriptions makes
-// no requests at all. And each poll ADVANCES the row server-side rather
-// than merely reading it, so the thing that moves a job along is the same
-// thing that displays it - there is no separate worker that could be down
-// while the page happily reports progress.
+// It renders STORED STATE and does not advance anything. A job is moved
+// forward by the sweep in the workspace above, which is the single owner of
+// that work - see sweepTranscriptionsAction. This component having its own
+// poll as well is how the same recording ended up being summarised several
+// times over: the sweep and the poll both found it finished.
 // -------------------------------------------------------------------
-
-// Slow enough not to hammer the Speech API for a job measured in minutes,
-// quick enough that a finished transcript appears while somebody is still
-// looking at the screen.
-const POLL_INTERVAL_MS = 6_000;
 
 const IN_FLIGHT: readonly string[] = TRANSCRIPTION_IN_FLIGHT_STATUSES;
 
@@ -72,14 +60,12 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  // Seeded from the server and then advanced by polling, so the screen
-  // updates without a full page render every six seconds.
+  // Seeded from the server, and replaced by the server whenever it
+  // re-renders. The retry buttons below hand back an updated row so the
+  // screen answers immediately rather than waiting for the next sweep.
   const [current, setCurrent] = useState(detail);
   const [renderedFrom, setRenderedFrom] = useState(detail);
 
-  // The server is the authority whenever it re-renders - a rename, a
-  // refresh after a job finishes - so its version replaces the polled one.
-  //
   // Adjusted DURING render rather than in an effect, which is React's own
   // pattern for a prop change that has to reset state: an effect would
   // paint the stale copy first and then immediately re-render over it.
@@ -89,40 +75,6 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
   }
 
   const isInFlight = IN_FLIGHT.includes(current.status);
-
-  useEffect(() => {
-    if (!isInFlight) return;
-
-    let cancelled = false;
-
-    const poll = async () => {
-      try {
-        const response = await refreshTranscriptionAction({ transcriptionId: detail.id });
-
-        if (cancelled || !response.success) return;
-
-        const finished = !IN_FLIGHT.includes(response.data.status);
-
-        setCurrent(response.data);
-
-        // Once it is done the list needs the new status too, and the row is
-        // now carrying a transcript this component should render from the
-        // server rather than from a polled copy.
-        if (finished) router.refresh();
-      } catch {
-        // Swallowed on purpose. A poll that fails is retried six seconds
-        // later, and a toast every six seconds during a network blip would
-        // be worse than the blip.
-      }
-    };
-
-    const timer = setInterval(poll, POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [detail.id, isInFlight, router]);
 
   const retryTranscription = () =>
     startTransition(async () => {
