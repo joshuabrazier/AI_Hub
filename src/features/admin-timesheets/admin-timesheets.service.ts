@@ -21,9 +21,9 @@ import {
   buildTopJobs,
 } from "@/lib/timesheet/overview-series";
 import {
-  capacityHoursForPeriod,
+  capacityHoursForRange,
   countWeekdays,
-  measureAgainstTarget,
+  measureAgainstCapacity,
   toStaffCapacity,
 } from "@/lib/timesheet/staff-capacity";
 import { JIRA_WORKLOG_SYNC_JOB } from "@/features/timesheet-sync/timesheet-sync.service";
@@ -272,7 +272,7 @@ export async function getAdminTimesheetsService(
   // the company-wide assumption. Without it the cards and the chart on the
   // same screen report different utilisation for the same person, which is
   // worse than either being wrong on its own.
-  capacityOverride?: { hoursPerDay: number; periodHours: number },
+  capacityOverride?: { hoursPerDay: number; periodHours: number; workingWeekdays?: number[] | null },
 ): Promise<AdminTimesheetsDTO> {
   try {
     await requireUserRole([USER_ROLES.ADMIN]);
@@ -397,6 +397,11 @@ export async function getAdminTimesheetsService(
         from: period.from,
         to: period.to,
         capacityHours: capacityOverride?.hoursPerDay ?? envServer.WORKING_DAY_HOURS,
+        // WHICH days, when the view is scoped to one person who has them set.
+        // buildDailySeries counts in getUTCDay terms (0 = Sunday) while
+        // staff_target stores ISO (7 = Sunday), so 7 maps back to 0. Without
+        // that conversion a Sunday worker would silently get no target at all.
+        workingWeekdays: capacityOverride?.workingWeekdays?.map((iso) => (iso === 7 ? 0 : iso)),
         // A week shows all seven days because the shape of the week is the
         // point; longer periods drop empty weekends so the chart is not a
         // third blank.
@@ -537,12 +542,14 @@ export async function getStaffDashboardService(request: TimesheetRequest = {}): 
     // being shown, not just a week - a year view against a weekly figure would
     // report everyone at several thousand per cent.
     const probe = await getAdminTimesheetsService(request);
-    const weekdays = countWeekdays(probe.period.from, probe.period.to);
 
     const data = scopedCapacity
       ? await getAdminTimesheetsService(request, {
           hoursPerDay: scopedCapacity.hoursPerDay,
-          periodHours: capacityHoursForPeriod(scopedCapacity, weekdays),
+          periodHours: capacityHoursForRange(scopedCapacity, probe.period.from, probe.period.to),
+          // So the chart's per-day target is zero on days this person does not
+          // work, rather than drawing a full day across the whole week.
+          workingWeekdays: scopedCapacity.workingWeekdays,
         })
       : probe;
     const weekdaysInPeriod = countWeekdays(data.period.from, data.period.to);
@@ -559,9 +566,12 @@ export async function getStaffDashboardService(request: TimesheetRequest = {}): 
       const targetRow = targetByPerson.get(personId) ?? null;
       const capacity = toStaffCapacity(targetRow, personId);
 
-      const performance = measureAgainstTarget(
+      // Day-aware: somebody contracted to Monday, Tuesday and Wednesday is
+      // measured against those days in this period, not against three fifths
+      // of every weekday. Falls back to prorating when their days are unset.
+      const performance = measureAgainstCapacity(
         capacity,
-        weekdaysInPeriod,
+        capacityHoursForRange(capacity, data.period.from, data.period.to),
         totals?.hours ?? 0,
         totals?.split.billableHours ?? 0,
       );
@@ -585,6 +595,7 @@ export async function getStaffDashboardService(request: TimesheetRequest = {}): 
         target: {
           personId,
           personName: targetRow?.personName ?? totals?.personName ?? null,
+          workingWeekdays: capacity.workingWeekdays,
           workingDaysPerWeek: capacity.workingDaysPerWeek,
           hoursPerDay: capacity.hoursPerDay,
           weeklyHours: capacity.weeklyHours,
@@ -624,6 +635,21 @@ export async function getStaffDashboardService(request: TimesheetRequest = {}): 
     const dailyCapacityHours = inScope.reduce((total, person) => total + person.target.hoursPerDay, 0);
     const periodCapacityHours = inScope.reduce((total, person) => total + person.capacityHours, 0);
 
+    // WHICH days the scoped person works, carried into the rebuild.
+    //
+    // This rebuild is why the per-day target looked unchanged at first: the
+    // build inside getAdminTimesheetsService had the days and got it right,
+    // and then this one replaced the series without them, putting a full-day
+    // target back on every weekday.
+    //
+    // Only for a SINGLE person in scope. Two people with different days off
+    // have no shared "day off", and blanking a day one of them works would
+    // understate the pair - so a multi-person view keeps every weekday.
+    const scopedWeekdays =
+      inScope.length === 1 && inScope[0].target.workingWeekdays?.length
+        ? inScope[0].target.workingWeekdays.map((iso) => (iso === 7 ? 0 : iso))
+        : undefined;
+
     const scaledData: AdminTimesheetsDTO =
       dailyCapacityHours > 0
         ? {
@@ -632,6 +658,7 @@ export async function getStaffDashboardService(request: TimesheetRequest = {}): 
               from: data.period.from,
               to: data.period.to,
               capacityHours: dailyCapacityHours,
+              workingWeekdays: scopedWeekdays,
               includeNonWorkingDays: data.period.granularity === "week",
               bucket: bucketFor(data.period.granularity),
               availableHoursOverride: periodCapacityHours,

@@ -27,6 +27,7 @@ import type { StaffRateRow } from "./revenue";
 
 const capacity = (over: Partial<StaffCapacity> = {}): StaffCapacity => ({
   personId: "p1",
+  workingWeekdays: null,
   workingDaysPerWeek: 5,
   hoursPerDay: 7.5,
   weeklyHours: 37.5,

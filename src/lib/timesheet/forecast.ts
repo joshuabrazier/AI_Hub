@@ -1,4 +1,4 @@
-import { type StaffCapacity } from "./staff-capacity";
+import { workingDatesInRange, type StaffCapacity } from "./staff-capacity";
 import { resolveRateFor, type StaffRateRow } from "./revenue";
 
 // -------------------------------------------------------------------
@@ -159,9 +159,47 @@ export function forecastRemainingCost(input: {
 }): CostForecast {
   const progress = periodProgress(input.from, input.to, input.today);
 
-  const remainingWeekdays = weekdaysBetween(input.from, input.to).filter((day) =>
-    progress.isComplete ? false : progress.isFuture ? true : day > input.today,
-  );
+  const isAhead = (day: string) => (progress.isComplete ? false : progress.isFuture ? true : day > input.today);
+
+  // -----------------------------------------------------------------
+  // WHEN THE WORKING DAYS ARE KNOWN there is nothing to estimate: the days
+  // still to come are exactly this person's own weekdays that fall after
+  // today, each a full day at the rate in force on it.
+  //
+  // That is strictly better than the count heuristic below - it knows a
+  // Monday that has already passed cannot be worked again, and it puts no
+  // capacity in a week somebody does not work at all.
+  // -----------------------------------------------------------------
+  const namedDays = workingDatesInRange(input.capacity, input.from, input.to).filter(isAhead);
+
+  if (namedDays.length > 0 || (input.capacity.workingWeekdays?.length && Number.isInteger(input.capacity.workingDaysPerWeek))) {
+    let costCents = 0;
+    let anyRate = false;
+    let missingRate = false;
+
+    for (const day of namedDays) {
+      const rate = resolveRateFor(input.rates, input.personId, day);
+
+      if (rate === null || rate.costRateCents === null) {
+        missingRate = true;
+        continue;
+      }
+
+      anyRate = true;
+      costCents += rate.costRateCents * input.capacity.hoursPerDay;
+    }
+
+    return {
+      progress,
+      committedRemainingCostCents: anyRate && !missingRate ? Math.round(costCents) : null,
+      committedRemainingHours: Math.round(namedDays.length * input.capacity.hoursPerDay * 100) / 100,
+      assumesNoLeave: true,
+      // Nothing was spread: these are the person's actual days.
+      proratedAcrossWeekdays: false,
+    };
+  }
+
+  const remainingWeekdays = weekdaysBetween(input.from, input.to).filter(isAhead);
 
   const share = input.capacity.workingDaysPerWeek / DAYS_PER_FULL_WEEK;
 

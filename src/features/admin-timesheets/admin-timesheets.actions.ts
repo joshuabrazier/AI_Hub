@@ -110,7 +110,8 @@ export async function saveStaffTargetAction(
     const parsed = await validateRequest(StaffTargetSchema, request);
     if (!parsed.success) return parsed.response;
 
-    const { personId, personName, workingDaysPerWeek, hoursPerDay, billableTargetPercent } = parsed.data;
+    const { personId, personName, workingDaysPerWeek, hoursPerDay, billableTargetPercent, workingWeekdays } =
+      parsed.data;
 
     await upsertStaffTargetRepo({
       personId,
@@ -118,6 +119,7 @@ export async function saveStaffTargetAction(
       // Rounded because the schema allows half days and half hours; storing a
       // float here would put the string-versus-number trap back.
       workingDaysTenths: Math.round(workingDaysPerWeek * 10),
+      workingWeekdays,
       minutesPerDay: Math.round(hoursPerDay * 60),
       billableTargetPercent: billableTargetPercent === null ? null : Math.round(billableTargetPercent),
     });

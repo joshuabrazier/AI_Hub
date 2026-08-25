@@ -729,6 +729,10 @@ export interface StaffTargets {
   personId: string;
   personName: string | null;
   workingDaysTenths: Generated<number>;
+  // ISO weekday numbers, 1 = Monday. Null when only a count is recorded, which
+  // is what every row started as - see migration 009. Null is NOT an empty
+  // array: "unspecified" and "works no days" are different arrangements.
+  workingWeekdays: number[] | null;
   minutesPerDay: Generated<number>;
   billableTargetPercent: number | null;
   notes: string | null;

@@ -144,6 +144,19 @@ export interface AdminTimesheetsDTO {
 export const StaffTargetSchema = z.object({
   personId: z.string().min(1, "A person is required"),
   personName: z.string().optional(),
+  // WHICH days, as ISO weekday numbers. Optional: leaving it empty keeps the
+  // old behaviour of prorating the count across every weekday, which is the
+  // right default because nothing knows somebody's days until they are set.
+  //
+  // Duplicates are rejected HERE, because a CHECK constraint cannot express it
+  // without a subquery - see migration 009. A repeated Tuesday would double
+  // that day's capacity.
+  workingWeekdays: z
+    .array(z.coerce.number().int().min(1).max(7))
+    .max(7)
+    .optional()
+    .transform((days) => (days && days.length > 0 ? [...new Set(days)].sort((a, b) => a - b) : null))
+    .refine((days) => days === null || days.length > 0, "Choose at least one day, or none at all"),
   // 0 to 7, half days allowed. Someone on leave for a period is legitimately 0.
   workingDaysPerWeek: z.coerce
     .number()
@@ -161,6 +174,9 @@ export const StaffTargetSchema = z.object({
 export type StaffTargetRequestDTO = z.infer<typeof StaffTargetSchema>;
 
 export interface StaffTargetDTO {
+  // ISO weekday numbers the person works, 1 = Monday. Null when only a count
+  // is recorded - see migration 009.
+  workingWeekdays: number[] | null;
   personId: string;
   personName: string | null;
   workingDaysPerWeek: number;
