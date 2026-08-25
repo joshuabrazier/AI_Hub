@@ -12,6 +12,7 @@
     "test:e2e": "node tests/run-e2e.mjs",
     "test:all": "node tests/run-all.mjs",
     "dev:storage": "azurite-blob --location .azurite --silent --skipApiVersionCheck",
+    "dev:storage:cors": "node --env-file=.env scripts/configure-dev-storage.mjs",
     "dev:turbopack": "next dev -p 3100"
   },
   "dependencies": {

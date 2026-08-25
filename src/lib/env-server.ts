@@ -172,6 +172,39 @@ const serverEnvSchema = z.object({
   AZURE_STORAGE_CONNECTION_STRING: z.string().min(1).optional(),
   AZURE_STORAGE_ATTACHMENT_CONTAINER: z.string().min(3).max(63).default("ai-chat-attachments"),
 
+  // Container for meeting recordings and uploaded media. Separate from the
+  // attachment container so the two can have different lifecycle rules -
+  // recordings are large and comparatively few, attachments are small and
+  // many.
+  AZURE_MEDIA_CONTAINER: z.string().min(3).max(63).default("transcription-media"),
+
+  // -------------------------------------------------------------------
+  // Azure AI Speech (meeting transcription)
+  //
+  // Optional. Unset means the Transcription screen explains it is not
+  // configured rather than offering a recorder that cannot transcribe.
+  //
+  // The REGION is part of the endpoint hostname, so it must match the
+  // Speech resource exactly - "australiaeast", not "Australia East".
+  // Keep it in an Australian region: an audio recording of a meeting is
+  // considerably more sensitive than most of what this app holds, and the
+  // residency argument that pinned Bedrock to Australia applies here with
+  // more force, not less.
+  // -------------------------------------------------------------------
+  AZURE_SPEECH_KEY: z.string().min(1).optional(),
+  AZURE_SPEECH_REGION: z.string().min(1).optional(),
+
+  // The language spoken in recordings. Azure needs a specific locale, not
+  // a language - "en-AU" transcribes Australian English noticeably better
+  // than "en-US" on local place names and accents.
+  AZURE_SPEECH_LOCALE: z.string().min(2).default("en-AU"),
+
+  // How long a transcription and its media are kept, in days. Recordings
+  // of meetings are the most sensitive thing this app stores, and they are
+  // large - so the default window is deliberately shorter than chat.
+  // Set to 0 to keep them indefinitely.
+  TRANSCRIPTION_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(90),
+
   // -------------------------------------------------------------------
   // Microsoft sign-in (Entra ID)
   //
@@ -265,6 +298,11 @@ export const envServer = serverEnvSchema.parse({
 
   AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING,
   AZURE_STORAGE_ATTACHMENT_CONTAINER: process.env.AZURE_STORAGE_ATTACHMENT_CONTAINER,
+  AZURE_MEDIA_CONTAINER: process.env.AZURE_MEDIA_CONTAINER,
+  AZURE_SPEECH_KEY: process.env.AZURE_SPEECH_KEY,
+  AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION,
+  AZURE_SPEECH_LOCALE: process.env.AZURE_SPEECH_LOCALE,
+  TRANSCRIPTION_RETENTION_DAYS: process.env.TRANSCRIPTION_RETENTION_DAYS,
 
   MICROSOFT_CLIENT_ID: process.env.MICROSOFT_CLIENT_ID,
   MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,

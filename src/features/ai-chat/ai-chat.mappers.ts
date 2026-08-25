@@ -28,7 +28,7 @@ export function mapDBAiChatSubjectToDTO(subject: AiChatSubjectWithCount): AiChat
 // model will repeat back whatever it was given.
 //
 // The user's half renders as a text node. The model's half goes through
-// AiChatMarkdown, which is NOT an exception to that: it parses to an AST
+// ModelMarkdown, which is NOT an exception to that: it parses to an AST
 // and renders React elements, so no HTML string is ever produced and the
 // text still reaches the DOM escaped. Nothing in this feature turns stored
 // chat content into markup.

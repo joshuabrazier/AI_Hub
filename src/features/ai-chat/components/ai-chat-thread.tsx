@@ -13,6 +13,7 @@ import {
   UserRound,
 } from "lucide-react";
 
+import { ModelMarkdown } from "@/components/model-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -32,7 +33,6 @@ import {
   type AiChatSubjectDetailDTO,
 } from "../ai-chat.types";
 import { AiChatAttachmentList } from "./ai-chat-attachment-list";
-import { AiChatMarkdown } from "./ai-chat-markdown";
 
 // -------------------------------------------------------------------
 // AiChatThread
@@ -521,7 +521,7 @@ export function AiChatThread({
 // The user's turn is a TEXT NODE with `whitespace-pre-wrap`, which keeps
 // their line breaks and indentation without giving up React's escaping.
 // The model's turn is markdown, rendered to React elements rather than to
-// an HTML string - see AiChatMarkdown, where that distinction is the whole
+// an HTML string - see ModelMarkdown, where that distinction is the whole
 // argument for why this is still safe.
 // -------------------------------------------------------------------
 function MessageRow({
@@ -571,9 +571,9 @@ function MessageRow({
         ) : (
           // The model's half, rendered as markdown - which is the format it
           // writes in. Renders to React elements, never to an HTML string;
-          // see the note in AiChatMarkdown for why that distinction is the
+          // see the note in ModelMarkdown for why that distinction is the
           // whole security argument.
-          <AiChatMarkdown content={message.content} className="mt-1" />
+          <ModelMarkdown content={message.content} className="mt-1" />
         )}
 
         {/* What was sent with this turn. No remove handler: once a file is
