@@ -37,35 +37,84 @@ export const TITLE_MAX_CHARS = 120;
 // in the column is one of ours rather than whatever the client claimed.
 //
 // UPLOADS ARE THE RISKY HALF, and this table is where that shows. Azure
-// Speech documents support for WAV, MP3, OPUS/OGG, FLAC, WMA, AAC, AMR,
-// WebM and SPEEX. MP4 AND MOV ARE NOT ON THAT LIST. The service runs
-// GStreamer underneath and in practice usually demuxes them, but Microsoft
-// does not promise it - so they are accepted here, flagged in the UI, and
-// allowed to fail with the service's own message rather than being
-// silently rejected by us or silently promised to work.
+// Speech documents a specific list, and the MP4 family - .mp4, .m4a, .mov,
+// .m4v, .3gp - is not on it, nor are .mkv, .avi, .wmv or .aiff.
+//
+// NOTHING HERE CONVERTS ANYTHING. The file is uploaded exactly as it
+// arrived and Azure is handed a URL to it; all decoding happens on their
+// side. The undocumented formats work because a container like .mp4 is only
+// a wrapper around an audio stream the service can already decode, and its
+// decoder unwraps more than the published list commits to. Microsoft
+// documents GStreamer as the decoder for the SDK's compressed-audio path,
+// where the accepted formats include "ANY for MP4 container or unknown
+// media format" - but that is the SDK, not the batch REST API used here,
+// whose internals are not documented at all. So these formats working is an
+// OBSERVATION, not a promise, and that is exactly why they are flagged
+// rather than listed as supported.
+//
+// They are accepted, flagged in the UI, and allowed to fail with the
+// service's own message. Refusing them outright would be worse: between
+// them they are what every phone, meeting tool and screen recorder actually
+// produces, and a person holding a recording of a meeting that already
+// happened is not helped by being told the extension is wrong.
 //
 // A browser recording picks from RECORDING_FORMAT_CANDIDATES below, which
 // is a shorter and safer list - so the record path mostly avoids this
 // problem, and never lands on MP4 video.
 // -------------------------------------------------------------------
 export const MEDIA_TYPES_BY_EXTENSION: Record<string, string> = {
+  // Documented by Microsoft. ALAW and MULAW are also listed, but both live
+  // inside a WAV container, so .wav already covers them.
   ".wav": "audio/wav",
   ".mp3": "audio/mpeg",
   ".flac": "audio/flac",
   ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
   ".opus": "audio/opus",
+  ".spx": "audio/ogg",
   ".wma": "audio/x-ms-wma",
   ".aac": "audio/aac",
   ".amr": "audio/amr",
-  ".m4a": "audio/mp4",
   ".webm": "video/webm",
+
+  // Not documented, accepted anyway - see the note above. These are what
+  // real devices actually produce, in rough order of how often they turn up:
+  // phone voice memos and meeting tools first, screen recorders after.
+  ".m4a": "audio/mp4",
   ".mp4": "video/mp4",
+  ".m4v": "video/x-m4v",
   ".mov": "video/quicktime",
+  ".3gp": "video/3gpp",
+  ".3gpp": "video/3gpp",
+  ".mkv": "video/x-matroska",
+  ".wmv": "video/x-ms-wmv",
+  ".avi": "video/x-msvideo",
+  ".aiff": "audio/aiff",
+  ".aif": "audio/aiff",
 };
 
-// The formats Microsoft actually lists. Anything outside this is accepted
-// but warned about, because it is the service that decides, not us.
-const GUARANTEED_EXTENSIONS = [".wav", ".mp3", ".flac", ".ogg", ".opus", ".wma", ".aac", ".amr", ".webm"];
+// The formats Microsoft actually lists: WAV, MP3, OPUS/OGG, FLAC, WMA, AAC,
+// ALAW and MULAW in a WAV container, AMR, WebM and SPEEX. Anything outside
+// this is accepted but warned about, because it is the service that
+// decides, not us.
+//
+// .m4a is deliberately NOT here even though it almost always works. It is
+// AAC inside an MP4 container, and what Microsoft documents is AAC - which
+// conventionally means raw ADTS. Claiming it is guaranteed would be putting
+// words in their mouth, and the warning costs a sentence.
+const GUARANTEED_EXTENSIONS = [
+  ".wav",
+  ".mp3",
+  ".flac",
+  ".ogg",
+  ".oga",
+  ".opus",
+  ".spx",
+  ".wma",
+  ".aac",
+  ".amr",
+  ".webm",
+];
 
 export const SUPPORTED_MEDIA_EXTENSIONS = Object.keys(MEDIA_TYPES_BY_EXTENSION);
 

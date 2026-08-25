@@ -12,7 +12,6 @@ import {
   renameTranscriptionService,
   retryTranscriptionSummaryService,
   startTranscriptionService,
-  sweepTranscriptionsService,
 } from "./transcription.service";
 import {
   CreateTranscriptionRequestDTO,
@@ -35,6 +34,11 @@ import {
 // near the server-action body limit. The whole point of the upload URL is
 // that a 500 MB recording goes browser-to-storage and never touches this
 // process.
+//
+// The SWEEP is not here either, and that is a third exception with its own
+// reason: actions are executed one at a time, and a sweep that summarises a
+// transcript runs for tens of seconds - long enough to hold every rename
+// and delete on the screen behind it. It is POST /api/transcription/sweep.
 //
 // Each action validates its input and hands off to the service. The
 // requireUser here is the outer gate only - the service repeats it, and the
@@ -83,31 +87,6 @@ export async function startTranscriptionAction(
     return { success: true, data: transcription } satisfies ServerApiResponse<TranscriptionDetailDTO>;
   } catch (error) {
     return handleServerApiError("startTranscriptionAction", error);
-  }
-}
-
-// -------------------------------------------------------------------
-// Move this user's unfinished jobs forward.
-//
-// Polled by the screen while anything is unfinished, and the ONLY thing
-// that advances a job. It deliberately does not take an id: the page knows
-// which of its rows are running, but a sweep that took one would leave the
-// others stalled whenever somebody was looking at a different transcription.
-//
-// This is where all the slow work happens - Speech calls, blob deletes, a
-// model call to summarise. That is the point. Rendering the page touches
-// nothing but the database, so none of this can leave somebody staring at a
-// blank tab.
-// -------------------------------------------------------------------
-export async function sweepTranscriptionsAction(): Promise<ServerApiResponse<{ changed: boolean }>> {
-  try {
-    await requireUser();
-
-    const result = await sweepTranscriptionsService();
-
-    return { success: true, data: result } satisfies ServerApiResponse<{ changed: boolean }>;
-  } catch (error) {
-    return handleServerApiError("sweepTranscriptionsAction", error);
   }
 }
 
