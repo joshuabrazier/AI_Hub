@@ -1,10 +1,11 @@
 import "server-only";
 
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import QRCode from "qrcode";
 
 import { auth } from "@/lib/auth/auth";
-import { requireSessionUserForTwoFactor } from "@/lib/auth/session-auth-server";
+import { isTwoFactorSatisfied, requireSessionUserForTwoFactor } from "@/lib/auth/session-auth-server";
 import { recordAuditEvent } from "@/lib/audit/audit-log.service";
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from "@/lib/audit/audit-log.types";
 import { database } from "@/lib/data/kysely-database-client";
@@ -15,6 +16,7 @@ import {
 } from "@/lib/data/repositories/session-two-factor.repository";
 import { updateUserByIdRepo } from "@/lib/data/repositories/users.repository";
 import { DisplayErrorMessage } from "@/lib/errors";
+import { roleHome } from "@/lib/routes";
 import { handleError } from "@/lib/handle-errors";
 
 import {
@@ -62,7 +64,23 @@ async function readTwoFactorState(userId: string): Promise<{ exists: boolean; ve
 // -------------------------------------------------------------------
 export async function getTwoFactorScreenService(): Promise<TwoFactorScreenDTO> {
   try {
-    const { user } = await requireSessionUserForTwoFactor();
+    const { user, sessionId, twoFactorEnrolled } = await requireSessionUserForTwoFactor();
+
+    // ALREADY THROUGH? Then there is nothing to do here, and showing the
+    // form anyway is worse than showing nothing.
+    //
+    // This screen is the one page in the app that requireUser does NOT gate,
+    // because it is where that gate sends people - which also means it is
+    // the one page you can still reach after you no longer need it. Without
+    // this check somebody whose session is already verified, or an
+    // environment with the feature switched off, gets a verification form
+    // that can only fail, while every other URL lets them straight in.
+    //
+    // Sent to their own area rather than to "/" so the answer does not
+    // depend on a second redirect hop.
+    if (await isTwoFactorSatisfied(sessionId, twoFactorEnrolled)) {
+      redirect(roleHome(user.role));
+    }
 
     const state = await readTwoFactorState(user.id);
 
@@ -195,7 +213,7 @@ function extractSecret(totpURI: string): string {
 // -------------------------------------------------------------------
 export async function verifyTwoFactorService(
   requestDTO: VerifyTwoFactorRequestDTO,
-): Promise<void> {
+): Promise<{ redirectTo: string }> {
   try {
     const { user, sessionId, twoFactorEnrolled } = await requireSessionUserForTwoFactor();
 
@@ -267,6 +285,12 @@ export async function verifyTwoFactorService(
         summary: `${user.name ?? user.email} set up two-factor authentication`,
       });
     }
+
+    // Where to send them, decided HERE because this is the only side that
+    // knows the role. The screen used to navigate to "/" and let the public
+    // home redirect onwards, which worked but made the destination depend on
+    // a second hop through a page that has nothing to do with signing in.
+    return { redirectTo: roleHome(user.role) };
   } catch (error) {
     throw handleError("verifyTwoFactorService", error);
   }
