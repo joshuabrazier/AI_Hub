@@ -98,10 +98,21 @@ export const MEDIA_TYPES_BY_EXTENSION: Record<string, string> = {
 // this is accepted but warned about, because it is the service that
 // decides, not us.
 //
-// .m4a is deliberately NOT here even though it almost always works. It is
-// AAC inside an MP4 container, and what Microsoft documents is AAC - which
-// conventionally means raw ADTS. Claiming it is guaranteed would be putting
-// words in their mouth, and the warning costs a sentence.
+// .m4a IS here, and it is the one entry on this list Microsoft does not
+// spell out. It was previously excluded on the grounds that what they
+// document is AAC, which conventionally means raw ADTS, and .m4a is AAC
+// inside an MP4 container - so listing it was putting words in their mouth.
+//
+// That reasoning was right about the documentation and wrong about the
+// cost. A phone voice memo is .m4a, which makes it the single most common
+// thing anybody uploads here, and warning on the most common case trains
+// people to ignore the warning - which then does not work for .mov or .avi,
+// where it actually earns its place. A caveat shown to everybody is not a
+// caveat.
+//
+// It is still an observation rather than a promise, and the honest place
+// for that is this comment. If .m4a ever does start failing, the fix is a
+// message naming the format, not a banner on every upload.
 const GUARANTEED_EXTENSIONS = [
   ".wav",
   ".mp3",
@@ -114,6 +125,7 @@ const GUARANTEED_EXTENSIONS = [
   ".aac",
   ".amr",
   ".webm",
+  ".m4a",
 ];
 
 export const SUPPORTED_MEDIA_EXTENSIONS = Object.keys(MEDIA_TYPES_BY_EXTENSION);
