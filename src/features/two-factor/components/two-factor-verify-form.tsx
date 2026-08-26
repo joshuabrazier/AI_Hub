@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
-import { ROUTES } from "@/lib/routes";
 
 import { verifyTwoFactorAction } from "../two-factor.actions";
 
@@ -49,8 +48,12 @@ export function TwoFactorVerifyForm({ autoFocus = true }: { autoFocus?: boolean 
         return;
       }
 
-      router.replace(ROUTES.PUBLIC_HOME);
+      // The destination comes from the server, which is the only side that
+      // knows the role. Refresh first so the layouts re-render with a
+      // session that has now passed the gate - otherwise the push can land
+      // on a cached tree that still thinks it has to send us back here.
       router.refresh();
+      router.replace(response.data.redirectTo);
     } catch (error) {
       // The shared handler, not a local message - it is the only thing that
       // recognises a stale deployment, which is by far the most likely
