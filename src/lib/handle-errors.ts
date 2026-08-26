@@ -1,7 +1,7 @@
 import { toast } from "sonner";
 import { MESSAGES } from "./constants";
 import { ServerApiResponse } from "./types";
-import { DisplayErrorMessage, RedirectError } from "./errors";
+import { isDisplayError, isRedirectError } from "./errors";
 import { redirect, unstable_rethrow } from "next/navigation";
 
 // -------------------------------------------------------------------
@@ -31,11 +31,15 @@ export function handleServerApiError(method: string, error: unknown): ServerApiR
 
   console.error(`${method} Error:`, error);
 
-  if (error instanceof RedirectError) {
+  if (isRedirectError(error)) {
     redirect(error.path);
   }
 
-  const errorMessage = error instanceof DisplayErrorMessage ? error.message : MESSAGES.SOMETHING_WENT_WRONG;
+  // isDisplayError, not `instanceof` - see the note in errors.ts. A
+  // production build can put the throw and this check in different chunks,
+  // and identity comparison quietly fails across them, turning every
+  // deliberate message into the generic one.
+  const errorMessage = isDisplayError(error) ? error.message : MESSAGES.SOMETHING_WENT_WRONG;
 
   return {
     success: false,
@@ -61,7 +65,7 @@ export function handleFrontendErrorWithToast(error: unknown) {
 function getFrontendErrorMessage(error: unknown) {
   let errorMessage: string;
 
-  if (error instanceof DisplayErrorMessage) {
+  if (isDisplayError(error)) {
     errorMessage = error.message;
   } else {
     errorMessage = MESSAGES.SOMETHING_WENT_WRONG;
