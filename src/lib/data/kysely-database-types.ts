@@ -837,6 +837,34 @@ export type UpdateSyncWatermark = Updateable<SyncWatermarks>;
 // -------------------------------------------------------------------
 // Database
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// Push Subscriptions
+//
+// One row per DEVICE. `installationId` is a random id the browser keeps in
+// localStorage and is the natural key - it is how a device that
+// re-subscribes updates its row rather than leaving a dead one behind.
+//
+// The three credential columns are issued by the browser vendor's push
+// service, not by us. They are not secrets in the sense a password is, but
+// they identify a person's device, so nothing reads them except the send
+// path.
+// -------------------------------------------------------------------
+export interface PushSubscriptions {
+  id: string;
+  installationId: string;
+  userId: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+  lastUsedAt: Date | null;
+}
+
+export type PushSubscription = Selectable<PushSubscriptions>;
+export type NewPushSubscription = Insertable<PushSubscriptions>;
+export type UpdatePushSubscription = Updateable<PushSubscriptions>;
+
 export interface Database {
   users: Users;
   sessions: Sessions;
@@ -854,6 +882,7 @@ export interface Database {
   aiChatAttachments: AiChatAttachments;
   aiChatRequestLogs: AiChatRequestLogs;
   transcriptions: Transcriptions;
+  pushSubscriptions: PushSubscriptions;
   auditLogs: AuditLogs;
   // Timesheet read model, derived from Jira and rebuildable from it.
   jiraProject: JiraProjects;
