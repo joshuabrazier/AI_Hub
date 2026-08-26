@@ -6,6 +6,8 @@ import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 
+import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
+
 import { FormDialog } from "@/components/form/form-dialog";
 import { FormSelectField } from "@/components/form/form-select-field";
 import { FormSwitchField } from "@/components/form/form-switch-field";
@@ -159,8 +161,8 @@ function TwoFactorResetSection({ user }: { user: AdminUserResponseDTO }) {
       // The row's badge is server-rendered, so it needs a refresh to stop
       // offering a reset for a factor that is already gone.
       router.refresh();
-    } catch {
-      toast.error("Something went wrong. Please try again.");
+    } catch (error) {
+      handleFrontendErrorWithToast(error);
     } finally {
       setIsPending(false);
       setIsConfirming(false);

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
 
 import { verifyTwoFactorAction } from "../two-factor.actions";
@@ -50,8 +51,11 @@ export function TwoFactorVerifyForm({ autoFocus = true }: { autoFocus?: boolean 
 
       router.replace(ROUTES.PUBLIC_HOME);
       router.refresh();
-    } catch {
-      toast.error("Something went wrong. Please try again.");
+    } catch (error) {
+      // The shared handler, not a local message - it is the only thing that
+      // recognises a stale deployment, which is by far the most likely
+      // reason a call from this form fails outright rather than returning.
+      handleFrontendErrorWithToast(error);
     } finally {
       setIsPending(false);
     }
