@@ -106,10 +106,31 @@ export async function beginTwoFactorEnrolmentService(): Promise<TwoFactorEnrolme
       );
     }
 
-    const result = await auth.api.enableTwoFactor({
-      body: {},
-      headers: await headers(),
-    });
+    let result;
+
+    try {
+      result = await auth.api.enableTwoFactor({
+        body: {},
+        headers: await headers(),
+      });
+    } catch (error) {
+      // The one predictable failure, and worth naming rather than letting
+      // it surface as "we could not start two-factor setup".
+      //
+      // allowPasswordless only skips the password check for accounts that
+      // have NONE. A local development account made by
+      // scripts/create-dev-user.mjs has a `credential` row, so the plugin
+      // asks for a password, none is passed, and it answers
+      // INVALID_PASSWORD. Nothing is broken - it is simply the one account
+      // type this cannot enrol, and it only exists on a developer machine.
+      if ((error as { body?: { code?: string } }).body?.code === "INVALID_PASSWORD") {
+        throw new DisplayErrorMessage(
+          "This account signs in with a password, and two-factor setup is only available for accounts that sign in with Microsoft. Sign in with Microsoft and try again.",
+        );
+      }
+
+      throw error;
+    }
 
     if (!result?.totpURI) {
       throw new DisplayErrorMessage("We could not start two-factor setup. Please try again.");
