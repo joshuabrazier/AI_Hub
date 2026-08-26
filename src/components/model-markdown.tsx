@@ -194,7 +194,7 @@ export function ModelMarkdown({ content, className }: { content: string; classNa
           // stretching the message column.
           table: ({ children }) => (
             <div className="my-2 overflow-x-auto first:mt-0 last:mb-0">
-              <table className="w-full border-collapse text-left text-xs">{children}</table>
+              <table className="w-full border-collapse text-left font-sans text-xs">{children}</table>
             </div>
           ),
           thead: ({ children }) => <thead className="border-b border-border">{children}</thead>,

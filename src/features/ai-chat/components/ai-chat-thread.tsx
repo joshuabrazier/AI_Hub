@@ -10,7 +10,6 @@ import {
   Paperclip,
   SendHorizontal,
   Sparkles,
-  UserRound,
 } from "lucide-react";
 
 import { ModelMarkdown } from "@/components/model-markdown";
@@ -274,24 +273,46 @@ export function AiChatThread({
   };
 
   return (
-    <div className="flex h-[calc(100vh-18rem)] min-h-[28rem] flex-col rounded-xl border border-border">
-      {/* Transcript */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+    // No border and no card. The conversation IS the page, so a box drawn
+    // around it only makes the reading area smaller.
+    //
+    // h-full, not a calc. The page above is a fixed-height flex column, so
+    // this fills what is left after the header and the composer stays on
+    // screen at any window size.
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Transcript. The scroll is full-bleed so a long reply does not sit
+          inside a visible frame, but the CONTENT is held to a measured
+          column - prose past about 75 characters a line is measurably harder
+          to read, and a chat reply is prose. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6">
         {messages.length === 0 && !isStreaming ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <span className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
-              <Sparkles size={22} aria-hidden="true" />
+          // The greeting on an empty thread, and the place the full terms of
+          // the thing live. The page header above is one line now, so this
+          // carries what that line no longer says - and it is read at the
+          // moment somebody is deciding what to type, which is when it
+          // actually matters rather than on every return visit.
+          <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
+            <span className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <Sparkles size={24} aria-hidden="true" />
             </span>
-            <p className="mt-3 text-sm font-medium text-foreground">
-              Ask the first question
+
+            <h2 className="mt-4 font-heading text-xl font-semibold text-foreground">
+              What would you like to know?
+            </h2>
+
+            <p className="mt-2 max-w-md text-sm text-muted-foreground">
+              Ask about this app or about your timesheets. The whole conversation is sent each time, so you can
+              build on earlier questions.
             </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              The whole conversation is sent each time, so you can build on your
-              earlier questions.
+
+            <p className="mt-5 max-w-md text-xs leading-relaxed text-muted-foreground">
+              This conversation is private from other users. Timesheet answers are limited to what your role can
+              already see. Administrators can review the requests sent to the model.
             </p>
           </div>
         ) : (
-          <ul className="space-y-4">
+          <ul className="space-y-6">
             {messages.map((message) => (
               <Fragment key={message.id}>
                 <MessageRow message={message} />
@@ -337,15 +358,16 @@ export function AiChatThread({
           </ul>
         )}
 
-        <div ref={bottomRef} />
+          <div ref={bottomRef} />
+        </div>
       </div>
 
       {/* Composer. Doubles as the drop zone, so a file can be dragged
           anywhere over it rather than onto a small target. */}
       <div
         className={cn(
-          "border-t border-border p-3 transition-colors",
-          isDropTarget && "bg-primary/5",
+          "mx-auto w-full max-w-3xl px-4 pb-4 transition-colors",
+          isDropTarget && "opacity-90",
         )}
         onDragEnter={(event) => {
           // Only react to an actual file drag; dragging selected text over
@@ -404,51 +426,23 @@ export function AiChatThread({
           </div>
         )}
 
-        <div className="flex items-end gap-2">
-          {/* The real input stays off-screen and the button drives it, so the
-              control matches the rest of the UI while keeping a native file
-              picker and its keyboard behaviour. */}
-          {canAttachFiles && (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept={AI_CHAT_ACCEPT_ATTRIBUTE}
-                className="sr-only"
-                tabIndex={-1}
-                onChange={(event) => {
-                  void upload(Array.from(event.target.files ?? []));
-                  // Cleared so choosing the same file twice in a row still
-                  // fires a change event.
-                  event.target.value = "";
-                }}
-              />
-
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                disabled={isStreaming || isUploading}
-                onClick={() => fileInputRef.current?.click()}
-                aria-label="Attach files"
-                title={`Attach files - ${AI_CHAT_ACCEPTED_SUMMARY}`}
-              >
-                <Paperclip size={16} aria-hidden="true" />
-              </Button>
-            </>
+      {/* ONE ROUNDED FIELD holding all three controls, rather than a text box
+          with buttons beside it. The whole thing is the input: the border and
+          the focus ring belong to the container, so attaching and sending
+          read as part of writing rather than as separate widgets. */}
+        <div
+          className={cn(
+            "flex flex-col gap-2 rounded-2xl border border-border bg-card px-3 pb-2 pt-3 shadow-sm transition-shadow",
+            "focus-within:border-primary/40 focus-within:shadow-md",
+            isDropTarget && "border-primary/60 shadow-md",
           )}
-
+        >
           <Textarea
             aria-label="Message"
             value={draft}
             maxLength={MAX_MESSAGE_CHARS}
             rows={2}
-            placeholder={
-              staged.length > 0
-                ? "Ask about the attached files..."
-                : "Ask anything..."
-            }
+            placeholder={staged.length > 0 ? "Ask about the attached files..." : "Write a message..."}
             disabled={isStreaming}
             onChange={(event) => setDraft(event.target.value)}
             onPaste={(event) => {
@@ -477,34 +471,100 @@ export function AiChatThread({
                 void send();
               }
             }}
-            className="min-h-0 resize-none"
+            className={cn(
+              "max-h-56 min-h-0 w-full resize-none border-0 bg-transparent px-1 py-0 text-[0.9375rem] shadow-none",
+              "dark:bg-transparent",
+              "focus-visible:ring-0 focus-visible:ring-offset-0",
+            )}
+            style={{ height: "auto" }}
+            ref={(node) => {
+              // Grow to fit, up to the max-height above, after which it
+              // scrolls. A fixed row count is either too small for a
+              // paragraph or too large for the one-line question that most
+              // messages actually are.
+              if (!node) return;
+              node.style.height = "auto";
+              node.style.height = `${node.scrollHeight}px`;
+            }}
           />
 
-          {isStreaming ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => abortRef.current?.abort()}
-              aria-label="Stop generating"
-            >
-              <CircleStop size={16} aria-hidden="true" />
-              Stop
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              onClick={() => void send()}
-              disabled={draft.trim().length === 0 || isUploading}
-            >
-              <SendHorizontal size={16} aria-hidden="true" />
-              Send
-            </Button>
-          )}
+
+          {/* The controls, on their own row under the text. Attach on the
+              left where a toolbar starts, send on the right where a line
+              ends - so neither sits in the way of what is being written. */}
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1">
+            {/* The real input stays off-screen and the button drives it, so the
+                control matches the rest of the UI while keeping a native file
+                picker and its keyboard behaviour. */}
+            {canAttachFiles && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept={AI_CHAT_ACCEPT_ATTRIBUTE}
+                  className="sr-only"
+                  tabIndex={-1}
+                  onChange={(event) => {
+                    void upload(Array.from(event.target.files ?? []));
+                    // Cleared so choosing the same file twice in a row still
+                    // fires a change event.
+                    event.target.value = "";
+                  }}
+                />
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+                  disabled={isStreaming || isUploading}
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach files"
+                  title={`Attach files - ${AI_CHAT_ACCEPTED_SUMMARY}`}
+                >
+                  <Paperclip size={18} aria-hidden="true" />
+                </Button>
+              </>
+            )}
+
+            </span>
+
+            {isStreaming ? (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="size-9 shrink-0 rounded-full"
+                onClick={() => abortRef.current?.abort()}
+                aria-label="Stop generating"
+                title="Stop generating"
+              >
+                <CircleStop size={18} aria-hidden="true" />
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="icon"
+                className="size-9 shrink-0 rounded-full"
+                onClick={() => void send()}
+                disabled={draft.trim().length === 0 || isUploading}
+                aria-label="Send message"
+                title="Send message"
+              >
+                <SendHorizontal size={18} aria-hidden="true" />
+              </Button>
+            )}
+          </div>
         </div>
 
-        <p className="mt-2 text-xs text-muted-foreground">
+        {/* Kept, but demoted to a hint under the field rather than a line of
+            instructions above it. Somebody who already knows Enter sends
+            should not read it on every visit. */}
+        <p className="mt-2 text-center text-xs text-muted-foreground">
           Enter to send, Shift + Enter for a new line.
-          {canAttachFiles ? " Attach, paste or drop files" : ""}
+          {canAttachFiles ? " Attach, paste or drop files." : ""}
         </p>
       </div>
     </div>
@@ -533,69 +593,91 @@ function MessageRow({
 }) {
   const isUser = message.role === AI_CHAT_ROLES.USER;
 
-  return (
-    <li className="flex gap-3">
-      <span
-        className={cn(
-          "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full",
-          isUser
-            ? "bg-muted text-muted-foreground"
-            : "bg-primary text-primary-foreground",
-        )}
-      >
-        {isUser ? (
-          <UserRound size={16} aria-hidden="true" />
-        ) : (
-          <Sparkles size={16} aria-hidden="true" />
-        )}
-      </span>
-
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {isUser ? "You" : "Assistant"}
-        </p>
-
-        {message.content.length === 0 && isStreaming ? (
-          <p className="mt-1 text-sm text-muted-foreground" role="status">
-            Thinking...
-          </p>
-        ) : isUser ? (
-          // The user's own words, exactly as typed. Deliberately NOT
-          // markdown: somebody who writes **stars** meant stars, and
-          // reformatting a person's own message is both surprising and a
-          // way to make two different inputs render identically. Still a
-          // text node, so it is escaped by React as it always was.
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">
+  // ---------------------------------------------------------------
+  // The two halves are shaped DIFFERENTLY on purpose, which is what makes a
+  // transcript readable without labelling every turn.
+  //
+  // A person's message is short and is theirs, so it sits in a bubble on the
+  // right - bounded, obviously an utterance. The model's is long and is the
+  // thing being read, so it has no bubble and no avatar and runs the full
+  // width of the column, like a document.
+  //
+  // That asymmetry replaces the "YOU" / "ASSISTANT" captions this used to
+  // carry. Two visual forms say the same thing as two words, and do not
+  // repeat it on every turn down a long thread.
+  // ---------------------------------------------------------------
+  if (isUser) {
+    return (
+      <li className="group/msg flex flex-col items-end gap-1">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 sm:max-w-[75%]">
+          {/* The user's own words, exactly as typed. Deliberately NOT
+              markdown: somebody who writes **stars** meant stars, and
+              reformatting a person's own message is both surprising and a
+              way to make two different inputs render identically. Still a
+              text node, so it is escaped by React as it always was. */}
+          <p className="whitespace-pre-wrap break-words text-[0.9375rem] leading-relaxed text-foreground">
             {message.content}
           </p>
-        ) : (
-          // The model's half, rendered as markdown - which is the format it
-          // writes in. Renders to React elements, never to an HTML string;
-          // see the note in ModelMarkdown for why that distinction is the
-          // whole security argument.
-          <ModelMarkdown content={message.content} className="mt-1" />
-        )}
+        </div>
 
-        {/* What was sent with this turn. No remove handler: once a file is
-            part of the transcript it stays, because the model was shown it
-            and the answer above may depend on it. */}
-        <AiChatAttachmentList
-          attachments={message.attachments}
-          className="mt-2"
+        <AiChatAttachmentList attachments={message.attachments} className="max-w-[85%] sm:max-w-[75%]" />
+
+        <Timestamp message={message} isStreaming={isStreaming} />
+      </li>
+    );
+  }
+
+  return (
+    <li className="group/msg flex flex-col gap-1">
+      {message.content.length === 0 && isStreaming ? (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+          {/* A moving indicator rather than the word alone: a tool call adds
+              a second round trip, so this can sit for several seconds and
+              static text reads as a page that has stopped. */}
+          <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+          Thinking...
+        </p>
+      ) : (
+        // The model's half, rendered as markdown - which is the format it
+        // writes in. Renders to React elements, never to an HTML string;
+        // see the note in ModelMarkdown for why that distinction is the
+        // whole security argument.
+        <ModelMarkdown
+          content={message.content}
+          className="font-reading text-[1.0625rem] leading-[1.75] text-foreground"
         />
+      )}
 
-        {/* When the reply landed. The `outputTokens` check is the test for
-            "this reply completed and was persisted" - a stream the reader
-            stopped part-way has no usage recorded, and stamping a time on it
-            would suggest a finished answer. Token counts used to sit here and
-            were removed from the UI; they are still stored per turn, and the
-            admin AI-requests screen is where spend is reviewed. */}
-        {!isStreaming && message.outputTokens !== null && (
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            {formatDateTime(message.createdAt)}
-          </p>
-        )}
-      </div>
+      {/* What was sent with this turn. No remove handler: once a file is
+          part of the transcript it stays, because the model was shown it
+          and the answer above may depend on it. */}
+      <AiChatAttachmentList attachments={message.attachments} className="mt-1" />
+
+      <Timestamp message={message} isStreaming={isStreaming} />
     </li>
+  );
+}
+
+// -------------------------------------------------------------------
+// When the reply landed.
+//
+// ON HOVER AND ON FOCUS, not always. A time under every turn is noise in a
+// conversation you are reading straight through, but it is the thing you want
+// the moment you are reconciling a figure against when it was asked for - so
+// it is kept and made quiet rather than removed.
+//
+// The `outputTokens` check is the test for "this reply completed and was
+// persisted": a stream the reader stopped part-way has no usage recorded, and
+// stamping a time on it would suggest a finished answer. Token counts used to
+// sit here and were removed from the UI; they are still stored per turn, and
+// the admin AI-requests screen is where spend is reviewed.
+// -------------------------------------------------------------------
+function Timestamp({ message, isStreaming }: { message: AiChatMessageDTO; isStreaming: boolean }) {
+  if (isStreaming || message.outputTokens === null) return null;
+
+  return (
+    <p className="text-xs text-muted-foreground opacity-0 transition-opacity group-hover/msg:opacity-100 group-focus-within/msg:opacity-100">
+      {formatDateTime(message.createdAt)}
+    </p>
   );
 }

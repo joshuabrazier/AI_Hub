@@ -9,6 +9,9 @@ import {
   type Message,
   type SystemContentBlock,
 } from "@aws-sdk/client-bedrock-runtime";
+// The shape a toolUse input block carries. Re-exported by neither the
+// Bedrock client nor its models, so it comes from smithy directly.
+import type { DocumentType } from "@smithy/types";
 import { generateId } from "better-auth";
 import { revalidatePath } from "next/cache";
 
@@ -34,6 +37,9 @@ import {
   putAttachment,
 } from "@/lib/storage/attachment-storage";
 import { requireUser } from "@/lib/auth/session-auth-server";
+
+import { appKnowledgePrompt } from "./ai-chat-app-knowledge";
+import { CHAT_TOOL_CONFIG, MAX_TOOL_ROUNDS, runChatTool } from "./ai-chat-tools";
 import {
   AI_CHAT_ATTACHMENT_KINDS,
   AI_CHAT_REQUEST_KINDS,
@@ -44,6 +50,7 @@ import {
   type AiChatMessage,
   type AiChatRequestKind,
   type AiChatSubject,
+  type UserRole,
 } from "@/lib/data/kysely-database-types";
 import {
   addAiChatAttachmentRepo,
@@ -72,6 +79,7 @@ import {
 import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
+import { todayInAppZone } from "@/lib/timezone";
 
 import {
   deriveAiChatSubjectTitle,
@@ -139,7 +147,43 @@ const SYSTEM_PROMPT = [
   "Your replies are rendered as GitHub-flavoured Markdown, so use it where it helps: headings, bold, lists, tables, and fenced code blocks with a language tag.",
   "Keep formatting proportionate - short answers need none of it, and a wall of headings is worse than a sentence.",
   "Do not open with filler like 'Certainly' or 'Great question'.",
+  // Asked for in a real conversation, and it is the house style anyway: this
+  // repo bans em and en dashes in code, docs, commits and UI copy. The
+  // assistant's replies are the one text in the product that was not covered
+  // by that rule, so it kept using them and had to be asked each time.
+  "Never use em dashes or en dashes. Use a hyphen, a comma, or a full stop instead.",
 ].join(" ");
+
+// -------------------------------------------------------------------
+// What the timesheet tool is for, and the one rule that governs using it.
+//
+// Sent as its own system block so it sits behind the cache point with the
+// rest of the prefix, and so the arithmetic rule is stated where the model
+// cannot lose it behind a long conversation.
+//
+// TODAY'S DATE IS ESSENTIAL HERE. "Last month" is unanswerable without it,
+// and a model guessing the date will confidently look up the wrong period -
+// which returns real figures for a period nobody asked about, the hardest
+// kind of wrong answer to notice. It comes from the app zone, never from a
+// browser clock.
+// -------------------------------------------------------------------
+function timesheetToolPrompt(todayIso: string): string {
+  return [
+    `Today is ${todayIso}.`,
+    "You can look up this organisation's timesheet figures with the get_timesheet_figures tool.",
+    "Use it whenever a question turns on hours, utilisation, billable share, clients, projects, or - for administrators - cost, margin and chargeable value.",
+    "",
+    "NEVER CALCULATE A TIMESHEET FIGURE YOURSELF. Every number the tool returns is already worked out.",
+    "Quote them as given. Do not sum them, divide them, convert hours to days, or work out a percentage or an average that is not already there.",
+    "If somebody asks for a figure the tool did not return, say it is not available and name what you do have.",
+    "The one thing you may do is compare two figures the tool gave you, and say which is larger.",
+    "",
+    "What you can see depends on who is asking, and the tool decides that - not you.",
+    "An administrator gets the whole organisation. Anybody else gets only their own time, and no cost or pay information at all.",
+    "If the result's scope says viewer is 'self', do not imply that other people's figures exist but are hidden; simply answer about theirs.",
+    "Always read the scope.notes list and pass on what it says.",
+  ].join(" ");
+}
 
 // Output ceiling per reply. Streaming means HTTP timeouts are not the
 // constraint, so this is a deliberate cost cap rather than a technical one:
@@ -672,6 +716,9 @@ function buildConverseRequest(
   summary: string | null,
   summaryThroughMessageId: string | null,
   attachmentsByMessage: Map<string, LoadedAttachment[]>,
+  // The caller's role and name, so the app description can be filtered to the
+  // screens they can actually open and addressed to them by name.
+  viewer: { role: UserRole; name: string | null },
 ): ConverseRequest {
   // Everything after the summarised cursor. A cursor matching no row (a
   // summary written against turns since removed) degrades to "the summary
@@ -746,7 +793,15 @@ function buildConverseRequest(
     };
   });
 
-  const system: SystemContentBlock[] = [{ text: SYSTEM_PROMPT }];
+  // Three blocks, all ahead of the conversation and therefore inside the
+  // cached prefix: how to answer, what the app is, and how to use the tool.
+  // They are separate blocks rather than one long string so a change to any
+  // of them reads as a change to that thing.
+  const system: SystemContentBlock[] = [
+    { text: SYSTEM_PROMPT },
+    { text: appKnowledgePrompt(viewer.role, viewer.name) },
+    { text: timesheetToolPrompt(todayInAppZone()) },
+  ];
 
   if (summary) {
     system.push({
@@ -779,6 +834,16 @@ type LoggedAttachment = {
   format: string;
   name: string | null;
   byteSize: number;
+};
+
+// One half of a tool exchange: either the call the model asked for, or the
+// result it was handed back. Both are recorded - see the note at the
+// flatMap below for why the result half is the one that matters most.
+type LoggedToolExchange = {
+  direction: "request" | "result";
+  // The tool's name on a request; the id it answers on a result.
+  name: string;
+  body: string;
 };
 
 async function recordRequest(entry: {
@@ -822,6 +887,44 @@ async function recordRequest(entry: {
           .filter(Boolean)
           .join(""),
         cachePoint: blocks.some((block) => "cachePoint" in block),
+
+        // TOOL TRAFFIC IS PART OF WHAT WAS SENT, so it is recorded here.
+        //
+        // Without this the log would show a question and an answer with the
+        // data transfer between them invisible - which for a tool that hands
+        // over people's utilisation and pay-derived costs is exactly the part
+        // an admin reviewing the log needs to see. Dropping it would turn
+        // "we record what was sent" into "we record what was typed".
+        //
+        // Both halves are kept: the ARGUMENTS the model chose, so a lookup of
+        // the wrong period or the wrong person is visible, and the RESULT it
+        // was given, which is the figures themselves.
+        tools: blocks.flatMap<LoggedToolExchange>((block) => {
+          if ("toolUse" in block && block.toolUse) {
+            return [
+              {
+                direction: "request",
+                name: block.toolUse.name ?? "unknown",
+                body: JSON.stringify(block.toolUse.input ?? {}),
+              },
+            ];
+          }
+
+          if ("toolResult" in block && block.toolResult) {
+            return [
+              {
+                direction: "result",
+                name: block.toolResult.toolUseId ?? "unknown",
+                body: (block.toolResult.content ?? [])
+                  .map((part) => ("text" in part ? (part.text ?? "") : ""))
+                  .filter(Boolean)
+                  .join(""),
+              },
+            ];
+          }
+
+          return [];
+        }),
         attachments: blocks.flatMap<LoggedAttachment>((block) => {
           if ("image" in block && block.image) {
             return [
@@ -1147,6 +1250,7 @@ export async function* streamAiChatReplyService(
     summary,
     summaryThroughMessageId,
     attachmentsByMessage,
+    { role: user.role, name: user.name ?? null },
   );
 
   if (trimmed > 0) {
@@ -1175,39 +1279,130 @@ export async function* streamAiChatReplyService(
   const startedAt = Date.now();
 
   try {
-    const response = await getBedrockClient().send(
-      new ConverseStreamCommand({
-        modelId: BEDROCK_MODEL_ID,
-        system,
-        messages,
-        inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
-      }),
-    );
+    // -----------------------------------------------------------------
+    // The tool loop.
+    //
+    // Converse answers a tool call by ENDING the turn with stopReason
+    // "tool_use". Getting a reply then means sending the whole conversation
+    // again with the model's tool request and our result appended - so this
+    // is a loop over round trips, not a callback.
+    //
+    // Bounded by MAX_TOOL_ROUNDS, because each pass is a paid request and a
+    // model that loops is a bill nobody is watching. On the last pass the
+    // tools are withheld entirely, which forces an answer in words rather
+    // than a fifth request we would have to refuse mid-stream.
+    //
+    // Token counts ACCUMULATE across passes. Reporting only the last one
+    // would under-report the spend of exactly the questions that cost most,
+    // which is the opposite of what the request log is for.
+    // -----------------------------------------------------------------
+    for (let round = 0; ; round++) {
+      const isFinalRound = round >= MAX_TOOL_ROUNDS;
 
-    if (!response.stream) {
-      throw new Error("Bedrock returned no stream");
-    }
+      const response = await getBedrockClient().send(
+        new ConverseStreamCommand({
+          modelId: BEDROCK_MODEL_ID,
+          system,
+          messages,
+          inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
+          ...(isFinalRound ? {} : { toolConfig: CHAT_TOOL_CONFIG }),
+        }),
+      );
 
-    for await (const event of response.stream) {
-      // Text arrives as deltas on the content block. `toolUse` and
-      // `reasoningContent` deltas are possible on this union and are ignored:
-      // no tools are declared, and extended thinking is not enabled.
-      const chunk = event.contentBlockDelta?.delta?.text;
-      if (chunk) {
-        reply += chunk;
-        yield chunk;
-        continue;
+      if (!response.stream) {
+        throw new Error("Bedrock returned no stream");
       }
 
-      // Usage arrives once, at the end, on its own event. All four figures are
-      // recorded: `inputTokens` alone is only the uncached remainder once a
-      // cache point is in play.
-      if (event.metadata?.usage) {
-        inputTokens = event.metadata.usage.inputTokens ?? null;
-        outputTokens = event.metadata.usage.outputTokens ?? null;
-        cacheReadTokens = event.metadata.usage.cacheReadInputTokens ?? null;
-        cacheWriteTokens = event.metadata.usage.cacheWriteInputTokens ?? null;
+      // Content blocks arrive interleaved and are identified by index, so a
+      // tool call is assembled from three events: a start naming it, deltas
+      // carrying its arguments as JSON text, and the stop that ends it.
+      const toolCalls = new Map<number, { toolUseId: string; name: string; input: string }>();
+      let roundText = "";
+      let stopReason: string | undefined;
+
+      for await (const event of response.stream) {
+        const started = event.contentBlockStart?.start?.toolUse;
+        if (started?.toolUseId && started.name) {
+          toolCalls.set(event.contentBlockStart?.contentBlockIndex ?? 0, {
+            toolUseId: started.toolUseId,
+            name: started.name,
+            input: "",
+          });
+          continue;
+        }
+
+        // Arguments stream in as fragments of JSON and are only valid once
+        // the block closes, so they are concatenated and parsed at the end.
+        const toolDelta = event.contentBlockDelta?.delta?.toolUse?.input;
+        if (toolDelta !== undefined) {
+          const call = toolCalls.get(event.contentBlockDelta?.contentBlockIndex ?? 0);
+          if (call) call.input += toolDelta;
+          continue;
+        }
+
+        // Text arrives as deltas. `reasoningContent` is possible on this
+        // union and is ignored - extended thinking is not enabled.
+        const chunk = event.contentBlockDelta?.delta?.text;
+        if (chunk) {
+          reply += chunk;
+          roundText += chunk;
+          yield chunk;
+          continue;
+        }
+
+        if (event.messageStop?.stopReason) {
+          stopReason = event.messageStop.stopReason;
+        }
+
+        // Usage arrives once per pass, on its own event. All four figures are
+        // recorded: `inputTokens` alone is only the uncached remainder once a
+        // cache point is in play.
+        if (event.metadata?.usage) {
+          inputTokens = (inputTokens ?? 0) + (event.metadata.usage.inputTokens ?? 0);
+          outputTokens = (outputTokens ?? 0) + (event.metadata.usage.outputTokens ?? 0);
+          cacheReadTokens = (cacheReadTokens ?? 0) + (event.metadata.usage.cacheReadInputTokens ?? 0);
+          cacheWriteTokens = (cacheWriteTokens ?? 0) + (event.metadata.usage.cacheWriteInputTokens ?? 0);
+        }
       }
+
+      if (stopReason !== "tool_use" || toolCalls.size === 0) break;
+
+      // The model's turn goes back verbatim - any text it said before asking,
+      // then the tool requests themselves. Converse rejects a tool result
+      // that does not answer a tool use in the preceding turn.
+      const assistantContent: ContentBlock[] = [];
+      if (roundText.trim().length > 0) assistantContent.push({ text: roundText });
+
+      const results: ContentBlock[] = [];
+
+      for (const call of toolCalls.values()) {
+        // Typed as the SDK's DocumentType because that is what a toolUse
+        // input block holds; the tool itself treats every field as untrusted
+        // regardless, so this is a shape for the wire rather than a promise
+        // about the contents.
+        let parsed: DocumentType = {};
+        try {
+          parsed = call.input.trim() ? (JSON.parse(call.input) as DocumentType) : {};
+        } catch {
+          // Malformed arguments are answered, not thrown: the model can read
+          // the complaint and try again inside its remaining rounds.
+          parsed = {};
+        }
+
+        assistantContent.push({ toolUse: { toolUseId: call.toolUseId, name: call.name, input: parsed } });
+
+        const output = await runChatTool(call.name, parsed);
+
+        results.push({
+          toolResult: {
+            toolUseId: call.toolUseId,
+            content: [{ text: JSON.stringify(output) }],
+          },
+        });
+      }
+
+      messages.push({ role: "assistant", content: assistantContent });
+      messages.push({ role: "user", content: results });
     }
   } catch (error) {
     // Captured for the request log before rethrowing - a failed call is

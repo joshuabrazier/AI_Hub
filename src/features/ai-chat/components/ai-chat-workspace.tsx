@@ -114,18 +114,22 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
 
   return (
     <>
-      <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
-        {/* Conversations */}
-        <aside className="flex min-w-0 flex-col gap-3">
-          <Button onClick={startNewChat} disabled={isPending} className="w-full justify-center">
+      <div className="grid min-h-0 flex-1 gap-8 lg:grid-cols-[16rem_minmax(0,1fr)]">
+        {/* Conversations. Quieter than the thread beside it on purpose: this
+            is the way back to something, not the thing being read. */}
+        <aside className="flex min-w-0 flex-col gap-3 overflow-y-auto">
+          <Button
+            onClick={startNewChat}
+            disabled={isPending}
+            variant="outline"
+            className="w-full justify-start rounded-xl"
+          >
             <MessageSquarePlus size={16} aria-hidden="true" />
             New chat
           </Button>
 
           {page.subjects.length === 0 ? (
-            <p className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
-              No conversations yet. Start one to see it here.
-            </p>
+            <p className="px-3 py-2 text-sm text-muted-foreground">No conversations yet.</p>
           ) : (
             <nav aria-label="Conversations">
               <ul className="space-y-1">
@@ -137,24 +141,26 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
                       <Link
                         href={`${pathname}?subject=${subject.id}`}
                         aria-current={isActive ? "page" : undefined}
+                        title={
+                          subject.messageCount === 0
+                            ? "Empty conversation"
+                            : `${subject.messageCount} ${subject.messageCount === 1 ? "message" : "messages"}`
+                        }
                         className={cn(
-                          "block rounded-lg py-2 pl-3 pr-16 transition-colors",
-                          isActive ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted",
+                          "block truncate rounded-lg py-2 pl-3 pr-14 text-sm transition-colors",
+                          isActive
+                            ? "bg-muted font-medium text-foreground"
+                            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                         )}
                       >
-                        <span className="block truncate text-sm font-medium">{subject.title}</span>
-                        <span className="block text-xs text-muted-foreground">
-                          {subject.messageCount === 0
-                            ? "Empty"
-                            : `${subject.messageCount} ${subject.messageCount === 1 ? "message" : "messages"}`}
-                        </span>
+                        {subject.title}
                       </Link>
 
                       {/* Per-conversation actions. Shown on hover on a
                           pointer device, and always once focused, so they
                           are reachable from the keyboard rather than
                           hover-only. */}
-                      <span className="absolute right-1 top-1.5 flex opacity-0 transition-opacity focus-within:opacity-100 group-hover/subject:opacity-100">
+                      <span className="absolute right-1 top-1 flex opacity-0 transition-opacity focus-within:opacity-100 group-hover/subject:opacity-100">
                         <Button
                           type="button"
                           variant="ghost"
@@ -186,7 +192,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
         </aside>
 
         {/* The open conversation */}
-        <section className="min-w-0">
+        <section className="flex min-h-0 min-w-0 flex-col">
           {!page.isConfigured ? (
             <div
               role="status"

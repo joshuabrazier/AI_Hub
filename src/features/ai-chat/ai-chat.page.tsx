@@ -22,11 +22,22 @@ export default async function AiChatPage({ eyebrow, subjectId }: { eyebrow: stri
     <PortalPage
       eyebrow={eyebrow}
       title="AI chat"
-      // Says plainly that administrators can read what is sent. The earlier
-      // wording ("only you can see it") stopped being true the moment the
-      // request log shipped, and a privacy promise the product does not keep
-      // is worse than no promise at all.
-      description="Ask anything. Each conversation keeps its own history and is private from other users. Administrators can review the requests sent to the model."
+      // ONE LINE HERE, and the full terms on the empty thread.
+      //
+      // What has to be said has not changed: administrators can read what is
+      // sent, and timesheet answers are limited to what a role can already
+      // see. A privacy promise the product does not keep is worse than no
+      // promise, and so is one nobody reads - four lines of grey text above
+      // every visit is the second failure, not a fix for the first.
+      //
+      // So it moved to the greeting on a new conversation, which is read at
+      // the moment somebody is deciding what to type. See the empty state in
+      // ai-chat-thread.tsx; if that text goes, this line is not enough on its
+      // own and both need rewriting together.
+      description="Ask about this app, or about your timesheets."
+      // The composer is the bottom edge of this screen, so the page is sized
+      // to the viewport and the transcript scrolls inside it. See PortalPage.
+      fill
     >
       <AiChatWorkspace page={page} />
     </PortalPage>
