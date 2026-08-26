@@ -123,7 +123,7 @@ export function RevenueTiles({
       {revenue.unratedBillableHours > 0 && (
         <p
           role="status"
-          className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+          className="rounded-lg border border-data-caution/40 bg-data-caution-surface px-3 py-2 text-xs text-data-caution-text"
         >
           {revenue.unratedBillableHours.toFixed(2)}h of billable time has no rate for the date it was worked,
           so the value above is an understatement.
@@ -147,8 +147,8 @@ function MoneyTile({
   index: number;
 }) {
   return (
-    <Reveal index={index}>
-      <div className="rounded-xl border border-border bg-card px-4 py-3.5">
+    <Reveal index={index} className="h-full">
+      <div className="h-full rounded-xl border border-border bg-card px-4 py-3.5">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
         <p
           className={cn(
@@ -230,7 +230,7 @@ export function ConcentrationCard({
 
                 <div className="h-2 overflow-hidden rounded-full bg-muted">
                   <div
-                    className={cn("h-full rounded-full", over ? "bg-amber-500" : "bg-primary")}
+                    className={cn("h-full rounded-full", over ? "bg-data-caution" : "bg-primary")}
                     style={{ width: `${width}%` }}
                   />
                 </div>
@@ -239,7 +239,7 @@ export function ConcentrationCard({
           })}
 
           <p className="pt-1 text-xs text-muted-foreground">
-            Amber marks a job at {Math.round(CONCENTRATION_WARNING * 100)}% or more of the period&rsquo;s value.
+            A job at {Math.round(CONCENTRATION_WARNING * 100)}% or more of the period&rsquo;s value is marked.
           </p>
         </CardContent>
       </Card>

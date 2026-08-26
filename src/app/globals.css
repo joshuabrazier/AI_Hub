@@ -7,6 +7,12 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-data-billable: var(--data-billable);
+  --color-data-nonbillable: var(--data-nonbillable);
+  --color-data-cost: var(--data-cost);
+  --color-data-caution: var(--data-caution);
+  --color-data-caution-surface: var(--data-caution-surface);
+  --color-data-caution-text: var(--data-caution-text);
   /* Inter carries running text. IBM Plex Sans sets headings - drawn for IBM,
      so its engineering heritage suits a data product. Plex Mono is the utility
      face for eyebrows, labels and every figure that lines up in a column. */
@@ -152,6 +158,27 @@
      Red stays reserved for an actual data error - billable status unset. */
   --data-billable: #0b5f78;
   --data-nonbillable: #7b8798;
+
+  /* Cost is NOT a warning, and the amber it replaces kept saying it was.
+     It is the second series in the forecast chart, paired against value, and
+     spending money to earn money is the normal case.
+
+     A dark NEUTRAL rather than a second hue, so value stays the only coloured
+     thing in that chart and the teal carries the eye. Deliberately darker and
+     cooler than --data-nonbillable (#7b8798): they are both neutral, they
+     appear in different charts, and they must never look like the same series
+     if the two are ever seen together. 8.94:1 on the card. */
+  --data-cost: #37474f;
+
+  /* Caution DOES mean look at this - a job past 40% of the period's value, or
+     billable hours with no rate. Kept clearly apart from --destructive, which
+     stays reserved for an actual data error, and from cost above, so a warning
+     never reads as a data series. 6.41:1 as a fill, and the banner pair below
+     clears 4.5:1 for text. */
+  --data-caution: #b02a4a;
+  --data-caution-surface: #fdf2f5;
+  --data-caution-text: #8f1f3c;
+
   --radius: 0.875rem;
   /* Near-white, separated from the content by its border rather than by a
      fill, so the app chrome does not darken the page. */
@@ -202,6 +229,14 @@
      block for why non-billable carries no colour. */
   --data-billable: #22b8cf;
   --data-nonbillable: #64748b;
+
+  /* Both move UP in lightness for the same reason the billable pair does.
+     6.19:1 and 6.93:1 against the card; the banner pair clears 10:1. */
+  --data-cost: #b0bec5;
+  --data-caution: #f4849e;
+  --data-caution-surface: #3a1520;
+  --data-caution-text: #f9c3ce;
+
   --sidebar: #0f1a1c;
   --sidebar-foreground: #e6eff0;
   --sidebar-primary: var(--primary);

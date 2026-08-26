@@ -2,7 +2,7 @@ import "server-only";
 
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
-import { listStaffRatesRepo } from "@/lib/data/repositories/staff-rate.repository";
+import { loadStaffRates } from "./admin-timesheets-loaders";
 import { handleError } from "@/lib/handle-errors";
 import { computeRevenue, computeRevenueBy, type RevenueSlice, type RevenueTotals } from "@/lib/timesheet/revenue";
 import type { WorklogFactRow } from "@/lib/timesheet/timesheet.types";
@@ -38,7 +38,7 @@ export async function getRevenueForFactsService(facts: WorklogFactRow[]): Promis
   try {
     await requireUserRole([USER_ROLES.ADMIN]);
 
-    const rates = toRateRows(await listStaffRatesRepo());
+    const rates = toRateRows(await loadStaffRates());
     const totals = computeRevenue(facts, rates);
 
     return {

@@ -118,8 +118,8 @@ export function StatTile({
   index?: number;
 }) {
   return (
-    <Reveal index={index}>
-      <LiftOnHover>
+    <Reveal index={index} className="h-full">
+      <LiftOnHover className="h-full">
         <Card className={cn("h-full", emphasis === "alert" && "border-destructive/40")}>
           <CardContent className="p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>

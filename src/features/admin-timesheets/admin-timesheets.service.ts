@@ -6,7 +6,6 @@ import {
   countWorklogFactsRepo,
   getJiraIssuesRepo,
   getJiraProjectsRepo,
-  getStaffTargetsRepo,
   getSyncWatermarkRepo,
   getWorklogFactsInRangeRepo,
 } from "@/lib/data/repositories/timesheet.repository";
@@ -29,6 +28,8 @@ import {
 import { JIRA_WORKLOG_SYNC_JOB } from "@/features/timesheet-sync/timesheet-sync.service";
 import { SnapshotIssue, SnapshotWorklog, TimesheetSnapshot } from "@/lib/timesheet/timesheet.types";
 import { todayInAppZone } from "@/lib/timezone";
+
+import { loadJiraIssues, loadStaffTargets } from "./admin-timesheets-loaders";
 
 import {
   ALL_CATEGORIES,
@@ -297,7 +298,7 @@ export async function getAdminTimesheetsService(
 
     const [factRows, issueRows, projectRows, watermark, totalWorklogs] = await Promise.all([
       getWorklogFactsInRangeRepo(period.from, period.to),
-      getJiraIssuesRepo(),
+      loadJiraIssues(),
       getJiraProjectsRepo(),
       getSyncWatermarkRepo(JIRA_WORKLOG_SYNC_JOB),
       countWorklogFactsRepo(),
@@ -530,7 +531,7 @@ export async function getStaffDashboardService(request: TimesheetRequest = {}): 
   try {
     // Targets are loaded before the report so a person-scoped view can build
     // its chart against the right capacity in one pass.
-    const targets = await getStaffTargetsRepo();
+    const targets = await loadStaffTargets();
     const targetByPerson = new Map(targets.map((row) => [row.personId, row]));
 
     const scopedCapacity =
@@ -706,7 +707,7 @@ export async function getOverviewService(request: TimesheetRequest = {}): Promis
   try {
     const { data, dashboard } = await getStaffDashboardService(request);
 
-    const issues = await getJiraIssuesRepo();
+    const issues = await loadJiraIssues();
     const summaryByKey = new Map(issues.map((issue) => [issue.issueKey, issue.summary]));
 
     // The period's own facts, already narrowed to the current selection by the

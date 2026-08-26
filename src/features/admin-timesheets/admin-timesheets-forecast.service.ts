@@ -2,8 +2,7 @@ import "server-only";
 
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
-import { listStaffRatesRepo } from "@/lib/data/repositories/staff-rate.repository";
-import { getStaffTargetsRepo } from "@/lib/data/repositories/timesheet.repository";
+import { loadStaffRates, loadStaffTargets } from "./admin-timesheets-loaders";
 import { handleError } from "@/lib/handle-errors";
 import {
   buildBurnUp,
@@ -105,7 +104,7 @@ export async function getForecastFromReportService(input: {
   try {
     await requireUserRole([USER_ROLES.ADMIN]);
 
-    const [rateRows, targets] = await Promise.all([listStaffRatesRepo(), getStaffTargetsRepo()]);
+    const [rateRows, targets] = await Promise.all([loadStaffRates(), loadStaffTargets()]);
 
     const targetByPerson = new Map(targets.map((row) => [row.personId, row]));
     const workedById = new Map(input.byPerson.map((person) => [person.personId, person]));
@@ -168,7 +167,7 @@ export async function getForecastForScopeService(
       today,
       revenue,
       facts,
-      rates: toRateRows(await listStaffRatesRepo()),
+      rates: toRateRows(await loadStaffRates()),
       personIds,
     });
   } catch (error) {

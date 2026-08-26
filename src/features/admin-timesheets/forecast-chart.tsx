@@ -169,7 +169,7 @@ export function ForecastChart({
 
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
             <Key className="bg-primary" label="Value" />
-            <Key className="bg-amber-500" label="Cost" />
+            <Key className="bg-data-cost" label="Cost" />
             <Key className="border border-dashed border-muted-foreground/60 bg-transparent" label="Projected" />
           </div>
         </CardContent>
@@ -193,13 +193,13 @@ function Bar({
   tone: "cost" | "value";
   title: string;
 }) {
-  const solid = tone === "cost" ? "bg-amber-500" : "bg-primary";
+  const solid = tone === "cost" ? "bg-data-cost" : "bg-primary";
   // Hatched and outlined rather than merely paler: a lighter fill of the same
   // colour reads as "less of the same thing", which is exactly the wrong
   // message for a figure that has not happened yet.
   const projected =
     tone === "cost"
-      ? "border border-dashed border-amber-500 bg-amber-500/20"
+      ? "border border-dashed border-data-cost bg-data-cost/20"
       : "border border-dashed border-primary bg-primary/20";
 
   return (

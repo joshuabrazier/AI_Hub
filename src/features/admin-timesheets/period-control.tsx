@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
@@ -42,7 +41,6 @@ export function PeriodControl({
   todayIso: string;
   pathname: string;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const reduceMotion = useReducedMotion();
 
@@ -68,14 +66,28 @@ export function PeriodControl({
             const isActive = granularity === filters.granularity;
 
             return (
-              <button
+              // A LINK, not a button. Each of these is a real URL that the
+              // arrows beside them already navigate to as links, and the
+              // difference is not cosmetic: Next prefetches a Link when it
+              // enters the viewport, so the page is being fetched while the
+              // pointer is still travelling. A button calling router.push
+              // cannot be prefetched, which made every switch between week,
+              // month and year a cold round trip to a database in Sydney.
+              //
+              // It also makes them behave like links, because they are ones -
+              // middle-click and copy-address now work.
+              <Link
                 key={granularity}
-                type="button"
-                disabled={isPending}
-                aria-pressed={isActive}
-                onClick={() => {
-                  if (isActive) return;
-                  startTransition(() => router.push(hrefFor(granularity)));
+                href={hrefFor(granularity)}
+                scroll={false}
+                aria-current={isActive ? "page" : undefined}
+                aria-disabled={isActive || undefined}
+                onClick={(event) => {
+                  if (isActive) {
+                    event.preventDefault();
+                    return;
+                  }
+                  startTransition(() => {});
                 }}
                 className={cn(
                   "relative rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
@@ -92,7 +104,7 @@ export function PeriodControl({
                   />
                 )}
                 <span className="relative">{GRANULARITY_LABELS[granularity]}</span>
-              </button>
+              </Link>
             );
           })}
         </div>

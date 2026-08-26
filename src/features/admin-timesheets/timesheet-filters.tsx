@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
@@ -67,7 +68,6 @@ export function CategorySegmentedControl({
   filters: TimesheetFiltersDTO;
   options: CategoryOptionDTO[];
 }) {
-  const router = useRouter();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
   const reduceMotion = useReducedMotion();
@@ -85,14 +85,20 @@ export function CategorySegmentedControl({
           const isActive = option.value === filters.category;
 
           return (
-            <button
+            // A Link for the same reason as the granularity tabs: these are
+            // real URLs, and only a Link gets prefetched. See period-control.
+            <Link
               key={option.value}
-              type="button"
-              disabled={isPending}
-              aria-pressed={isActive}
-              onClick={() => {
-                if (isActive) return;
-                startTransition(() => router.push(buildHref(pathname, filters, { category: option.value })));
+              href={buildHref(pathname, filters, { category: option.value })}
+              scroll={false}
+              aria-current={isActive ? "page" : undefined}
+              aria-disabled={isActive || undefined}
+              onClick={(event) => {
+                if (isActive) {
+                  event.preventDefault();
+                  return;
+                }
+                startTransition(() => {});
               }}
               className={cn(
                 "relative rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
@@ -117,7 +123,7 @@ export function CategorySegmentedControl({
                   this control wide enough to wrap onto a line of its own - and
                   the same figures are in the tiles immediately below. */}
               <span className="relative">{option.label}</span>
-            </button>
+            </Link>
           );
         })}
       </div>
