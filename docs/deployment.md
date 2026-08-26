@@ -319,16 +319,21 @@ admits gets an account, and nothing on the sign-in screen would show it.
 ### Every deployment after that
 
 1. Confirm CI is green.
-2. **Apply any new migrations FIRST, before deploying the code.** Compare
-   `src/lib/data/sql/migrations/` against the `schema_migrations` table:
+2. **Apply any new migrations FIRST, before deploying the code.**
 
-   ```sql
-   SELECT filename FROM schema_migrations ORDER BY filename;
+   ```powershell
+   $env:DATABASE_URL = "<this environment's connection string>"
+   node scripts/check-migrations.mjs
    ```
 
-   Anything in the directory that is not in that table has to be run against
-   this environment's database. Each file wraps itself in `BEGIN`/`COMMIT`, so a
-   failure rolls back rather than leaving half a schema.
+   It reads only - it applies nothing - and lists what is pending, what has been
+   applied whose file is missing from the repo, and any duplicate numbers. It
+   exits non-zero when anything is outstanding.
+
+   Run whatever it reports as PENDING. Each file wraps itself in
+   `BEGIN`/`COMMIT`, so a failure rolls back rather than leaving half a schema.
+   Your IP needs allowing on the Postgres firewall to connect; remove the rule
+   afterwards.
 
    Deploying code that expects a table the database does not have takes the
    affected page down with a generic "A server error occurred", and nothing on
