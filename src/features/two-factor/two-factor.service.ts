@@ -235,11 +235,15 @@ export async function verifyTwoFactorService(
 // -------------------------------------------------------------------
 // Hand the code to the plugin, which owns the secret and the backup codes.
 //
-// Both endpoints throw an APIError on a bad code rather than returning
-// false, so a throw is a wrong code and not an outage. That is caught here
-// and turned into `false` so the one caller above has a single failure
-// path - and so a wrong code always goes through the attempt counter
-// rather than escaping as an unhandled error.
+// Both endpoints throw an APIError rather than returning false, so a throw
+// is caught here and turned into `false` - the one caller above gets a
+// single failure path, and a wrong code always goes through the attempt
+// counter rather than escaping as an unhandled error.
+//
+// A THROW IS NOT NECESSARILY A WRONG CODE, which an earlier version of this
+// comment claimed. The plugin throws the same way for a missing secret, a
+// rate limit, or an account it refuses to enrol. The reason is logged below
+// so the two can be told apart.
 //
 // A backup code is single use: the plugin consumes it, so the same one
 // cannot be replayed.
@@ -256,7 +260,29 @@ async function checkCode(requestDTO: VerifyTwoFactorRequestDTO): Promise<boolean
 
     await auth.api.verifyTOTP({ body: { code }, headers: requestHeaders });
     return true;
-  } catch {
+  } catch (error) {
+    // STILL FALSE, because the caller needs one failure path and every
+    // wrong code must go through the attempt counter rather than escaping
+    // as an unhandled error.
+    //
+    // But it is LOGGED, and that matters more than it looks. The plugin
+    // throws an APIError for a genuinely wrong code AND for everything
+    // structural - a missing secret, a rate limit, an account it will not
+    // enrol. Swallowing them all silently made a broken configuration
+    // indistinguishable from somebody fat-fingering six digits, which cost
+    // hours of guessing at exactly the moment the server already knew the
+    // answer.
+    //
+    // The code itself is never logged: it is a live credential for the
+    // next thirty seconds.
+    const detail = error as { body?: { code?: string; message?: string }; status?: string };
+
+    console.warn(
+      `[checkCode] ${requestDTO.useBackupCode ? "backup code" : "TOTP"} rejected -`,
+      detail.body?.code ?? detail.status ?? "unknown",
+      detail.body?.message ?? "",
+    );
+
     return false;
   }
 }
