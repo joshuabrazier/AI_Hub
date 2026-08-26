@@ -26,7 +26,7 @@ Because it is a base, two things matter more than usual:
 
 ## Commands
 
-- `pnpm dev` - dev server at <http://localhost:3000> (the port is set in the `dev`/`start` scripts and must match `NEXT_PUBLIC_APP_URL`)
+- `pnpm dev` - dev server at <http://localhost:3100> (the port is set in the `dev`/`start` scripts and must match `NEXT_PUBLIC_APP_URL`)
 - `pnpm build` / `pnpm start` - production build / serve
 - `pnpm lint` - ESLint
 - `pnpm test` - unit tests (Vitest, co-located as `src/**/*.test.ts`)
@@ -36,6 +36,19 @@ Because it is a base, two things matter more than usual:
 Package manager is **pnpm 10**; Node 20. Run lint and tsc before treating a
 change as done - CI enforces both, and it type-checks `tests/**` too, so a
 broken spec breaks the build.
+
+**Do NOT run `pnpm build` to check your work.** Verify with `pnpm exec tsc
+--noEmit`, `pnpm lint` and `pnpm test` - between them they catch everything a
+build would, in a fraction of the time. `next build` runs type checking and
+linting itself, so chaining them in front of it pays for the same work twice,
+and `output: "standalone"` then traces and COPIES most of an 800 MB
+`node_modules` into `.next/standalone`. On Windows that is minutes, not
+seconds. Build only when you are about to deploy and want it proven.
+
+**On Windows, exclude the repo from Defender before doing anything else.**
+Real-time scanning inspects every file in `node_modules` and `.next`
+individually, which is why a one-package install can take minutes. In an
+admin PowerShell, once: `Add-MpPreference -ExclusionPath "C:\Dev\AI_Hub"`.
 
 ## The model
 
