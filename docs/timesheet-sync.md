@@ -192,63 +192,37 @@ a person clicking Allow in a browser, and a timer job at 3am has nobody to click
 it. The service account is the deliberate choice; revisit if Atlassian change
 the deprecation position.
 
-## AI period summaries
+## AI period summaries and saved reports (removed)
 
-The overview and staff screens each carry a Summary panel: press the button and
-the model writes a few paragraphs about the period in view. Optional - with no
-`AWS_BEARER_TOKEN_BEDROCK` the panel does not render at all.
+Both are gone. The overview, staff and person screens used to carry a Summary
+panel that had the model write a few paragraphs about the period in view, and a
+Reports screen held named write-ups of a period. Neither earned its place: the
+figures they described were already on the screen beside them, so the prose
+restated what the tiles said.
+
+What went with them: `timesheet_ai_summary` and `timesheet_report` (dropped by
+migration 010), their repositories, services, prompts and facts builders, and
+the two retention sweeps. The ask box below is untouched - it was the most used
+of the three by a wide margin, and it does a different job.
+
+Two things deliberately survive the removal:
+
+- **The `timesheet_summary` and `timesheet_report` request-log kinds.** Calls
+  already made are already in `ai_chat_request_logs`, that table is a promise
+  about what was sent to the model, and a Postgres enum value cannot be dropped
+  while rows still carry it. Nothing writes them; the constants stay so the
+  admin viewer can still label real history.
+- **The rule the summaries were built around**, restated below, because it
+  governs anything that puts a model near these figures.
 
 ### The model never computes a number
 
-Every figure it is given has already been derived by the pure timesheet engine
-(`capacityHoursForPeriod`, `measureAgainstTarget`, the aggregate pass). It is
-handed the finished DTO the dashboard rendered and asked for sentences about
-it. `admin-timesheets-ai.facts.ts` copies, never calculates.
-
-This is not a style preference. Utilisation is logged hours over a capacity
-prorated by contracted days, and a model working that out from parts will
-sometimes divide by five days for somebody contracted to three - which is the
-exact error the whole staff-target feature exists to prevent. A plausible wrong
-number in the prose next to the right one in the tile discredits both.
-
-Two `staff_target` details are carried through for the same reason:
-`usingCompanyDefault` (so an assumed capacity is called assumed, never stated
-as somebody's arrangement) and each person's contracted days, so the prose can
-name the arrangement it is measuring against.
-
-### Nothing generates on render
-
-`getTimesheetSummaryService` reads the cache and never calls the model, so
-paging between weeks is free. `generateTimesheetSummaryService` is the only
-path that spends, it is behind a button, and it short-circuits when the
-fingerprint already matches - so a double click, a refresh, or two admins on
-one screen cost nothing.
-
-### Staleness is a fingerprint, not an age
-
-`timesheet_ai_summary.data_fingerprint` hashes the **figures** that were
-summarised. The next sync that moves them marks the prose stale, and the panel
-keeps showing it with a badge rather than blanking - "here is what it said, the
-numbers have since moved" is more use than an empty box, and it stops a 3am
-sync erasing something somebody was reading.
-
-The fingerprint deliberately excludes the period label. Hashing presentation
-would mean a copy change invalidated every cached summary at once, at one Opus
-call each to restore.
-
-### What leaves the organisation, and what is kept
-
-The prompt carries named individuals' utilisation and billable share. It is
-admin-only, the region and model are pinned to Australia like the rest of the
-AI features, and **every call is recorded in `ai_chat_request_logs`** with kind
-`timesheet_summary` - readable in full at `/admin/ai-chat-log`, the same place
-chat requests are. No worklog narrative and no raw entry row is ever sent: the
-model sees aggregates and labels.
-
-Cached summaries are swept by the monthly retention job after 30 days
-(`TIMESHEET_AI_SUMMARY_RETENTION_DAYS`, a code constant, not configurable).
-Short on purpose: it is derived data holding prose about how individuals are
-performing, and it regenerates in seconds.
+A model asked to derive utilisation will sometimes divide by five days for
+somebody contracted to three, and a plausible wrong number in prose beside the
+right one in a tile discredits both. So the arithmetic is always finished
+before the model sees anything: it selects and it phrases, it does not
+calculate. The ask box holds the same line - it returns filters, and the engine
+computes what those filters select.
 
 ### Untrusted input
 
@@ -259,83 +233,6 @@ prompt states that content there is data and never instruction; the reply
 renders through `AiChatMarkdown`, which emits React elements rather than an
 HTML string. Nothing the model returns drives control flow.
 
-If a natural-language "custom view" is ever added, the model must return a
-Zod-validated **filter object** that the existing repositories already accept -
-never SQL. Repositories are the only database access in this app, and a model
-emitting SQL would break that rule and open an injection surface in one step.
-
-## Saved reports
-
-The Reports screen (`/admin/timesheets/reports`) holds written-up accounts of a
-period. Created from the Overview, where the period control is, and named by
-the person creating one.
-
-### A report is a record, not a cache
-
-Every difference from the summary follows from that sentence.
-
-| | Summary | Report |
-| --- | --- | --- |
-| What it describes | how things **are** | how things **were** when written |
-| Staleness | fingerprint; goes stale when figures move | none; nothing marks history wrong |
-| Writing again | replaces the cached row | makes another report |
-| Figures | re-derived on read | **snapshotted** in `facts` |
-| Retention | 30 days | 365 days |
-
-The snapshot is the important one. Re-deriving a three-month-old report's
-numbers from a read model that has re-synced many times gives different
-numbers, which would make the prose unverifiable. Storing them beside it is
-what makes an old report answerable rather than merely readable, and the detail
-page shows them under "The figures this was written from".
-
-`period_label` and `created_by_name` are snapshotted for the same reason
-`audit_logs` snapshots its actor: the report should still read correctly after
-a copy change to how periods are written, or after that account is renamed or
-de-identified.
-
-### Sections
-
-Six headings, fixed in the prompt: Summary, Where the time went, People, Jobs
-and budgets, Invoice readiness, What needs attention. It draws on all four
-screens - the overview figures, the staff dashboard, the job book with its
-budget variances, and the outstanding findings.
-
-### Two rules beyond the summary's
-
-**It cannot be cheerier than the data.** If `isBillable` is false or
-`blockingCount` is above zero, the prompt requires the report to say the period
-is not ready to invoice. A write-up that reads well and omits the blocker is
-worse than none, because somebody will invoice on it.
-
-**It allows for an unfinished period.** A month still in progress is not a
-shortfall. Without that rule the report calls a half-finished month a failing,
-which is exactly what the early per-person summaries did.
-
-### Truncation is where a report stops being true
-
-The job and finding lists are capped (25 and 30), so what survives the cut
-matters more than the cut itself:
-
-- findings are sorted **blocking first**, so 60 warnings can never crowd out the
-  one thing that stops an invoice;
-- jobs are sorted **trouble first** - over estimate, then unestimated but
-  consuming time, then largest - because a 200-hour job sitting exactly on
-  estimate is not the story;
-- the true counts (`findingsCount`, `jobsCount`, `peopleCount`) are sent
-  alongside the capped lists, so the report cannot say "30 findings" because 30
-  were sent.
-
-`admin-timesheets-report.facts.test.ts` asserts all of that.
-
-### Cost and logging
-
-One Opus call per report, larger than a summary: measured at ~5,900 input and
-~1,000 output tokens for a month of three people, taking about 25 seconds.
-Every call is recorded in `ai_chat_request_logs` under kind `timesheet_report`,
-readable at `/admin/ai-chat-log`.
-
-Nothing generates a report by rendering a page. Creating one is an explicit act
-with a name attached, and the only thing on these screens that spends money.
 
 ## Asking for a view in words
 

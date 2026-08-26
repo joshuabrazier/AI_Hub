@@ -4,8 +4,6 @@ import { NextResponse } from "next/server";
 
 import { deidentifyInactiveUsersService } from "@/features/admin-retention/admin-retention.service";
 import { purgeExpiredAiChatsService } from "@/features/ai-chat/ai-chat-retention.service";
-import { purgeExpiredTimesheetSummariesService } from "@/features/admin-timesheets/admin-timesheets-ai.service";
-import { purgeExpiredTimesheetReportsService } from "@/features/admin-timesheets/admin-timesheets-report.service";
 import { purgeExpiredAuditLogsService } from "@/lib/audit/audit-log.service";
 import { envServer } from "@/lib/env-server";
 
@@ -64,16 +62,6 @@ export async function POST(request: Request): Promise<Response> {
   // Chat rotation, likewise independent of that switch.
   const aiChats = await purgeExpiredAiChatsService();
 
-  // The timesheet summary cache. Derived data holding prose about how
-  // individuals are performing, regenerable in seconds, so it gets a short
-  // window and no switch to argue about.
-  const timesheetSummaries = await purgeExpiredTimesheetSummariesService();
-
-  // Saved reports, on a much longer window than the summary cache. Unlike the
-  // cache, what goes here CANNOT be regenerated - the read model has moved on -
-  // so the window is deliberately generous and written down.
-  const timesheetReports = await purgeExpiredTimesheetReportsService();
-
   // De-identification. Master switch: preview unless explicitly enabled.
   const dryRun = !envServer.RETENTION_JOB_ENABLED;
   const deidentify = await deidentifyInactiveUsersService({ dryRun });
@@ -86,8 +74,6 @@ export async function POST(request: Request): Promise<Response> {
       `aiChatLogsPurged=${aiChats.purgedRequestLogs} (>${aiChats.logRetentionDays}d) ` +
       `aiChatStagedFilesPurged=${aiChats.purgedStagedAttachments} (>${aiChats.stagedAttachmentHours}h) ` +
       `aiChatOrphanedBlobsPurged=${aiChats.purgedOrphanedBlobs} ` +
-      `timesheetSummariesPurged=${timesheetSummaries.purged} (>${timesheetSummaries.retentionDays}d) ` +
-      `timesheetReportsPurged=${timesheetReports.purged} (>${timesheetReports.retentionDays}d) ` +
       `dryRun=${deidentify.dryRun} candidates=${deidentify.candidateCount} processed=${deidentify.processedCount}`,
   );
 
@@ -96,8 +82,6 @@ export async function POST(request: Request): Promise<Response> {
     ok: true,
     auditLogs,
     aiChats,
-    timesheetSummaries,
-    timesheetReports,
     deidentify: {
       dryRun: deidentify.dryRun,
       jobEnabled: deidentify.jobEnabled,

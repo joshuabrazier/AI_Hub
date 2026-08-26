@@ -1,13 +1,11 @@
+import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
 import { ROUTES } from "@/lib/routes";
 
-import { getOverviewSummaryService } from "../admin-timesheets-ai.service";
 import { getForecastFromReportService } from "../admin-timesheets-forecast.service";
 import { getRevenueForFactsService } from "../admin-timesheets-revenue.service";
 import { ForecastChart } from "../forecast-chart";
 import { ConcentrationCard, RevenueTiles } from "../revenue-panels";
-import { ReportCreateDialog } from "../report-create-dialog";
 import { TimesheetAskBox } from "../timesheet-ask-box";
-import { AiSummaryPanel } from "../ai-summary-panel";
 import { getOverviewService, TimesheetRequest } from "../admin-timesheets.service";
 import { CategorySplitCard, ReadinessCard } from "../overview-panels";
 import { ProductivityChart } from "../productivity-chart";
@@ -32,10 +30,6 @@ import TimesheetShell, { periodHref } from "../timesheet-shell";
 export default async function OverviewView(request: TimesheetRequest) {
   const { data, overview } = await getOverviewService(request);
   const { period, filters, report, syncStatus, periodTotalHours, periodSeries } = data;
-
-  // Read-only, and built from the data already fetched above rather than
-  // re-querying it. Rendering never calls the model - see the service.
-  const summary = await getOverviewSummaryService(data, overview);
 
   // Values the facts the report already fetched - one extra query, for the
   // rate table, which is one row per person per rate change.
@@ -69,17 +63,7 @@ export default async function OverviewView(request: TimesheetRequest) {
         </>
       ) : (
         <>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0 flex-1">
-              <TimesheetAskBox filters={filters} disabled={!summary.available} />
-            </div>
-
-            <ReportCreateDialog
-              filters={filters}
-              periodLabel={period.label}
-              disabled={!summary.available}
-            />
-          </div>
+          <TimesheetAskBox filters={filters} disabled={!isBedrockConfigured()} />
 
           {/* -------------------------------------------------------------
               ABOVE THE FOLD: four figures and one chart.
@@ -180,8 +164,6 @@ export default async function OverviewView(request: TimesheetRequest) {
               <CategorySplitCard categories={overview.categories} index={3} />
               <ReadinessCard readiness={overview.readiness} index={4} />
             </div>
-
-            <AiSummaryPanel summary={summary} filters={filters} periodLabel={period.label} index={5} />
           </div>
         </>
       )}

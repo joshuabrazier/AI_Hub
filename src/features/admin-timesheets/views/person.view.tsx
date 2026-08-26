@@ -3,8 +3,6 @@ import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { ROUTES } from "@/lib/routes";
 
-import { getPersonSummaryService } from "../admin-timesheets-ai.service";
-import { AiSummaryPanel } from "../ai-summary-panel";
 import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { ProductivityChart } from "../productivity-chart";
 import { getForecastForScopeService } from "../admin-timesheets-forecast.service";
@@ -43,11 +41,6 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
   // as this screen is concerned. notFound rather than an error page: a guessed
   // id should not confirm whether an account exists.
   if (!person) notFound();
-
-  // Read-only, and built from the data already fetched above rather than
-  // re-querying it. After notFound, so an id that matched nobody never reaches
-  // the cache. Rendering never calls the model - see the service.
-  const summary = await getPersonSummaryService(data, dashboard, person);
 
   const rates = await getPersonRatesService(personId);
 
@@ -142,14 +135,6 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
       {report.byProject.length > 0 && (
         <ProjectsCard projects={report.byProject} totalHours={report.totals.hours} index={2} />
       )}
-
-      <AiSummaryPanel
-        summary={summary}
-        filters={filters}
-        periodLabel={period.label}
-        personId={personId}
-        index={3}
-      />
 
       {report.facts.length > 0 && <EntriesDataTable facts={report.facts} />}
 

@@ -1,7 +1,5 @@
 import { ROUTES } from "@/lib/routes";
 
-import { getStaffSummaryService } from "../admin-timesheets-ai.service";
-import { AiSummaryPanel } from "../ai-summary-panel";
 import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { StaffList } from "../staff-cards";
 import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
@@ -26,9 +24,6 @@ export default async function StaffView(request: TimesheetRequest) {
 
   const { totals } = dashboard;
 
-  // Read-only, and built from the data already fetched above rather than
-  // re-querying it. Rendering never calls the model - see the service.
-  const summary = await getStaffSummaryService(data, dashboard);
   const hasAnyone = dashboard.people.length > 0;
 
   return (
@@ -84,8 +79,6 @@ export default async function StaffView(request: TimesheetRequest) {
           </div>
 
           <StaffList people={dashboard.people} filters={filters} />
-
-          <AiSummaryPanel summary={summary} filters={filters} periodLabel={period.label} index={4} />
 
           {report.totals.worklogCount === 0 && (
             <EmptyState syncStatus={syncStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />

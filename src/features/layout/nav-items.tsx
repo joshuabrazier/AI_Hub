@@ -112,12 +112,6 @@ const ADMIN_NAV: NavGroup[] = [
             icon: ClipboardCheck,
             tooltip: "Data to fix in Jira",
           },
-          {
-            label: "Reports",
-            href: ROUTES.ADMIN_TIMESHEETS_REPORTS,
-            icon: FileText,
-            tooltip: "Saved period write-ups",
-          },
         ],
       },
     ],
