@@ -238,6 +238,34 @@ export async function getExpiredTranscriptionKeysRepo(
 }
 
 // -------------------------------------------------------------------
+// EVERYBODY'S unfinished jobs, oldest first.
+//
+// For the background sweep, which has no session and therefore no user to
+// scope by. It is the only unscoped read of transcription rows, and it
+// deliberately returns whole rows rather than a projection - the sweep has
+// to act on them, not display them.
+//
+// Bounded by `limit` so one run cannot pull an unbounded set into memory
+// after an outage; anything left over is picked up on the next tick.
+// -------------------------------------------------------------------
+export async function getAllInFlightTranscriptionsRepo(
+  limit: number,
+  db: DBClient = database,
+): Promise<Transcription[]> {
+  try {
+    return await db
+      .selectFrom("transcriptions")
+      .selectAll()
+      .where("status", "in", TRANSCRIPTION_IN_FLIGHT_STATUSES)
+      .orderBy("createdAt")
+      .limit(limit)
+      .execute();
+  } catch (error) {
+    throw handleError("getAllInFlightTranscriptionsRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
 // Every storage key the database still claims.
 //
 // For the reconciliation pass: anything in the media container whose key
