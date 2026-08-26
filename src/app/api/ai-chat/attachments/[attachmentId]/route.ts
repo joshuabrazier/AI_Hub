@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AI_CHAT_ATTACHMENT_KINDS } from "@/lib/data/kysely-database-types";
-import { getSession } from "@/lib/auth/session-auth-server";
+import { getVerifiedApiSession } from "@/lib/auth/session-auth-server";
 import { getAiChatAttachmentForUserRepo } from "@/lib/data/repositories/ai-chat-attachments.repository";
 import { getAttachment } from "@/lib/storage/attachment-storage";
 import { MESSAGES } from "@/lib/constants";
@@ -60,7 +60,7 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ attachmentId: string }> },
 ): Promise<Response> {
-  const session = await getSession();
+  const session = await getVerifiedApiSession();
 
   if (!session) {
     return NextResponse.json({ error: MESSAGES.UNAUTHORIZED }, { status: 401 });

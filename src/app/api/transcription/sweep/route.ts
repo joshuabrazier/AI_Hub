@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { sweepTranscriptionsService } from "@/features/transcription/transcription.service";
-import { getSession } from "@/lib/auth/session-auth-server";
+import { getVerifiedApiSession } from "@/lib/auth/session-auth-server";
 import { MESSAGES } from "@/lib/constants";
 
 // Talks to the Speech service, blob storage and Bedrock, so Node; and its
@@ -45,7 +45,7 @@ export const dynamic = "force-dynamic";
 // outer gate only.
 // -------------------------------------------------------------------
 export async function POST(): Promise<Response> {
-  const session = await getSession();
+  const session = await getVerifiedApiSession();
 
   if (!session) {
     return NextResponse.json({ error: MESSAGES.UNAUTHORIZED }, { status: 401 });

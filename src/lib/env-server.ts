@@ -264,6 +264,36 @@ const serverEnvSchema = z.object({
     .transform((value) => value === "true"),
 
   // -------------------------------------------------------------------
+  // App-level two-factor authentication.
+  //
+  // OFF by default, and that default is load-bearing: turning this on
+  // requires every user to enrol an authenticator before they can reach any
+  // part of the app, so deploying must never do it on its own. Set it
+  // deliberately, once people have been told.
+  //
+  // WHAT IT IS FOR. Entra owns credentials, and enforcing MFA there needs a
+  // Conditional Access policy, which needs an Entra ID P1 licence per user.
+  // This is the alternative for a tenant on the free tier: a second factor
+  // on THIS APP, checked after Microsoft has proved who somebody is.
+  //
+  // WHAT IT IS NOT. It does not make the tenant two-factor. A stolen
+  // password still reaches everything else the person can sign in to -
+  // email, Teams, SharePoint - because the identity itself is unchanged.
+  // What it protects is the data in here: chat transcripts, meeting
+  // recordings, uploaded files. Do not describe it internally as "we have
+  // MFA"; it is "the portal requires a second factor", and the difference
+  // matters the day somebody asks a compliance question.
+  //
+  // If the organisation later buys P1, this should come OFF and a
+  // Conditional Access policy replace it - two prompts for the same thing
+  // trains people to click through both.
+  // -------------------------------------------------------------------
+  APP_TWO_FACTOR_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+
+  // -------------------------------------------------------------------
   // Email domain allowlist
   //
   // Comma-separated bare domains, e.g. "example.com,example.org". An
@@ -330,6 +360,7 @@ export const envServer = serverEnvSchema.parse({
   MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,
   MICROSOFT_TENANT_ID: process.env.MICROSOFT_TENANT_ID,
   DEV_PASSWORD_SIGN_IN: process.env.DEV_PASSWORD_SIGN_IN,
+  APP_TWO_FACTOR_ENABLED: process.env.APP_TWO_FACTOR_ENABLED,
   AUTH_ALLOWED_EMAIL_DOMAINS: process.env.AUTH_ALLOWED_EMAIL_DOMAINS,
   // Every key the schema declares must be listed here too. Zod only ever sees
   // this object, so a variable declared above and omitted below is silently
