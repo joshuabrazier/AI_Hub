@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "./lib/auth/session-auth-server";
 import { isAdminRoute, isManageRoute, isPortalRoute, roleHome, ROUTES } from "./lib/routes";
 import { STAFF_ROLES, USER_ROLES, type UserRole } from "./lib/data/kysely-database-types";
+import { getSessionTwoFactorRepo } from "./lib/data/repositories/session-two-factor.repository";
+import { getUserByUserIdRepo } from "./lib/data/repositories/users.repository";
+import { envServer } from "./lib/env-server";
 
 // -------------------------------------------------------------------
 // Proxy (middleware) - runs on every request matched by the config below.
 //
-// It enforces AREA-level access by role only:
+// It enforces the SECOND FACTOR and AREA-level access by role:
 //   /admin/*   admins
 //   /manage/*  managers (and admins, who can see everything)
 //   /portal/*  members
@@ -29,6 +32,44 @@ export async function proxy(request: NextRequest) {
   // Not authenticated, so send them to sign in.
   if (!session) {
     return NextResponse.redirect(new URL(ROUTES.PUBLIC_AUTH_SIGN_IN, request.url));
+  }
+
+  // -------------------------------------------------------------------
+  // THE SECOND FACTOR, GATED HERE AND NOT ONLY IN THE LAYOUTS.
+  //
+  // requireUser already redirects an unverified session, and that remains
+  // the load-bearing check - it covers every server component, action and
+  // route handler, including ones no matcher reaches. This is not a
+  // replacement for it.
+  //
+  // It exists because of WHEN the layout check happens. The root layout
+  // renders the navbar and sidebar before the area layout has awaited its
+  // guard, so the browser paints the whole application shell - with the
+  // admin navigation in it - and then redirects. No protected data is ever
+  // sent, because the area layout throws its redirect before any page
+  // renders and no service is called. But it does show somebody who has
+  // passed only the FIRST factor their role and the shape of the product,
+  // and it looks alarming enough that people reasonably assume worse.
+  //
+  // Redirecting at the edge means nothing renders at all.
+  //
+  // THE FLAG IS READ FRESH, not taken from the session. Better Auth
+  // snapshots the user into the session at sign-in, so its copy still says
+  // "not enrolled" immediately after somebody enrols - and trusting it here
+  // would bounce them straight back to the screen they just completed,
+  // forever.
+  // -------------------------------------------------------------------
+  if (envServer.APP_TWO_FACTOR_ENABLED) {
+    const [row, twoFactor] = await Promise.all([
+      getUserByUserIdRepo(session.user.id),
+      getSessionTwoFactorRepo(session.session.id),
+    ]);
+
+    const satisfied = Boolean(row?.twoFactorEnabled) && Boolean(twoFactor?.verifiedAt);
+
+    if (!satisfied) {
+      return NextResponse.redirect(new URL(ROUTES.PUBLIC_AUTH_TWO_FACTOR, request.url));
+    }
   }
 
   const role = session.user.role as UserRole;
