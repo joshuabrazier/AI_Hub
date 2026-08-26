@@ -14,6 +14,23 @@ import { database, DBClient } from "../kysely-database-client";
 // Takes a DBClient so it can run in the same transaction as the change that
 // revoked the access, leaving no window where one landed without the other.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// End ONE session.
+//
+// For the absolute-lifetime cap, which is per session rather than per
+// person: somebody signed in on a laptop and a phone has two sessions with
+// two different start times, and the older one reaching its limit says
+// nothing about the newer one. Revoking all of them would sign a person out
+// of a device they were actively using.
+// -------------------------------------------------------------------
+export async function deleteSessionByIdRepo(id: string, db: DBClient = database): Promise<void> {
+  try {
+    await db.deleteFrom("sessions").where("id", "=", id).execute();
+  } catch (error) {
+    throw handleError("deleteSessionByIdRepo", error);
+  }
+}
+
 export async function deleteSessionsByUserIdRepo(userId: string, db: DBClient = database): Promise<void> {
   try {
     await db.deleteFrom("sessions").where("userId", "=", userId).execute();

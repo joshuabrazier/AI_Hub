@@ -45,6 +45,31 @@ function loopbackOriginsFor(appUrl: string): string[] {
 // -------------------------------------------------------------------
 // Better Auth Config File
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// Session lifetime - two limits, doing two different jobs.
+//
+// IDLE (expiresIn, sliding). Refreshed on use, so somebody working every
+// day is never signed out. On its own this is not a lifetime at all: a
+// session used once a day rolls forward indefinitely, which is how a
+// five-day window turned into "never expires" in practice.
+//
+// ABSOLUTE (enforced on read in session-auth-server). A hard ceiling from
+// the moment the session was created, regardless of activity. This is the
+// one that guarantees everybody re-authenticates on a known cadence, and it
+// is why a stolen session cookie has a bounded life rather than an
+// unbounded one.
+//
+// Both are short because re-authenticating here is nearly free: sign-in is
+// Microsoft only, so it is normally a silent SSO redirect rather than a
+// password prompt. The usual argument against short sessions - that they
+// annoy people - mostly does not apply.
+//
+// Better Auth has no built-in absolute cap, which is why only the first of
+// these appears in its config below.
+// -------------------------------------------------------------------
+export const SESSION_IDLE_SECONDS = 60 * 60 * 24; // 24 hours
+export const SESSION_ABSOLUTE_MAX_SECONDS = 60 * 60 * 24 * 7; // 7 days
+
 export const auth = betterAuth({
   // -------------------------------------------------------------------
   // General Settings
@@ -113,6 +138,23 @@ export const auth = betterAuth({
     // them out. The issuer is what shows in the authenticator app.
     twoFactor({
       issuer: envClient.NEXT_PUBLIC_APP_TITLE,
+      // -------------------------------------------------------------
+      // Enrolling and disabling normally require the account's password,
+      // as re-authentication before changing a security setting. An Entra
+      // account HAS no password, so without this the endpoints are
+      // unreachable for every real user and 2FA could never be turned on.
+      //
+      // It is not a blanket relaxation: shouldRequirePassword still looks
+      // for a `credential` account and demands the password when one
+      // exists, so the local dev accounts created by
+      // scripts/create-dev-user.mjs are unaffected. Only accounts that
+      // genuinely have no password skip the check.
+      //
+      // What stands in for re-authentication on the Entra path is the
+      // session itself, which Microsoft issued and which this app already
+      // treats as proof of identity everywhere else.
+      // -------------------------------------------------------------
+      allowPasswordless: true,
       // Single-use recovery code for when the authenticator is lost. Default is
       // 10; one is enough here and simplest to store safely.
       backupCodeOptions: { amount: 1 },
@@ -278,9 +320,21 @@ export const auth = betterAuth({
   // -------------------------------------------------------------------
   session: {
     modelName: "sessions",
-    expiresIn: 60 * 60 * 24 * 5, // 5 days
-    updateAge: 60 * 60 * 24, // 1 day (every 1 day the session expiration is updated)
+    // The IDLE window. Stop using the app for this long and the session is
+    // gone. Every request within it pushes the expiry out again, so this is
+    // a sliding limit and an active session never reaches it - which is
+    // exactly why SESSION_ABSOLUTE_MAX_SECONDS below has to exist as well.
+    expiresIn: SESSION_IDLE_SECONDS,
+    // How often that push is written. Hourly rather than daily so the idle
+    // window is measured with some precision - with a coarse update age, a
+    // session touched once can look fresh for most of a day after the
+    // person stopped using it.
+    updateAge: 60 * 60,
     cookieCache: {
+      // Off deliberately. Every request reads the session from the
+      // database, which is what makes revoking one take effect immediately
+      // instead of whenever a cached cookie happens to lapse. It is also
+      // what lets the absolute cap be enforced on read at all.
       enabled: false,
     },
   },

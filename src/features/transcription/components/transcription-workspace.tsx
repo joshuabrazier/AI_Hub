@@ -8,7 +8,6 @@ import { AudioLines, Mic, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { AppDialog } from "@/components/app-dialog";
-import { PushNotificationToggle } from "@/features/push/components/push-notification-toggle";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -310,16 +309,6 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
             <TranscriptionDetail key={page.active.id} detail={page.active} />
           )}
         </section>
-      </div>
-
-      {/* Notifications live on THIS screen rather than in account settings,
-          because this is the only thing in the app that sends one and this
-          is where somebody is standing when they realise they would rather
-          not sit and watch a progress bar. Renders nothing at all when push
-          is unconfigured, unsupported, or on an iPhone that has not
-          installed the app - so it never shows a dead control. */}
-      <div className="mt-6">
-        <PushNotificationToggle />
       </div>
 
       {/* Rename. AppDialog rather than ConfirmDialog because this needs a

@@ -11,10 +11,12 @@ import {
   isBedrockConfigured,
 } from "@/lib/ai/bedrock-client";
 import { requireUser } from "@/lib/auth/session-auth-server";
+import { getUserByUserIdRepo } from "@/lib/data/repositories/users.repository";
 import {
   AI_CHAT_REQUEST_KINDS,
   TRANSCRIPTION_SOURCES,
   TRANSCRIPTION_STATUSES,
+  USER_ROLES,
   type Transcription,
   type TranscriptionSegment,
 } from "@/lib/data/kysely-database-types";
@@ -38,7 +40,7 @@ import { safeDownloadName } from "@/lib/download-blob";
 import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
 import { isPushConfigured, sendPushToUser } from "@/lib/push/push-notifications";
-import { ROUTES } from "@/lib/routes";
+import { ROUTES, transcriptionHomeForRole } from "@/lib/routes";
 import {
   createUploadUrl,
   deleteMedia,
@@ -410,15 +412,21 @@ async function notifyFinished(transcription: Transcription, userId: string): Pro
 
   const failed = transcription.status === TRANSCRIPTION_STATUSES.FAILED;
 
+  // Looked up rather than passed in, because the background sweep has no
+  // session - it acts on rows belonging to people who are not here.
+  const owner = await getUserByUserIdRepo(userId);
+
   await sendPushToUser(userId, {
     title: failed ? "Transcription failed" : "Your transcription is ready",
     body: failed
       ? `"${transcription.title}" could not be transcribed. The recording is still here.`
       : `"${transcription.title}" has been transcribed and summarised.`,
-    // The portal path. Every area mounts the same page, and a member cannot
-    // reach the admin one - so the least privileged path is the only one
-    // that is right for everybody.
-    url: `${ROUTES.PORTAL_TRANSCRIPTION}?id=${transcription.id}`,
+    // The path for THIS person's role. It cannot be a fixed one: the proxy
+    // redirects a non-member away from /portal rather than refusing them,
+    // so an admin tapping a portal link would land on their dashboard
+    // instead of the transcription the notification was about - a bug that
+    // would look like the notification simply not working.
+    url: `${transcriptionHomeForRole(owner?.role ?? USER_ROLES.MEMBER)}?id=${transcription.id}`,
     // One notification per transcription. A retry replaces the earlier one
     // rather than stacking a second onto the lock screen.
     tag: `transcription-${transcription.id}`,

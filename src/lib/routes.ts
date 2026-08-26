@@ -130,6 +130,30 @@ export function roleHome(role: string): string {
 }
 
 // -----------------------------------------------------------------
+// Where THIS role reaches a feature that is mounted in all three areas.
+//
+// Needed because the proxy does not just fail closed on the wrong area, it
+// REDIRECTS: a non-member landing on /portal/* is sent to their role home.
+// So a link built for one role and followed by another does not show an
+// error, it silently lands somewhere else entirely - which is what a push
+// notification opening the wrong page looks like.
+//
+// Exhaustive switch and a least-privileged default, matching roleHome.
+// -----------------------------------------------------------------
+export function transcriptionHomeForRole(role: string): string {
+  switch (role as UserRole) {
+    case USER_ROLES.ADMIN:
+      return ROUTES.ADMIN_TRANSCRIPTION;
+    case USER_ROLES.MANAGER:
+      return ROUTES.MANAGE_TRANSCRIPTION;
+    case USER_ROLES.MEMBER:
+      return ROUTES.PORTAL_TRANSCRIPTION;
+    default:
+      return ROUTES.PORTAL_TRANSCRIPTION;
+  }
+}
+
+// -----------------------------------------------------------------
 // Chromeless routes
 // Routes that render standalone (full page) without the app navbar and
 // sidebar - the public marketing pages and the auth flows.

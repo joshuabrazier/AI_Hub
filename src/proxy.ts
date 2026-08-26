@@ -37,19 +37,25 @@ export async function proxy(request: NextRequest) {
   const isStaff = (STAFF_ROLES as readonly UserRole[]).includes(role);
 
   // -------------------------------------------------------------------
-  // NO 2FA ENROLMENT GATE HERE, and that is the second half of "sign-in is
-  // Microsoft only".
+  // NO 2FA CHECK HERE, and unlike the role check above that is not an
+  // omission - it is where the gate lives instead.
   //
-  // Entra owns credentials AND MFA. The app's own 2FA enrolment screens went
-  // when passwords did, so there is no /setup-2fa page left to send anybody
-  // to - a gate here could only ever redirect staff to a 404, locking every
-  // admin out of the area it was meant to protect. Nothing sets
-  // users.two_factor_enabled either, since only those screens ever did.
+  // App-level two-factor (APP_TWO_FACTOR_ENABLED) is enforced inside
+  // requireUser, and for route handlers inside getVerifiedApiSession, both
+  // in session-auth-server.ts. That is deliberately NOT the arrangement the
+  // role check uses. The role gate is duplicated here and in each area
+  // layout because a route that stopped being matched would lose its only
+  // gate; the two-factor gate is in the function every guarded page and
+  // every route handler already calls, so it cannot be lost by a matcher
+  // change - and repeating it here would cost two more database queries on
+  // every request for no extra safety.
   //
-  // The twoFactor plugin stays registered in auth.ts so the capability and
-  // its table survive for a project that wants to bring the enrolment screens
-  // back. If one does, this check belongs here again - and the screen has to
-  // exist before the redirect does.
+  // It also could not live here safely. The matcher covers /admin, /manage
+  // and /portal only, so a check here would leave /api/ai-chat/stream and
+  // /api/transcription/[id]/media - the routes that actually serve
+  // transcripts and recordings - with no second factor in front of them.
+  //
+  // /two-factor is not matched, so there is no redirect loop to worry about.
   // -------------------------------------------------------------------
 
   if (isAdminRoute(pathname)) {
