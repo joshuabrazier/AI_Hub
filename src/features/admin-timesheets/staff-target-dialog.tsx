@@ -19,7 +19,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 import { saveStaffTargetAction } from "./admin-timesheets.actions";
+import { ISO_WEEKDAY_LABELS } from "@/lib/timesheet/staff-capacity";
+import { cn } from "@/lib/utils";
+
 import { StaffTargetDTO } from "./admin-timesheets.types";
+
+// Monday first, and the weekend included: plenty of arrangements involve a
+// Saturday, and leaving it out would make those unrepresentable.
+const WEEKDAY_OPTIONS = [
+  { iso: 1, short: "Mon" },
+  { iso: 2, short: "Tue" },
+  { iso: 3, short: "Wed" },
+  { iso: 4, short: "Thu" },
+  { iso: 5, short: "Fri" },
+  { iso: 6, short: "Sat" },
+  { iso: 7, short: "Sun" },
+];
 
 // -------------------------------------------------------------------
 // Set what a person is expected to work and bill.
@@ -51,6 +66,9 @@ export function StaffTargetDialog({
 
   const [days, setDays] = useState(String(target.workingDaysPerWeek));
   const [hours, setHours] = useState(String(target.hoursPerDay));
+  // Which days, as ISO weekday numbers. Empty means unspecified, which keeps
+  // the old behaviour of spreading the count across every weekday.
+  const [weekdays, setWeekdays] = useState<number[]>(target.workingWeekdays ?? []);
   const [billable, setBillable] = useState(
     target.billableTargetPercent === null ? "" : String(target.billableTargetPercent),
   );
@@ -67,6 +85,7 @@ export function StaffTargetDialog({
         workingDaysPerWeek: Number(days),
         hoursPerDay: Number(hours),
         billableTargetPercent: billable === "" ? null : Number(billable),
+        workingWeekdays: weekdays,
       });
 
       if (!result.success) {
@@ -140,6 +159,65 @@ export function StaffTargetDialog({
                 {Number.isFinite(weeklyHours) && weeklyHours > 0 ? `${weeklyHours.toFixed(2)}h a week` : " "}
               </p>
             </div>
+          </div>
+
+          {/* -------------------------------------------------------------
+              WHICH days, not just how many.
+
+              Optional on purpose. Left empty, capacity is spread across every
+              weekday as it always was - the honest answer when nobody has said
+              which days somebody works. Chosen, the whole feature gets sharper:
+              capacity lands on those days, the forecast can say "Tuesday and
+              Wednesday remain" instead of averaging, and an empty Monday for a
+              Tue-Thu person stops looking like a day missed.
+
+              Selecting days sets the count, because two fields that can
+              disagree about the same fact is how a three-day person ends up
+              with four days of capacity.
+              ------------------------------------------------------------- */}
+          <div className="space-y-1.5">
+            <Label>Days worked</Label>
+
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAY_OPTIONS.map((option) => {
+                const selected = weekdays.includes(option.iso);
+
+                return (
+                  <button
+                    key={option.iso}
+                    type="button"
+                    disabled={busy}
+                    aria-pressed={selected}
+                    onClick={() => {
+                      const next = selected
+                        ? weekdays.filter((day) => day !== option.iso)
+                        : [...weekdays, option.iso].sort((a, b) => a - b);
+
+                      setWeekdays(next);
+                      // Keep the count in step with the choice. Only when days
+                      // are chosen: clearing them leaves the number alone so a
+                      // half-day arrangement is not silently rounded.
+                      if (next.length > 0) setDays(String(next.length));
+                    }}
+                    className={cn(
+                      "rounded-md border px-2.5 py-1 text-sm font-medium transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                      selected
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {option.short}
+                  </button>
+                );
+              })}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              {weekdays.length === 0
+                ? "Not set, so the contracted days are spread across every weekday. Choose days to place them exactly."
+                : `Capacity falls on ${weekdays.map((day) => ISO_WEEKDAY_LABELS[day]).join(", ")} only.`}
+            </p>
           </div>
 
           <div className="space-y-1.5">

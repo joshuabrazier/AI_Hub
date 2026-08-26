@@ -41,7 +41,7 @@ export default async function AdminDataRetentionPage() {
           {jobEnabled ? (
             <div
               role="status"
-              className="mb-6 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
+              className="mb-6 flex items-start gap-3 rounded-xl border border-data-caution/40 bg-data-caution-surface p-4 text-sm text-data-caution-text"
             >
               <ShieldAlert size={18} aria-hidden="true" className="mt-0.5 shrink-0" />
               <div>

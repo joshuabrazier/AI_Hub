@@ -256,7 +256,7 @@ function RequestPayload({ detail }: { detail: AiChatRequestLogDetailDTO }) {
       )}
 
       {detail.truncated && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+        <div className="flex items-start gap-2 rounded-lg border border-data-caution/40 bg-data-caution-surface p-3 text-sm text-data-caution-text">
           <FileWarning size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
           <span>
             This payload was too large to store whole, so what follows is the start of it rather than the

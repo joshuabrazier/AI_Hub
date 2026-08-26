@@ -111,6 +111,15 @@ export type AiChatRole = (typeof AI_CHAT_ROLES)[keyof typeof AI_CHAT_ROLES];
 export const AI_CHAT_REQUEST_KINDS = {
   CHAT: "chat",
   SUMMARY: "summary",
+  // RETIRED. Period summaries and saved reports were removed, but rows
+  // carrying these kinds are already in the log and a Postgres enum value
+  // cannot be dropped. They stay so the admin viewer can still label real
+  // history; nothing writes them.
+  TIMESHEET_SUMMARY: "timesheet_summary",
+  TIMESHEET_REPORT: "timesheet_report",
+  // Turning a typed question into dashboard filters. Small and frequent, where
+  // a report is large and rare - telling them apart in the log is the point.
+  TIMESHEET_QUERY: "timesheet_query",
   // Summarising a meeting transcript. Not a chat call, but a call to the
   // same model on the organisation's account, so it belongs in the same
   // record rather than in a second log nobody remembers to read.
@@ -122,6 +131,9 @@ export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_C
 export const AI_CHAT_REQUEST_KIND_LABELS: Record<AiChatRequestKind, string> = {
   [AI_CHAT_REQUEST_KINDS.CHAT]: "Reply",
   [AI_CHAT_REQUEST_KINDS.SUMMARY]: "Compaction",
+  [AI_CHAT_REQUEST_KINDS.TIMESHEET_SUMMARY]: "Timesheet summary",
+  [AI_CHAT_REQUEST_KINDS.TIMESHEET_REPORT]: "Timesheet report",
+  [AI_CHAT_REQUEST_KINDS.TIMESHEET_QUERY]: "Timesheet question",
   [AI_CHAT_REQUEST_KINDS.TRANSCRIPTION]: "Meeting summary",
 };
 
@@ -207,6 +219,12 @@ export interface Users {
   // NULL until the first-run setup screen has been completed. See the note
   // on the column in database-schema.sql.
   profileCompletedAt: Date | null;
+  // The Atlassian accountId this person's time is filed under, linking an app
+  // account to the read model - which is keyed on accountId and knows nothing
+  // about app users. SERVER-ASSIGNED like `role`: letting somebody choose it
+  // would let them log hours as somebody else. NULL means unlinked, and
+  // self-service time entry is unavailable rather than guessed at.
+  atlassianAccountId: string | null;
   // Data retention: set once this person's data has been de-identified
   // (irreversible). NULL = still identifiable.
   deidentifiedAt: Date | null;
@@ -801,12 +819,79 @@ export interface StaffTargets {
   personId: string;
   personName: string | null;
   workingDaysTenths: Generated<number>;
+  // ISO weekday numbers, 1 = Monday. Null when only a count is recorded, which
+  // is what every row started as - see migration 009. Null is NOT an empty
+  // array: "unspecified" and "works no days" are different arrangements.
+  workingWeekdays: number[] | null;
   minutesPerDay: Generated<number>;
   billableTargetPercent: number | null;
   notes: string | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }
+
+// -------------------------------------------------------------------
+// Staff Rates
+//
+// What an hour of somebody's time is charged at, with HISTORY: one row per
+// person per effective-from date, and a worklog is valued at whichever row was
+// in force on the day it was worked. See migration 007 and
+// lib/timesheet/revenue.ts.
+//
+// Money is INTEGER CENTS, for the same reason durations are integer seconds:
+// node-postgres returns NUMERIC as a string, so "150.50" + "100" becomes
+// "150.50100". Cents are exact and they sum.
+// -------------------------------------------------------------------
+export interface StaffRates {
+  id: string;
+  personId: string;
+  personName: string | null;
+  // `effective_from` is a DATE, so it arrives as a 'YYYY-MM-DD' string - see
+  // the type parser note in kysely-database-client.ts. Compared
+  // lexicographically, never parsed into a Date.
+  effectiveFrom: string;
+  chargeRateCents: number;
+  // Null means nobody has recorded a cost, so margin is UNKNOWN, not 100%.
+  costRateCents: number | null;
+  notes: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+// -------------------------------------------------------------------
+// Manual Worklogs
+//
+// Time entered IN THIS APP rather than synced from Jira. The one timesheet
+// table that is NOT derived and NOT rebuildable - it is the only copy of what
+// it holds, so it belongs in the backup. See migration 008.
+//
+// `billable` is deliberately absent: it is resolved from the issue at read
+// time, exactly as the Jira read model does, so nobody can mark their own
+// hours chargeable.
+// -------------------------------------------------------------------
+export interface ManualWorklogs {
+  id: string;
+  personId: string;
+  personName: string | null;
+  enteredBy: string | null;
+  enteredByName: string | null;
+  issueKey: string;
+  // `work_date` is a DATE, so it arrives as a 'YYYY-MM-DD' string - see the
+  // type parser note in kysely-database-client.ts. Compared lexicographically.
+  workDate: string;
+  timeSpentSeconds: number;
+  notes: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type ManualWorklog = Selectable<ManualWorklogs>;
+export type NewManualWorklog = Insertable<ManualWorklogs>;
+export type UpdateManualWorklog = Updateable<ManualWorklogs>;
+
+export type StaffRate = Selectable<StaffRates>;
+export type NewStaffRate = Insertable<StaffRates>;
+export type UpdateStaffRate = Updateable<StaffRates>;
 
 export type StaffTarget = Selectable<StaffTargets>;
 export type NewStaffTarget = Insertable<StaffTargets>;
@@ -920,4 +1005,6 @@ export interface Database {
   worklogFact: WorklogFacts;
   syncWatermark: SyncWatermarks;
   staffTarget: StaffTargets;
+  staffRate: StaffRates;
+  manualWorklog: ManualWorklogs;
 }

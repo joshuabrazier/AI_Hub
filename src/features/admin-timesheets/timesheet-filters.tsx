@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
@@ -10,11 +11,13 @@ import { cn } from "@/lib/utils";
 
 import {
   ALL_CATEGORIES,
+  type ClientOptionDTO,
   CategoryOptionDTO,
   PersonOptionDTO,
   ProjectOptionDTO,
   TimesheetFiltersDTO,
 } from "./admin-timesheets.types";
+import { appendFilterParams } from "./timesheet-url";
 
 // -------------------------------------------------------------------
 // Filter bar
@@ -42,14 +45,11 @@ function buildHref(pathname: string, filters: TimesheetFiltersDTO, change: Parti
   const next = { ...filters, ...change };
   const params = new URLSearchParams({ granularity: next.granularity, start: next.start });
 
-  // Defaults are left out of the URL entirely, so a plain link stays short and
-  // readable rather than carrying "&category=all&project=all&person=all".
-  if (next.category !== ALL_CATEGORIES) params.set("category", next.category);
-  if (next.project !== ALL_CATEGORIES) params.set("project", next.project);
-  if (next.person !== ALL_CATEGORIES) params.set("person", next.person);
+  appendFilterParams(params, next);
 
   return `${pathname || ROUTES.ADMIN_TIMESHEETS}?${params.toString()}`;
 }
+
 
 // -------------------------------------------------------------------
 // Internal vs External, as a segmented control.
@@ -69,7 +69,6 @@ export function CategorySegmentedControl({
   filters: TimesheetFiltersDTO;
   options: CategoryOptionDTO[];
 }) {
-  const router = useRouter();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
   const reduceMotion = useReducedMotion();
@@ -80,21 +79,27 @@ export function CategorySegmentedControl({
     <LayoutGroup id="timesheet-category">
       <div
         role="group"
-        aria-label="Job category"
+        aria-label="Work category"
         className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5"
       >
         {options.map((option) => {
           const isActive = option.value === filters.category;
 
           return (
-            <button
+            // A Link for the same reason as the granularity tabs: these are
+            // real URLs, and only a Link gets prefetched. See period-control.
+            <Link
               key={option.value}
-              type="button"
-              disabled={isPending}
-              aria-pressed={isActive}
-              onClick={() => {
-                if (isActive) return;
-                startTransition(() => router.push(buildHref(pathname, filters, { category: option.value })));
+              href={buildHref(pathname, filters, { category: option.value })}
+              scroll={false}
+              aria-current={isActive ? "page" : undefined}
+              aria-disabled={isActive || undefined}
+              onClick={(event) => {
+                if (isActive) {
+                  event.preventDefault();
+                  return;
+                }
+                startTransition(() => {});
               }}
               className={cn(
                 "relative rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
@@ -119,7 +124,7 @@ export function CategorySegmentedControl({
                   this control wide enough to wrap onto a line of its own - and
                   the same figures are in the tiles immediately below. */}
               <span className="relative">{option.label}</span>
-            </button>
+            </Link>
           );
         })}
       </div>
@@ -128,15 +133,63 @@ export function CategorySegmentedControl({
 }
 
 // -------------------------------------------------------------------
-// Period and project, as dropdowns. Both are lists that grow without bound,
-// which is what a select is for.
+// The CLIENT selector: who the work is for.
+//
+// Choosing one narrows the project list beside it, which is the whole reason
+// these are two controls rather than one long list of every project belonging
+// to everybody. Selecting a client also CLEARS the project, because a project
+// belonging to a different client is not a meaningful thing to keep selected -
+// the service would reject it anyway, and dropping it here means the URL never
+// carries a combination that cannot be honoured.
+// -------------------------------------------------------------------
+export function ClientSelect({ filters, options }: { filters: TimesheetFiltersDTO; options: ClientOptionDTO[] }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
+
+  // Nothing to choose between when there is a single client.
+  if (options.length <= 2) return null;
+
+  return (
+    <Select
+      value={filters.client}
+      disabled={isPending}
+      onValueChange={(client) =>
+        startTransition(() => router.push(buildHref(pathname, filters, { client, project: ALL_CATEGORIES })))
+      }
+    >
+      <SelectTrigger className="w-[220px]" aria-label="Client">
+        <SelectValue placeholder="All clients" />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            <span className="flex w-full items-center justify-between gap-3">
+              <span className="truncate">{option.label}</span>
+              {option.value !== ALL_CATEGORIES && (
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{option.hours.toFixed(2)}h</span>
+              )}
+            </span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+// -------------------------------------------------------------------
+// The PROJECT selector: what an invoice is written against.
+//
+// Its options arrive already narrowed to the chosen client - the service does
+// that, so the same narrowing governs the query and the dropdown and the two
+// cannot disagree.
 // -------------------------------------------------------------------
 export function ProjectSelect({ filters, options }: { filters: TimesheetFiltersDTO; options: ProjectOptionDTO[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
 
-  // Nothing to choose between when there is a single job.
+  // Nothing to choose between when there is a single project.
   if (options.length <= 2) return null;
 
   return (
@@ -145,8 +198,8 @@ export function ProjectSelect({ filters, options }: { filters: TimesheetFiltersD
       disabled={isPending}
       onValueChange={(project) => startTransition(() => router.push(buildHref(pathname, filters, { project })))}
     >
-      <SelectTrigger className="w-[220px]" aria-label="Job">
-        <SelectValue placeholder="All jobs" />
+      <SelectTrigger className="w-[220px]" aria-label="Project">
+        <SelectValue placeholder="All projects" />
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (

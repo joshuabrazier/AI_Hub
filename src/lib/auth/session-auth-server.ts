@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
@@ -37,8 +38,25 @@ import { envServer } from "../env-server";
 // it would leave the row there to be re-read and re-refused on every
 // subsequent request, and would leave a live-looking session in the table
 // for anybody auditing it.
+//
+// MEMOISED PER REQUEST, and the distinction matters more here than anywhere
+// else in the app. React's cache() is scoped to a single request: two calls
+// inside one share an answer, and the next request starts with nothing. That
+// is the only kind of caching a session may ever have. A module-level Map
+// would be shared by every visitor to the server and would hand one person's
+// session to another - never replace this with one.
+//
+// Why it is needed: the guards compose. requireUserRole calls requireUser
+// calls resolveSessionUser calls requireSession calls this, and a page plus
+// its services calls a guard several times over. Each call was two queries,
+// so one overview render asked the database who was signed in five times.
+//
+// MEMOISING A FUNCTION WITH A SIDE EFFECT is safe here, and is in fact the
+// point: the expired-session DELETE now happens once per request instead of
+// once per guard that happened to ask. The cap itself is unaffected, because
+// the memo lasts exactly one request and the next one re-reads and re-checks.
 // -------------------------------------------------------------------
-export async function getSession() {
+export const getSession = cache(async function getSession() {
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -64,7 +82,7 @@ export async function getSession() {
   }
 
   return session;
-}
+});
 
 // -------------------------------------------------------------------
 // Require Session
@@ -98,6 +116,14 @@ type ResolvedSession = {
   twoFactorEnrolled: boolean;
 };
 
+// Request-scoped for the same reason as getSession above, and keyed by id so
+// it stays correct if a request ever resolves more than one user. Read fresh
+// on the next request, which is what keeps profileCompletedAt and
+// twoFactorEnabled honest the moment either of them changes.
+const getCachedUserRow = cache(async function getCachedUserRow(userId: string) {
+  return getUserByUserIdRepo(userId);
+});
+
 async function resolveSessionUser(): Promise<ResolvedSession> {
   const session = await requireSession();
 
@@ -107,7 +133,7 @@ async function resolveSessionUser(): Promise<ResolvedSession> {
     redirect(ROUTES.ERROR_FORBIDDEN);
   }
 
-  const row = await getUserByUserIdRepo(session.user.id);
+  const row = await getCachedUserRow(session.user.id);
 
   return {
     user: {
@@ -357,7 +383,9 @@ export async function getVerifiedApiSession(): Promise<NonNullSession | null> {
 
   if (!envServer.APP_TWO_FACTOR_ENABLED) return session;
 
-  const row = await getUserByUserIdRepo(session.user.id);
+  // The memoised read, so an API route that also resolves the caller through
+  // a guard does not ask for the same row twice.
+  const row = await getCachedUserRow(session.user.id);
 
   const satisfied = await isTwoFactorSatisfied(session.session.id, row?.twoFactorEnabled ?? false);
 

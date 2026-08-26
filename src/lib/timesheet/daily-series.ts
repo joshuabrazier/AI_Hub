@@ -130,9 +130,12 @@ export function buildDailySeries(
     //
     // Somebody on three days a week has 22.5h available in a week, not 37.5h,
     // and measuring them against five days reports 60% when they have worked a
-    // full week. Which three days they choose is not recorded and does not
-    // matter: the per-day track still shows what a full day looks like, while
-    // the WEEK total is what their utilisation is measured against.
+    // full week.
+    //
+    // WHICH days they work can now be recorded too - see migration 009 - and
+    // arrives as `workingWeekdays`. When it is set, the per-day track drops to
+    // zero on their days off rather than showing a full day everywhere; when it
+    // is not, every weekday carries a full day exactly as before.
     availableHoursOverride?: number;
     // "day" gives one bar per day, "month" one bar per month. A year of daily
     // bars is 365 slivers nobody can read or hover, so a long period buckets

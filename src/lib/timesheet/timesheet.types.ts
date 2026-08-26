@@ -199,34 +199,36 @@ export interface PersonDayTotal extends DurationTotals {
 }
 
 export interface ProjectTotal extends DurationTotals {
-  // The Project item the work rolls up to (the worklog's parent), or null for
-  // work that has no parent.
-  parentKey: string | null;
-  parentSummary: string | null;
+  // The PROJECT the work rolls up to - Jira calls this the worklog's parent
+  // issue - or null for work booked with no parent above it.
   projectKey: string | null;
+  projectSummary: string | null;
+  // The CLIENT the project belongs to. Jira calls this the project key; it is
+  // the space, and it is who the work is for.
+  clientKey: string | null;
   category: string | null;
   worklogCount: number;
   split: BillableSplit;
 }
 
 // -------------------------------------------------------------------
-// One job: a Project item, with its budget and what has been booked to it.
+// One project, with its budget and what has been booked to it.
 //
-// This is the job list, so EVERY job appears - including the ones with no
-// hours against them. In a system replacing a job-and-timesheet tool, a job
-// with nothing booked is not an empty row to hide; it is a job nobody has
-// started, or one whose time is being recorded somewhere else entirely. Both
-// are worth seeing, and both vanish if the table only lists jobs with hours.
+// EVERY project appears, including the ones with no hours against them. A
+// project with nothing booked is not an empty row to hide; it is one nobody
+// has started, or one whose time is being recorded somewhere else entirely.
+// Both are worth seeing, and both vanish if the table only lists projects
+// with hours.
 //
 // Baseline and current come from Jira's estimates. Actual is summed from the
 // facts and never stored.
 // -------------------------------------------------------------------
 export interface BudgetRow {
-  parentKey: string;
-  parentSummary: string | null;
-  projectKey: string | null;
+  projectKey: string;
+  projectSummary: string | null;
+  clientKey: string | null;
   category: string | null;
-  // What the job itself declares, which is what its deliverables inherit.
+  // What the project itself declares, which is what its deliverables inherit.
   billable: string | null;
   baselineSeconds: number | null;
   currentSeconds: number | null;
@@ -240,7 +242,7 @@ export interface BudgetRow {
   varianceHours: number | null;
   // Actual as a share of current estimate, or null when there is no estimate.
   consumedRatio: number | null;
-  // How the booked time splits. All zeroes for a job with nothing on it.
+  // How the booked time splits. All zeroes for a project with nothing on it.
   split: BillableSplit;
   worklogCount: number;
 }

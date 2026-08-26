@@ -5,6 +5,9 @@ import {
   countWeekdays,
   measureAgainstTarget,
   toStaffCapacity,
+  capacityHoursForRange,
+  countWeekdaysMatching,
+  workingDatesInRange,
 } from "./staff-capacity";
 
 // Every expectation is a hand-worked literal.
@@ -144,5 +147,113 @@ describe("measureAgainstTarget", () => {
     // Null rather than zero: there is no capacity to have used.
     expect(performance.capacityHours).toBe(0);
     expect(performance.utilisation).toBeNull();
+  });
+});
+
+// -------------------------------------------------------------------
+// WHICH days somebody works, not just how many.
+//
+// The week of 17-23 Aug 2026 starts on a Monday, so 17-21 are weekdays.
+// -------------------------------------------------------------------
+describe("capacity with named working days", () => {
+  const monTueWed = toStaffCapacity(
+    { personId: "p1", workingDaysTenths: 30, minutesPerDay: 450, billableTargetPercent: null, workingWeekdays: [1, 2, 3] },
+    "p1",
+  );
+
+  it("counts the person's OWN days in the range", () => {
+    // Three days at 7.5h is 22.5h - the same total prorating would give for a
+    // whole week, but now placed on Monday, Tuesday and Wednesday.
+    expect(capacityHoursForRange(monTueWed, "2026-08-17", "2026-08-23")).toBe(22.5);
+  });
+
+  it("gives no capacity in a stretch containing none of their days", () => {
+    // Thursday to Sunday, for somebody who works Mon-Wed. Prorating would
+    // still hand them three fifths of each weekday, which is capacity on days
+    // they are not contracted to work at all.
+    expect(capacityHoursForRange(monTueWed, "2026-08-20", "2026-08-23")).toBe(0);
+  });
+
+  it("scales across a longer range by counting real days", () => {
+    // Two full weeks: six working days at 7.5h.
+    expect(capacityHoursForRange(monTueWed, "2026-08-17", "2026-08-30")).toBe(45);
+  });
+
+  it("falls back to prorating when the days are unset", () => {
+    const countOnly = toStaffCapacity(
+      { personId: "p1", workingDaysTenths: 30, minutesPerDay: 450, billableTargetPercent: null },
+      "p1",
+    );
+
+    expect(countOnly.workingWeekdays).toBeNull();
+    // Five weekdays x 3/5 x 7.5h, the behaviour every existing row keeps.
+    expect(capacityHoursForRange(countOnly, "2026-08-17", "2026-08-23")).toBe(22.5);
+    // And the difference shows on a partial range, where the average is not
+    // the answer: Thu-Sun prorated still yields capacity.
+    expect(capacityHoursForRange(countOnly, "2026-08-20", "2026-08-23")).toBeGreaterThan(0);
+  });
+
+  it("keeps prorating for a half-day arrangement even with days chosen", () => {
+    // A list of whole weekdays cannot express 4.5 days, so the tenths stay the
+    // authority rather than the list silently rounding somebody up.
+    const halfDay = toStaffCapacity(
+      { personId: "p1", workingDaysTenths: 45, minutesPerDay: 450, billableTargetPercent: null, workingWeekdays: [1, 2, 3, 4, 5] },
+      "p1",
+    );
+
+    expect(capacityHoursForRange(halfDay, "2026-08-17", "2026-08-23")).toBe(33.75);
+  });
+
+  it("sorts and de-duplicates the days it is given", () => {
+    // A repeated day would double that day's capacity, and the database cannot
+    // reject one - see migration 009.
+    const messy = toStaffCapacity(
+      { personId: "p1", workingDaysTenths: 30, minutesPerDay: 450, billableTargetPercent: null, workingWeekdays: [3, 1, 2] },
+      "p1",
+    );
+
+    expect(messy.workingWeekdays).toEqual([1, 2, 3]);
+  });
+
+  it("treats an empty list as unspecified rather than as no days", () => {
+    const empty = toStaffCapacity(
+      { personId: "p1", workingDaysTenths: 30, minutesPerDay: 450, billableTargetPercent: null, workingWeekdays: [] },
+      "p1",
+    );
+
+    expect(empty.workingWeekdays).toBeNull();
+  });
+});
+
+describe("countWeekdaysMatching", () => {
+  it("maps Sunday to ISO 7 rather than 0", () => {
+    // getUTCDay calls Sunday 0; ISO calls it 7. Getting this wrong silently
+    // drops every Sunday from a weekend worker's capacity.
+    expect(countWeekdaysMatching("2026-08-17", "2026-08-23", [7])).toBe(1);
+    expect(countWeekdaysMatching("2026-08-17", "2026-08-23", [6, 7])).toBe(2);
+  });
+
+  it("counts nothing for a reversed range", () => {
+    expect(countWeekdaysMatching("2026-08-23", "2026-08-17", [1])).toBe(0);
+  });
+});
+
+describe("workingDatesInRange", () => {
+  it("names the actual dates, which is what lets a forecast price each one", () => {
+    const capacity = toStaffCapacity(
+      { personId: "p1", workingDaysTenths: 30, minutesPerDay: 450, billableTargetPercent: null, workingWeekdays: [2, 4] },
+      "p1",
+    );
+
+    expect(workingDatesInRange(capacity, "2026-08-17", "2026-08-23")).toEqual(["2026-08-18", "2026-08-20"]);
+  });
+
+  it("returns nothing when the days are unset", () => {
+    const capacity = toStaffCapacity(
+      { personId: "p1", workingDaysTenths: 30, minutesPerDay: 450, billableTargetPercent: null },
+      "p1",
+    );
+
+    expect(workingDatesInRange(capacity, "2026-08-17", "2026-08-23")).toEqual([]);
   });
 });

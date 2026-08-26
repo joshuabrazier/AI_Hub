@@ -23,6 +23,7 @@ export default async function StaffView(request: TimesheetRequest) {
   const { period, filters, report, syncStatus, periodTotalHours } = data;
 
   const { totals } = dashboard;
+
   const hasAnyone = dashboard.people.length > 0;
 
   return (

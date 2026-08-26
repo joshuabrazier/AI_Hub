@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
@@ -42,7 +41,6 @@ export function PeriodControl({
   todayIso: string;
   pathname: string;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const reduceMotion = useReducedMotion();
 
@@ -68,14 +66,28 @@ export function PeriodControl({
             const isActive = granularity === filters.granularity;
 
             return (
-              <button
+              // A LINK, not a button. Each of these is a real URL that the
+              // arrows beside them already navigate to as links, and the
+              // difference is not cosmetic: Next prefetches a Link when it
+              // enters the viewport, so the page is being fetched while the
+              // pointer is still travelling. A button calling router.push
+              // cannot be prefetched, which made every switch between week,
+              // month and year a cold round trip to a database in Sydney.
+              //
+              // It also makes them behave like links, because they are ones -
+              // middle-click and copy-address now work.
+              <Link
                 key={granularity}
-                type="button"
-                disabled={isPending}
-                aria-pressed={isActive}
-                onClick={() => {
-                  if (isActive) return;
-                  startTransition(() => router.push(hrefFor(granularity)));
+                href={hrefFor(granularity)}
+                scroll={false}
+                aria-current={isActive ? "page" : undefined}
+                aria-disabled={isActive || undefined}
+                onClick={(event) => {
+                  if (isActive) {
+                    event.preventDefault();
+                    return;
+                  }
+                  startTransition(() => {});
                 }}
                 className={cn(
                   "relative rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
@@ -92,7 +104,7 @@ export function PeriodControl({
                   />
                 )}
                 <span className="relative">{GRANULARITY_LABELS[granularity]}</span>
-              </button>
+              </Link>
             );
           })}
         </div>
@@ -102,15 +114,32 @@ export function PeriodControl({
           than a separate button beside it - one fewer control, and the thing
           you click is the thing you want to change. */}
       <div className="inline-flex items-center rounded-lg border border-border">
-        <Button asChild variant="ghost" size="icon" className="size-8 rounded-r-none">
-          <Link
-            href={`${pathname}?${filterQuery(filters, period.previousStart)}`}
+        {/* Stops at the first period on record, the same way the forward
+            arrow stops at the current one. Walking back into months that
+            predate the records showed empty screens that looked like lost
+            data rather than like history that never existed. */}
+        {period.hasPrevious ? (
+          <Button asChild variant="ghost" size="icon" className="size-8 rounded-r-none">
+            <Link
+              href={`${pathname}?${filterQuery(filters, period.previousStart)}`}
+              aria-label={`Previous ${GRANULARITY_LABELS[period.granularity].toLowerCase()}`}
+              scroll={false}
+            >
+              <ChevronLeft aria-hidden />
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 rounded-r-none"
+            disabled
             aria-label={`Previous ${GRANULARITY_LABELS[period.granularity].toLowerCase()}`}
-            scroll={false}
+            title="Nothing recorded before this"
           >
             <ChevronLeft aria-hidden />
-          </Link>
-        </Button>
+          </Button>
+        )}
 
         {period.isCurrent ? (
           <span className="min-w-[142px] px-1 text-center text-sm font-medium tabular-nums text-foreground">

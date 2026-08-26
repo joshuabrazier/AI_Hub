@@ -111,7 +111,12 @@ const ADMIN_NAV: NavGroup[] = [
             tooltip: "How the business is tracking",
           },
           { label: "Entries", href: ROUTES.ADMIN_TIMESHEETS_ENTRIES, icon: Clock, tooltip: "Every time entry" },
-          { label: "Jobs", href: ROUTES.ADMIN_TIMESHEETS_JOBS, icon: Briefcase, tooltip: "The book of work" },
+          {
+            label: "Clients",
+            href: ROUTES.ADMIN_TIMESHEETS_CLIENTS,
+            icon: Briefcase,
+            tooltip: "Who the work is for, and their projects",
+          },
           { label: "Staff", href: ROUTES.ADMIN_TIMESHEETS_STAFF, icon: UserRound, tooltip: "Hours and utilisation" },
           {
             label: "Review",
