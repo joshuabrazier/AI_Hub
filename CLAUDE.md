@@ -92,6 +92,19 @@ transcriptions   one recording, owned by one user (+ its transcript,
 Same boundary as chat - per-person, `requireUser`, a `userId` predicate on
 every query - mounted at `/{admin,manage,portal}/transcription`.
 
+**Summaries** is the one AI feature with NO data of its own:
+
+```text
+(no table)   text in, a summary out, nothing kept
+```
+
+Paste text, choose detailed / summary / executive, read it stream back.
+Mounted at `/{admin,manage,portal}/summaries`. `requireUser` is the whole
+access model, because there is no stored object for one person to reach
+another's copy of. Its model calls ARE recorded, under the `text_summary`
+kind - a feature whose purpose is sending somebody's document to a model
+belongs in the record of exactly that.
+
 `ai_chat_request_logs` is the deliberate exception: it records **what was
 actually sent to the model** on every call, and **admins can read it in full**
 at `/admin/ai-chat-log`. So chat is confidential from peers, not from the
@@ -193,6 +206,9 @@ serving bytes, so the actions rule never applied to it.)
 - **`completed` means the TRANSCRIPT is stored, not the summary.** Summarising is a second model call and is allowed to fail: a completed row with `summary` NULL and `error` set is that case, and the screen offers to try again. A failed summary must never cost somebody their transcript.
 - **Azure Speech REFUSES the MP4 family, so the browser converts it before upload.** Documented formats are WAV, MP3, OPUS/OGG, FLAC, WMA, AAC, AMR, WebM, SPEEX. An `.m4a` - a phone voice memo, and the commonest upload there is - is AAC in an MP4 container and comes back `InvalidData: The recordings URI contains invalid data` (note: `InvalidData` is a decode failure, `InvalidUri` is a download failure - the latter means storage is unreachable, usually Azurite). `audio-convert.ts` decodes it with Web Audio and re-encodes 16 kHz mono WAV in the browser, because ffmpeg is not on the App Service Node runtime and this also sends ~a tenth of the bytes. **Conversion never gates the upload**: anything it cannot decode is uploaded untouched for the service to judge. It re-checks `MAX_MEDIA_BYTES` afterwards, since WAV is uncompressed and can come out bigger. `replaceExtension` is load-bearing - the server derives the stored media type from the filename, so a WAV still called `.m4a` would be handed back to Azure as the thing it just refused. `RECORDING_FORMAT_CANDIDATES` stays ordered documented-first.
 - **`Permissions-Policy` in `next.config.ts` gates the recorder.** It reads `microphone=(self)`, and `(self)` is load-bearing in both directions: tightening it to `()` makes the browser refuse `getUserMedia` with no prompt and nothing in the UI to explain why, and removing the directive entirely would let embedded third-party frames use the microphone. Camera and geolocation stay `()`. Changing `next.config.ts` needs a dev-server restart - it does not hot-reload.
+- **Summaries store NOTHING, and that is a decision rather than a gap.** The input is whatever somebody pasted - a contract, a medical letter - so keeping a copy of it plus the model's reading of it would make it the most sensitive table in the app for no benefit anybody asked for. The page says so, because a refresh loses the summary. The one place it does persist is `ai_chat_request_logs`, on that log's own shorter retention window, and the screen says admins can review it.
+- **The three summary styles are three different PROMPTS, not one prompt with a length.** "The same but shorter" gets a truncated answer that stops mid-thought; asking a different question gets a different answer. Each has its own `SUMMARY_MAX_TOKENS`, ordered detailed > summary > executive, and a test asserts that ordering - an executive summary allowed to run as long as a detailed one has missed the point of being asked for.
+- **Pasted text is fenced in `<source_text>` and named as material, never instructions.** It was written by somebody else and can contain anything aimed at the model. The fence lowers the chance; the system prompt saying so and `ModelMarkdown` emitting React elements limit the damage. All three are needed - none is sufficient.
 - **Model output renders through `ModelMarkdown`** (`src/components/model-markdown.tsx`), shared by chat replies and meeting summaries. Its three controls - no `rehype-raw`, a `safeUrl` protocol allowlist, images as links - are asserted against rendered output in `model-markdown.test.ts`. A transcript is untrusted text like a chat message and renders as text nodes.
 - **`FIELD_ENCRYPTION_KEY` has no callers in the base** (`src/lib/crypto/field-encryption.ts` is kept as domain-neutral, tested infrastructure - its only user was signable documents, removed). It is unrelated to 2FA. The moment a project encrypts its first value with it, it becomes permanent: rotating it makes that value unreadable.
 
