@@ -48,9 +48,47 @@ export function handleServerApiError(method: string, error: unknown): ServerApiR
 }
 
 // -------------------------------------------------------------------
+// Is this the page having outlived the deployment it was served by?
+//
+// Next.js identifies a server action by a hash of the build it came from.
+// Deploy while somebody has a page open and their tab keeps posting the OLD
+// hash, which the new server has never heard of. It answers "Failed to find
+// Server Action" and REJECTS THE REQUEST BEFORE ANY APPLICATION CODE RUNS.
+//
+// From the reader's side the button simply does nothing, and from the
+// server's side there is no trace at all - not in a service log, not in an
+// action log - because nothing of ours was reached. It cost most of an
+// afternoon: every button on a stale tab is dead, and every diagnosis
+// points at the feature the button belongs to rather than at the tab.
+//
+// Nothing can be fixed by retrying. The page has to be reloaded to fetch
+// the current build's JavaScript, so that is what we tell people to do.
+// -------------------------------------------------------------------
+function isStaleDeploymentError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+
+  return message.includes("Failed to find Server Action");
+}
+
+// -------------------------------------------------------------------
 // handleFrontendErrorWithToast - log error then show error toast
 // -------------------------------------------------------------------
 export function handleFrontendErrorWithToast(error: unknown) {
+  if (isStaleDeploymentError(error)) {
+    console.error("Stale deployment: this page predates the running build.", error);
+
+    // A button rather than an automatic reload. Reloading unprompted would
+    // throw away whatever somebody had typed - a half-written chat message,
+    // a form they are part-way through - and this fires on the first action
+    // they attempt, which is often mid-task.
+    toast.error("The app has been updated. Reload the page to continue.", {
+      duration: Infinity,
+      action: { label: "Reload", onClick: () => window.location.reload() },
+    });
+
+    return;
+  }
+
   const errorMessage = getFrontendErrorMessage(error);
 
   console.error(errorMessage);
