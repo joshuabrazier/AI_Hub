@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans, Inter, Source_Serif_4 } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans, Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -32,23 +32,6 @@ const plexMono = IBM_Plex_Mono({
   display: "swap",
 });
 
-// Source Serif carries the assistant's replies, and nothing else.
-//
-// A chat reply is the one place in this product where somebody READS rather
-// than scans - paragraphs, at length, in sequence. A serif is measurably
-// easier to read that way, and it also does a quieter job: it makes the
-// model's half of the conversation look unmistakably different from the
-// interface around it, without a label or a badge saying so.
-//
-// Deliberately NOT applied to figures, tables, labels or anything in the
-// timesheet screens. Those are scanned, not read, and the sans faces above
-// are chosen for that.
-const sourceSerif = Source_Serif_4({
-  variable: "--font-source-serif",
-  subsets: ["latin"],
-  display: "swap",
-});
-
 export const metadata: Metadata = {
   icons: {
     icon: "/logo.png",
@@ -73,7 +56,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${plexSans.variable} ${plexMono.variable} ${sourceSerif.variable} h-full antialiased`}
+      className={`${inter.variable} ${plexSans.variable} ${plexMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full bg-background text-foreground">

@@ -22,19 +22,17 @@ export default async function AiChatPage({ eyebrow, subjectId }: { eyebrow: stri
     <PortalPage
       eyebrow={eyebrow}
       title="AI chat"
-      // ONE LINE HERE, and the full terms on the empty thread.
+      // NO VISIBLE HEADER on this screen. The eyebrow and title only repeated
+      // what the sidebar already highlights, and the description was a fourth
+      // line of grey above a page whose whole content is the transcript. The
+      // h1 is still rendered for the document outline - see PortalPage.
       //
-      // What has to be said has not changed: administrators can read what is
-      // sent, and timesheet answers are limited to what a role can already
-      // see. A privacy promise the product does not keep is worse than no
-      // promise, and so is one nobody reads - four lines of grey text above
-      // every visit is the second failure, not a fix for the first.
-      //
-      // So it moved to the greeting on a new conversation, which is read at
+      // The privacy terms are NOT lost with the description: they live on the
+      // greeting shown for a new conversation, which is where they are read at
       // the moment somebody is deciding what to type. See the empty state in
-      // ai-chat-thread.tsx; if that text goes, this line is not enough on its
-      // own and both need rewriting together.
-      description="Ask about this app, or about your timesheets."
+      // ai-chat-thread.tsx. If that text ever goes, this page has nowhere left
+      // to say it and both need rethinking together.
+      headerHidden
       // The composer is the bottom edge of this screen, so the page is sized
       // to the viewport and the transcript scrolls inside it. See PortalPage.
       fill

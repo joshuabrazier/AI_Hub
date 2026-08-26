@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Archive,
+  Check,
   CircleStop,
+  Copy,
   Loader2,
   Paperclip,
   SendHorizontal,
@@ -432,16 +434,51 @@ export function AiChatThread({
           read as part of writing rather than as separate widgets. */}
         <div
           className={cn(
-            "flex flex-col gap-2 rounded-2xl border border-border bg-card px-3 pb-2 pt-3 shadow-sm transition-shadow",
+            "flex items-end gap-1.5 rounded-3xl border border-border bg-card px-2 py-1.5 shadow-sm transition-shadow",
             "focus-within:border-primary/40 focus-within:shadow-md",
             isDropTarget && "border-primary/60 shadow-md",
           )}
         >
+        {/* The real input stays off-screen and the button drives it, so the
+            control matches the rest of the UI while keeping a native file
+            picker and its keyboard behaviour. */}
+        {canAttachFiles && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={AI_CHAT_ACCEPT_ATTRIBUTE}
+              className="sr-only"
+              tabIndex={-1}
+              onChange={(event) => {
+                void upload(Array.from(event.target.files ?? []));
+                // Cleared so choosing the same file twice in a row still
+                // fires a change event.
+                event.target.value = "";
+              }}
+            />
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+              disabled={isStreaming || isUploading}
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Attach files"
+              title={`Attach files - ${AI_CHAT_ACCEPTED_SUMMARY}`}
+            >
+              <Paperclip size={18} aria-hidden="true" />
+            </Button>
+          </>
+        )}
+
           <Textarea
             aria-label="Message"
             value={draft}
             maxLength={MAX_MESSAGE_CHARS}
-            rows={2}
+            rows={1}
             placeholder={staged.length > 0 ? "Ask about the attached files..." : "Write a message..."}
             disabled={isStreaming}
             onChange={(event) => setDraft(event.target.value)}
@@ -472,7 +509,7 @@ export function AiChatThread({
               }
             }}
             className={cn(
-              "max-h-56 min-h-0 w-full resize-none border-0 bg-transparent px-1 py-0 text-[0.9375rem] shadow-none",
+              "max-h-56 min-h-0 flex-1 resize-none border-0 bg-transparent px-1 py-2 text-[0.9375rem] leading-[1.5] shadow-none",
               "dark:bg-transparent",
               "focus-visible:ring-0 focus-visible:ring-offset-0",
             )}
@@ -489,82 +526,39 @@ export function AiChatThread({
           />
 
 
-          {/* The controls, on their own row under the text. Attach on the
-              left where a toolbar starts, send on the right where a line
-              ends - so neither sits in the way of what is being written. */}
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1">
-            {/* The real input stays off-screen and the button drives it, so the
-                control matches the rest of the UI while keeping a native file
-                picker and its keyboard behaviour. */}
-            {canAttachFiles && (
-              <>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept={AI_CHAT_ACCEPT_ATTRIBUTE}
-                  className="sr-only"
-                  tabIndex={-1}
-                  onChange={(event) => {
-                    void upload(Array.from(event.target.files ?? []));
-                    // Cleared so choosing the same file twice in a row still
-                    // fires a change event.
-                    event.target.value = "";
-                  }}
-                />
 
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-                  disabled={isStreaming || isUploading}
-                  onClick={() => fileInputRef.current?.click()}
-                  aria-label="Attach files"
-                  title={`Attach files - ${AI_CHAT_ACCEPTED_SUMMARY}`}
-                >
-                  <Paperclip size={18} aria-hidden="true" />
-                </Button>
-              </>
-            )}
-
-            </span>
-
-            {isStreaming ? (
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="size-9 shrink-0 rounded-full"
-                onClick={() => abortRef.current?.abort()}
-                aria-label="Stop generating"
-                title="Stop generating"
-              >
-                <CircleStop size={18} aria-hidden="true" />
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="icon"
-                className="size-9 shrink-0 rounded-full"
-                onClick={() => void send()}
-                disabled={draft.trim().length === 0 || isUploading}
-                aria-label="Send message"
-                title="Send message"
-              >
-                <SendHorizontal size={18} aria-hidden="true" />
-              </Button>
-            )}
-          </div>
+          {isStreaming ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-9 shrink-0 rounded-full"
+              onClick={() => abortRef.current?.abort()}
+              aria-label="Stop generating"
+              title="Stop generating"
+            >
+              <CircleStop size={18} aria-hidden="true" />
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="icon"
+              className="size-9 shrink-0 rounded-full"
+              onClick={() => void send()}
+              disabled={draft.trim().length === 0 || isUploading}
+              aria-label="Send message"
+              title="Send message"
+            >
+              <SendHorizontal size={18} aria-hidden="true" />
+            </Button>
+          )}
         </div>
 
         {/* Kept, but demoted to a hint under the field rather than a line of
             instructions above it. Somebody who already knows Enter sends
             should not read it on every visit. */}
         <p className="mt-2 text-center text-xs text-muted-foreground">
-          Enter to send, Shift + Enter for a new line.
-          {canAttachFiles ? " Attach, paste or drop files." : ""}
+          The assistant can be wrong. Check anything that matters against the screen it came from.
         </p>
       </div>
     </div>
@@ -615,7 +609,7 @@ function MessageRow({
               reformatting a person's own message is both surprising and a
               way to make two different inputs render identically. Still a
               text node, so it is escaped by React as it always was. */}
-          <p className="whitespace-pre-wrap break-words text-[0.9375rem] leading-relaxed text-foreground">
+          <p className="whitespace-pre-wrap break-words text-[0.9375rem] leading-[1.6] text-foreground">
             {message.content}
           </p>
         </div>
@@ -642,10 +636,7 @@ function MessageRow({
         // writes in. Renders to React elements, never to an HTML string;
         // see the note in ModelMarkdown for why that distinction is the
         // whole security argument.
-        <ModelMarkdown
-          content={message.content}
-          className="font-reading text-[1.0625rem] leading-[1.75] text-foreground"
-        />
+        <ModelMarkdown content={message.content} className="text-[0.9375rem] leading-[1.7] text-foreground" />
       )}
 
       {/* What was sent with this turn. No remove handler: once a file is
@@ -653,7 +644,10 @@ function MessageRow({
           and the answer above may depend on it. */}
       <AiChatAttachmentList attachments={message.attachments} className="mt-1" />
 
-      <Timestamp message={message} isStreaming={isStreaming} />
+      <div className="-ml-2 flex items-center gap-1">
+        <CopyReply content={message.content} isStreaming={isStreaming} />
+        <Timestamp message={message} isStreaming={isStreaming} />
+      </div>
     </li>
   );
 }
@@ -679,5 +673,53 @@ function Timestamp({ message, isStreaming }: { message: AiChatMessageDTO; isStre
     <p className="text-xs text-muted-foreground opacity-0 transition-opacity group-hover/msg:opacity-100 group-focus-within/msg:opacity-100">
       {formatDateTime(message.createdAt)}
     </p>
+  );
+}
+
+// -------------------------------------------------------------------
+// Copy a reply.
+//
+// Under the answer, on hover, beside the time - the same treatment and for
+// the same reason: worth having, not worth a permanent button on every turn.
+//
+// It copies the MARKDOWN SOURCE rather than the rendered text, because that
+// is what survives being pasted somewhere else. A table pasted as its
+// rendered characters arrives as a wall of words with the columns gone.
+//
+// Not shown while streaming: half an answer is not an answer, and a copy
+// button beside one invites copying it.
+// -------------------------------------------------------------------
+function CopyReply({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  if (isStreaming || content.trim().length === 0) return null;
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-7 gap-1.5 px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/msg:opacity-100 group-focus-within/msg:opacity-100"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(content);
+          setCopied(true);
+        } catch {
+          // Blocked by the browser, or no permission. Say so rather than
+          // showing a tick for something that did not happen.
+          toast.error("Could not copy to the clipboard.");
+        }
+      }}
+      aria-label={copied ? "Copied" : "Copy reply"}
+    >
+      {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+      {copied ? "Copied" : "Copy"}
+    </Button>
   );
 }
