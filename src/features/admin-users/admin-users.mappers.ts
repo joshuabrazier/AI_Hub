@@ -45,7 +45,14 @@ export function groupTeamsByUserId(
 // -------------------------------------------------------------------
 // Map a user account to a row.
 // -------------------------------------------------------------------
-export function mapDBUserToAdminUserResponseDTO(user: User, teams: AdminUserTeamDTO[]): AdminUserResponseDTO {
+export function mapDBUserToAdminUserResponseDTO(
+  user: User,
+  teams: AdminUserTeamDTO[],
+  // Passed in rather than read here, because the caller loads every id with a
+  // second factor in one query - a repository call per row would be one query
+  // per person on a screen that already lists all of them.
+  hasTwoFactor = false,
+): AdminUserResponseDTO {
   return {
     id: user.id,
     name: user.name,
@@ -55,6 +62,7 @@ export function mapDBUserToAdminUserResponseDTO(user: User, teams: AdminUserTeam
     displayStatus: user.isActive ? ADMIN_USER_DISPLAY_STATUS.Active : ADMIN_USER_DISPLAY_STATUS.Inactive,
     teams,
     teamNames: teams.map((team) => team.teamName).join(", "),
+    hasTwoFactor,
   };
 }
 
@@ -88,6 +96,8 @@ export function mapDBInvitationToAdminUserResponseDTO(
     displayStatus: ADMIN_USER_DISPLAY_STATUS.Pending,
     teams,
     teamNames: teams.map((team) => team.teamName).join(", "),
+    // An invitation has no account yet, so there is nothing to reset.
+    hasTwoFactor: false,
   };
 }
 

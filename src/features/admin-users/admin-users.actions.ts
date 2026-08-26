@@ -11,6 +11,7 @@ import {
   cancelAdminInvitationService,
   getAdminUsersService,
   getInvitableTeamsService,
+  resetUserTwoFactorService,
   updateAdminUserService,
 } from "./admin-users.service";
 import {
@@ -20,6 +21,8 @@ import {
   CancelAdminUserInvitationRequestDTO,
   CancelAdminUserInvitationSchema,
   InvitableTeamDTO,
+  ResetUserTwoFactorRequestDTO,
+  ResetUserTwoFactorSchema,
   UpdateAdminUserRequestDTO,
   UpdateAdminUserSchema,
 } from "./admin-users.types";
@@ -80,6 +83,32 @@ export async function updateAdminUserAction(
     return { success: true, data: userId } satisfies ServerApiResponse<string | undefined>;
   } catch (error) {
     return handleServerApiError("updateAdminUserAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Clear somebody's app-level second factor so they can enrol again
+// (admin only).
+//
+// For the person who deleted their authenticator app or lost the phone
+// and never saved their backup codes. There is deliberately no
+// self-service equivalent - one would be a way around the factor - so
+// this is the only route back, and it is audited naming both parties.
+// -------------------------------------------------------------------
+export async function resetUserTwoFactorAction(
+  requestDTO: ResetUserTwoFactorRequestDTO,
+): Promise<ServerApiResponse<null>> {
+  try {
+    await requireUserRole([USER_ROLES.ADMIN]);
+
+    const validatedRequest = await validateRequest(ResetUserTwoFactorSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    await resetUserTwoFactorService(validatedRequest.data);
+
+    return { success: true, data: null } satisfies ServerApiResponse<null>;
+  } catch (error) {
+    return handleServerApiError("resetUserTwoFactorAction", error);
   }
 }
 

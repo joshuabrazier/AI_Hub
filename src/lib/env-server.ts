@@ -208,6 +208,25 @@ const serverEnvSchema = z.object({
   // residency argument that pinned Bedrock to Australia applies here with
   // more force, not less.
   // -------------------------------------------------------------------
+  // -----------------------------------------------------------------
+  // Web Push
+  //
+  // The private half of the VAPID pair whose public half is
+  // NEXT_PUBLIC_VAPID_PUBLIC_KEY. Generate the pair ONCE with
+  // `npx web-push generate-vapid-keys` and keep it: changing it invalidates
+  // every existing subscription, and every device has to be turned on again
+  // by hand because nothing can notify them to do so.
+  //
+  // VAPID_SUBJECT identifies the sender to the push service so it has
+  // somebody to contact about a misbehaving one. A mailto: or https: URL.
+  // -----------------------------------------------------------------
+  VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  VAPID_SUBJECT: z.string().min(1).default("mailto:support@example.com"),
+
+  // Bearer token the background transcription sweep requires. The endpoint
+  // is inert (503) until it is set, exactly like the retention job.
+  TRANSCRIPTION_SWEEP_SECRET: z.string().min(16).optional(),
+
   AZURE_SPEECH_KEY: z.string().min(1).optional(),
   AZURE_SPEECH_REGION: z.string().min(1).optional(),
 
@@ -257,6 +276,36 @@ const serverEnvSchema = z.object({
   // deactivated-account check and the audit log all still apply.
   // -------------------------------------------------------------------
   DEV_PASSWORD_SIGN_IN: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+
+  // -------------------------------------------------------------------
+  // App-level two-factor authentication.
+  //
+  // OFF by default, and that default is load-bearing: turning this on
+  // requires every user to enrol an authenticator before they can reach any
+  // part of the app, so deploying must never do it on its own. Set it
+  // deliberately, once people have been told.
+  //
+  // WHAT IT IS FOR. Entra owns credentials, and enforcing MFA there needs a
+  // Conditional Access policy, which needs an Entra ID P1 licence per user.
+  // This is the alternative for a tenant on the free tier: a second factor
+  // on THIS APP, checked after Microsoft has proved who somebody is.
+  //
+  // WHAT IT IS NOT. It does not make the tenant two-factor. A stolen
+  // password still reaches everything else the person can sign in to -
+  // email, Teams, SharePoint - because the identity itself is unchanged.
+  // What it protects is the data in here: chat transcripts, meeting
+  // recordings, uploaded files. Do not describe it internally as "we have
+  // MFA"; it is "the portal requires a second factor", and the difference
+  // matters the day somebody asks a compliance question.
+  //
+  // If the organisation later buys P1, this should come OFF and a
+  // Conditional Access policy replace it - two prompts for the same thing
+  // trains people to click through both.
+  // -------------------------------------------------------------------
+  APP_TWO_FACTOR_ENABLED: z
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
@@ -316,6 +365,9 @@ export const envServer = serverEnvSchema.parse({
   AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING,
   AZURE_STORAGE_ATTACHMENT_CONTAINER: process.env.AZURE_STORAGE_ATTACHMENT_CONTAINER,
   AZURE_MEDIA_CONTAINER: process.env.AZURE_MEDIA_CONTAINER,
+  VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+  VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+  TRANSCRIPTION_SWEEP_SECRET: process.env.TRANSCRIPTION_SWEEP_SECRET,
   AZURE_SPEECH_KEY: process.env.AZURE_SPEECH_KEY,
   AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION,
   AZURE_SPEECH_LOCALE: process.env.AZURE_SPEECH_LOCALE,
@@ -325,6 +377,7 @@ export const envServer = serverEnvSchema.parse({
   MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,
   MICROSOFT_TENANT_ID: process.env.MICROSOFT_TENANT_ID,
   DEV_PASSWORD_SIGN_IN: process.env.DEV_PASSWORD_SIGN_IN,
+  APP_TWO_FACTOR_ENABLED: process.env.APP_TWO_FACTOR_ENABLED,
   AUTH_ALLOWED_EMAIL_DOMAINS: process.env.AUTH_ALLOWED_EMAIL_DOMAINS,
   // Every key the schema declares must be listed here too. Zod only ever sees
   // this object, so a variable declared above and omitted below is silently

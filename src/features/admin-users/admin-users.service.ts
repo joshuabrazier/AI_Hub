@@ -29,6 +29,12 @@ import {
   updateUserInvitationRepo,
 } from "@/lib/data/repositories/user-invitations.repository";
 import { deleteSessionsByUserIdRepo } from "@/lib/data/repositories/sessions.repository";
+import { clearSessionTwoFactorForUserRepo } from "@/lib/data/repositories/session-two-factor.repository";
+import {
+  deleteTwoFactorForUserRepo,
+  getUserIdsWithTwoFactorRepo,
+  hasTwoFactorRepo,
+} from "@/lib/data/repositories/two-factor.repository";
 import {
   getMemberUsersRepo,
   getStaffUsersRepo,
@@ -55,6 +61,7 @@ import {
   AdminUserResponseDTO,
   CancelAdminUserInvitationRequestDTO,
   InvitableTeamDTO,
+  ResetUserTwoFactorRequestDTO,
   UpdateAdminUserRequestDTO,
 } from "./admin-users.types";
 
@@ -112,8 +119,17 @@ export async function getAdminUsersService(): Promise<AdminUserResponseDTO[]> {
     const teamsByUserId = groupTeamsByUserId(memberships, teams);
     const teamNameById = new Map(teams.map((team) => [team.id, team.name]));
 
+    // One query for everyone with a second factor, for the same reason: a
+    // per-row lookup would be a query per person on a screen that lists them
+    // all. Only ids come back - never a secret or a backup code.
+    const twoFactorUserIds = await getUserIdsWithTwoFactorRepo();
+
     const userRows = [...staffUsers, ...memberUsers].map((user) =>
-      mapDBUserToAdminUserResponseDTO(user, teamsByUserId.get(user.id) ?? []),
+      mapDBUserToAdminUserResponseDTO(
+        user,
+        teamsByUserId.get(user.id) ?? [],
+        twoFactorUserIds.has(user.id),
+      ),
     );
 
     const invitationRows = [...staffInvitations, ...memberInvitations].map((invitation) =>
@@ -125,6 +141,79 @@ export async function getAdminUsersService(): Promise<AdminUserResponseDTO[]> {
     );
   } catch (error) {
     throw handleError("getAdminUsersService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Clear somebody's app-level second factor, so they can enrol again.
+//
+// THE CASE THIS EXISTS FOR: a person deletes their authenticator app,
+// loses the phone, or never saved the backup codes. They cannot verify, so
+// they cannot reach any part of the app, and by design there is no
+// self-service way out - one would be a way around the factor.
+//
+// WHAT IT GRANTS AN ADMIN, stated plainly: nothing they did not already
+// have. A reset does not sign anybody in - the account still needs a
+// Microsoft sign-in, which this app cannot perform - and an admin already
+// holds impersonation, which reaches the same data directly. So the risk
+// is not privilege escalation, it is deniability, and the answer is the
+// same one impersonation uses: the act is recorded naming both parties.
+//
+// THREE WRITES, AND THE ORDER MATTERS.
+//   1. the secret goes, so the old authenticator stops working,
+//   2. the flag goes, so the gate stops treating them as enrolled, and
+//   3. every session verification they hold is cleared.
+//
+// Step 3 is the one that is easy to leave out and the one that matters
+// most. Without it, a session that had already verified stays verified -
+// so if the reset is being done because a phone was stolen, the thief's
+// still-signed-in session keeps its access on the strength of the factor
+// that was just revoked.
+//
+// Sessions are deliberately NOT deleted. The person is usually sitting on
+// the verify screen when they ask for this; signing them out would make
+// them start at Microsoft again for no gain, and clearing the verification
+// already forces them back through enrolment.
+// -------------------------------------------------------------------
+export async function resetUserTwoFactorService(
+  requestDTO: ResetUserTwoFactorRequestDTO,
+): Promise<void> {
+  try {
+    const actingUser = await requireUserRole([USER_ROLES.ADMIN]);
+
+    const subject = await getUserByUserIdRepo(requestDTO.id);
+
+    // Answering the same way for "no such account" and "nothing to reset"
+    // keeps a guessed id from confirming an account exists.
+    if (!subject) {
+      throw new DisplayErrorMessage("That account could not be found.");
+    }
+
+    if (!(await hasTwoFactorRepo(subject.id))) {
+      throw new DisplayErrorMessage(
+        `${subject.name} does not have two-factor authentication set up, so there is nothing to reset.`,
+      );
+    }
+
+    await deleteTwoFactorForUserRepo(subject.id);
+
+    await updateUserByIdRepo(subject.id, { twoFactorEnabled: false, updatedAt: new Date() });
+
+    await clearSessionTwoFactorForUserRepo(subject.id);
+
+    // Both parties named, for the reason above. No secret, no backup code
+    // and no count of either goes in the trail - only that it happened.
+    await recordAuditEvent({
+      action: AUDIT_ACTIONS.AUTH_TWO_FACTOR_RESET,
+      entityType: AUDIT_ENTITY_TYPES.USER,
+      entityId: subject.id,
+      subjectUserId: subject.id,
+      summary: `${actingUser.name ?? actingUser.email} reset two-factor authentication for ${subject.name}`,
+    });
+
+    revalidatePath(ROUTES.ADMIN_USERS);
+  } catch (error) {
+    throw handleError("resetUserTwoFactorService", error);
   }
 }
 

@@ -11,10 +11,12 @@ import {
   isBedrockConfigured,
 } from "@/lib/ai/bedrock-client";
 import { requireUser } from "@/lib/auth/session-auth-server";
+import { getUserByUserIdRepo } from "@/lib/data/repositories/users.repository";
 import {
   AI_CHAT_REQUEST_KINDS,
   TRANSCRIPTION_SOURCES,
   TRANSCRIPTION_STATUSES,
+  USER_ROLES,
   type Transcription,
   type TranscriptionSegment,
 } from "@/lib/data/kysely-database-types";
@@ -26,6 +28,7 @@ import {
   addTranscriptionRepo,
   claimTranscriptionTransitionRepo,
   deleteTranscriptionForUserRepo,
+  getAllInFlightTranscriptionsRepo,
   getInFlightTranscriptionsForUserRepo,
   getTranscriptionForUserRepo,
   getTranscriptionsForUserRepo,
@@ -36,7 +39,8 @@ import { DisplayErrorMessage } from "@/lib/errors";
 import { safeDownloadName } from "@/lib/download-blob";
 import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
-import { ROUTES } from "@/lib/routes";
+import { isPushConfigured, sendPushToUser } from "@/lib/push/push-notifications";
+import { ROUTES, transcriptionHomeForRole } from "@/lib/routes";
 import {
   createUploadUrl,
   deleteMedia,
@@ -388,6 +392,48 @@ async function summariseTranscript(
 }
 
 // -------------------------------------------------------------------
+// Tell the person their transcription has finished.
+//
+// NOTHING FROM THE MEETING GOES IN THE PAYLOAD. A push notification is
+// delivered to a locked screen, sits with the browser vendor in transit,
+// and is readable by whoever is holding the phone. So this carries the
+// title they gave it, one line of status, and a link. The transcript and
+// the summary stay behind the session check on the page it opens.
+//
+// The title is the one exception, and it is theirs - they typed it, or it
+// is a date. If somebody names a meeting after something confidential, that
+// is a choice they made about their own lock screen.
+//
+// Best-effort and never throws: the transcript is already stored by this
+// point, and losing a job over a notification would be exactly backwards.
+// -------------------------------------------------------------------
+async function notifyFinished(transcription: Transcription, userId: string): Promise<void> {
+  if (!isPushConfigured()) return;
+
+  const failed = transcription.status === TRANSCRIPTION_STATUSES.FAILED;
+
+  // Looked up rather than passed in, because the background sweep has no
+  // session - it acts on rows belonging to people who are not here.
+  const owner = await getUserByUserIdRepo(userId);
+
+  await sendPushToUser(userId, {
+    title: failed ? "Transcription failed" : "Your transcription is ready",
+    body: failed
+      ? `"${transcription.title}" could not be transcribed. The recording is still here.`
+      : `"${transcription.title}" has been transcribed and summarised.`,
+    // The path for THIS person's role. It cannot be a fixed one: the proxy
+    // redirects a non-member away from /portal rather than refusing them,
+    // so an admin tapping a portal link would land on their dashboard
+    // instead of the transcription the notification was about - a bug that
+    // would look like the notification simply not working.
+    url: `${transcriptionHomeForRole(owner?.role ?? USER_ROLES.MEMBER)}?id=${transcription.id}`,
+    // One notification per transcription. A retry replaces the earlier one
+    // rather than stacking a second onto the lock screen.
+    tag: `transcription-${transcription.id}`,
+  });
+}
+
+// -------------------------------------------------------------------
 // Move one in-flight row along.
 //
 // Called for every unfinished row when the page loads, and again while the
@@ -425,6 +471,8 @@ async function advanceTranscription(
       status: FAILED,
       error: message.slice(0, MAX_ERROR_CHARS),
     });
+
+    await notifyFinished(updated ?? transcription, userId);
 
     return updated ?? transcription;
   };
@@ -466,6 +514,10 @@ async function advanceTranscription(
       error,
       completedAt: new Date(),
     });
+
+    // Only the run that WON the claim notifies. Two sweeps arriving together
+    // would otherwise send the same person the same notification twice.
+    if (updated) await notifyFinished(updated, userId);
 
     return updated ?? (await getTranscriptionForUserRepo(transcription.id, userId)) ?? transcription;
   }
@@ -608,6 +660,8 @@ async function advanceTranscription(
     completedAt: new Date(),
   });
 
+  if (completed) await notifyFinished(completed, userId);
+
   return completed ?? stored;
 }
 
@@ -711,6 +765,58 @@ export async function sweepTranscriptionsService(): Promise<{ changed: boolean }
     return { changed };
   } catch (error) {
     throw handleError("sweepTranscriptionsService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Move EVERYBODY'S unfinished jobs forward.
+//
+// The background half, run from the scheduled job. It is what makes a
+// notification possible at all: the browser-driven sweep only runs while
+// somebody has the screen open, so with a locked phone nothing would ever
+// finish the job and there would be nothing to notify about.
+//
+// It has no session, so it cannot use requireUser - each row carries the
+// user it belongs to, and every call below is scoped to that id rather than
+// to a caller. This is the only place in the feature that acts on rows it
+// did not resolve from a session, and the endpoint in front of it is
+// guarded by a bearer secret for exactly that reason.
+//
+// Bounded per run so one pass after an outage cannot pull an unbounded set
+// into memory; the remainder is collected on the next tick.
+// -------------------------------------------------------------------
+const SWEEP_BATCH_SIZE = 50;
+
+export async function sweepAllTranscriptionsService(): Promise<{
+  examined: number;
+  advanced: number;
+}> {
+  try {
+    if (!isSpeechConfigured()) return { examined: 0, advanced: 0 };
+
+    const inFlight = await getAllInFlightTranscriptionsRepo(SWEEP_BATCH_SIZE);
+
+    let advanced = 0;
+
+    // Sequential. Each of these is an external call plus a write, and when
+    // several finish together each also becomes a model call - fanning that
+    // out would turn one scheduled run into a burst against both services.
+    for (const row of inFlight) {
+      try {
+        const result = await advanceTranscription(row, row.userId, { allowSummarise: true });
+
+        if (result.status !== row.status) advanced += 1;
+      } catch (error) {
+        // One stuck job must not stop the rest of the batch.
+        console.error(`sweepAllTranscriptionsService: could not advance transcription ${row.id}`, error);
+      }
+    }
+
+    if (advanced > 0) revalidateTranscriptionViews();
+
+    return { examined: inFlight.length, advanced };
+  } catch (error) {
+    throw handleError("sweepAllTranscriptionsService", error);
   }
 }
 

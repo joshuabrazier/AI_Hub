@@ -3,7 +3,7 @@ import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 
 import { getTranscriptionMediaService } from "@/features/transcription/transcription.service";
-import { getSession } from "@/lib/auth/session-auth-server";
+import { getVerifiedApiSession } from "@/lib/auth/session-auth-server";
 import { MESSAGES } from "@/lib/constants";
 
 // Streams from Azure Blob through a Node stream, so Node; and a private
@@ -48,7 +48,7 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ transcriptionId: string }> },
 ): Promise<Response> {
-  const session = await getSession();
+  const session = await getVerifiedApiSession();
 
   if (!session) {
     return NextResponse.json({ error: MESSAGES.UNAUTHORIZED }, { status: 401 });

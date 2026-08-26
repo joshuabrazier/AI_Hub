@@ -40,15 +40,87 @@ Configured in `src/lib/auth/auth.ts` (Better Auth), backed by Postgres.
 
 ## Two-factor authentication
 
-- Three methods once enabled: a **TOTP authenticator app**, an **emailed one-time
-  code** (valid 5 minutes), and a single **backup recovery code**.
-- Enabling is staged: a secret is generated, and 2FA only turns on after the user
-  verifies a code, so a bad QR scan can never lock someone out.
-- **Required for staff** (`admin` and `manager`), who cannot turn it off.
-  Optional for `member` accounts.
-- Note that Better Auth issues a session at sign-in only while 2FA is off. Once
-  it is on, sign-in returns a two-factor challenge and no session. This is
-  correct, and it is easy to mistake for an authorization failure when testing.
+Off by default. Turned on with `APP_TWO_FACTOR_ENABLED=true`, and that default
+is load-bearing: enabling it requires every user to enrol an authenticator
+before they can reach any part of the app, so deploying must never do it on its
+own.
+
+**Why the app does this at all, when Entra owns credentials.** Enforcing MFA in
+Entra needs a Conditional Access policy, which needs an Entra ID **P1 licence
+per user**. On the free tier there is no per-app MFA to buy, so this is the
+alternative: a second factor on this app, checked after Microsoft has proved who
+somebody is.
+
+**State it accurately.** This does **not** make the tenant two-factor. A phished
+password still reaches email, Teams and SharePoint, because the identity itself
+is unchanged. What it protects is the data in here - chat transcripts, meeting
+recordings, uploaded files. It is "the portal requires a second factor", not "we
+have MFA", and the difference matters the day somebody asks a compliance
+question. If P1 is ever bought, this should come **off** and a Conditional Access
+policy replace it; two prompts for the same thing trains people to click through
+both.
+
+**It is a gate on the SESSION, not part of sign-in.** Better Auth's twoFactor
+plugin only challenges on `/sign-in/email`, `/sign-in/username` and
+`/sign-in/phone-number`. Microsoft sign-in never touches those, so the plugin's
+own challenge never fires and an SSO sign-in lands with a fully valid session
+having presented one factor. The second factor is therefore enforced as a gate:
+the session exists and is refused everywhere until it has verified once.
+
+- **State lives in `session_two_factor`**, keyed on the session and cascading
+  with it. Signing out discards the verification, and a second device verifies
+  on its own rather than riding on the first.
+- **Enforced in `requireUser` and in `getVerifiedApiSession`**, both in
+  `session-auth-server.ts` - not in the proxy. The proxy matcher covers
+  `/admin`, `/manage` and `/portal` only, so a gate there would leave
+  `/api/ai-chat/stream` and `/api/transcription/[id]/media` - the routes that
+  actually serve transcripts and recordings - with no second factor in front of
+  them. Every route handler uses `getVerifiedApiSession`, which answers null for
+  an unverified session exactly as it does for no session.
+- **Not enrolled counts as not satisfied.** Turning the flag on sends everyone
+  to enrol; it does not protect only the people who had already opted in.
+- **Enrolment is recoverable.** Which screen shows is decided by
+  `two_factor.verified`, never by `users.two_factor_enabled`, so a bad QR scan
+  or a phone lost mid-setup lands back on the enrol screen with a fresh secret
+  rather than behind a verify screen for an authenticator that was never added.
+- **Rate limiting is this feature's own, and is not optional.** Better Auth's
+  attempt limiter runs only on the sign-in path - when a session already exists
+  its `beginAttempt` returns no-op handlers - so without it there is nothing
+  between somebody holding a stolen session cookie and unlimited guesses at a
+  six-digit code. Five attempts, then the **session** is locked for 15 minutes.
+  Per session rather than per account deliberately: locking the account would
+  let anybody with a stolen cookie deny the real person access by guessing
+  badly.
+- **Backup codes** are issued once at enrolment, stored encrypted by Better Auth
+  under `BETTER_AUTH_SECRET`, and each is single use. They are not retrievable
+  afterwards.
+- **An admin can reset somebody's second factor**, from the edit dialog on
+  `/admin/users`. That is the only way back for a person who deleted their
+  authenticator app, lost the phone, or never saved their backup codes; there is
+  deliberately **no self-service reset**, because one would be a way around the
+  factor. It grants an admin nothing they did not already have - a reset signs
+  nobody in, the account still needs a Microsoft sign-in, and an admin already
+  holds impersonation - so the risk is deniability rather than escalation, and
+  the answer is the same as impersonation's: `auth.two_factor_reset` records the
+  act naming both parties. The reset does three things in order, and **the third
+  is the one that matters**: it removes the secret, clears
+  `users.two_factor_enabled`, and then clears every session verification the
+  person holds. Without that last step a session that had already verified would
+  stay verified - so a stolen phone's still-signed-in session would keep its
+  access on the strength of the factor just revoked. Sessions themselves are not
+  deleted: the person is usually sitting on the verify screen when they ask, and
+  signing them out would send them back to Microsoft for no gain.
+- **The QR code is rendered server-side into a `data:` URI.** The `otpauth://`
+  URI contains the shared secret, so it is never sent to a third-party QR
+  service.
+- Enrolment is audited (`auth.two_factor_enabled`). Routine per-session
+  verifications are not: one per person per sign-in would bury the events worth
+  reading, and the sign-in itself is already audited.
+
+**Local development note.** With `DEV_PASSWORD_SIGN_IN` on, the plugin's own
+sign-in challenge *does* fire on the password path, so a dev account with 2FA
+enrolled is asked for a code at sign-in and then again by this gate. That only
+happens on a developer machine and is not worth special-casing.
 
 ## Authorization
 
