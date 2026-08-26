@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
 import { getVerifiedApiSession } from "@/lib/auth/session-auth-server";
-import { DisplayErrorMessage } from "@/lib/errors";
+import { isDisplayError } from "@/lib/errors";
 import { MESSAGES } from "@/lib/constants";
 import { validateRequest } from "@/lib/server-requests";
 
@@ -79,8 +79,8 @@ export async function POST(request: Request): Promise<Response> {
     first = await replies.next();
   } catch (error) {
     // handleError in the service has already logged this with context.
-    const message = error instanceof DisplayErrorMessage ? error.message : MESSAGES.SOMETHING_WENT_WRONG;
-    const status = error instanceof DisplayErrorMessage ? 400 : 502;
+    const message = isDisplayError(error) ? error.message : MESSAGES.SOMETHING_WENT_WRONG;
+    const status = isDisplayError(error) ? 400 : 502;
 
     return NextResponse.json({ error: message }, { status });
   }
