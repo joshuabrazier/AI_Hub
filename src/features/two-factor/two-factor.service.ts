@@ -1,10 +1,11 @@
 import "server-only";
 
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import QRCode from "qrcode";
 
 import { auth } from "@/lib/auth/auth";
-import { requireSessionUserForTwoFactor } from "@/lib/auth/session-auth-server";
+import { isTwoFactorSatisfied, requireSessionUserForTwoFactor } from "@/lib/auth/session-auth-server";
 import { recordAuditEvent } from "@/lib/audit/audit-log.service";
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from "@/lib/audit/audit-log.types";
 import { database } from "@/lib/data/kysely-database-client";
@@ -16,6 +17,7 @@ import {
 import { hasCredentialAccountRepo } from "@/lib/data/repositories/accounts.repository";
 import { updateUserByIdRepo } from "@/lib/data/repositories/users.repository";
 import { DisplayErrorMessage } from "@/lib/errors";
+import { roleHome } from "@/lib/routes";
 import { handleError } from "@/lib/handle-errors";
 
 import {
@@ -64,7 +66,23 @@ async function readTwoFactorState(userId: string): Promise<{ exists: boolean; ve
 // -------------------------------------------------------------------
 export async function getTwoFactorScreenService(): Promise<TwoFactorScreenDTO> {
   try {
-    const { user } = await requireSessionUserForTwoFactor();
+    const { user, sessionId, twoFactorEnrolled } = await requireSessionUserForTwoFactor();
+
+    // ALREADY THROUGH? Then there is nothing to do here, and showing the
+    // form anyway is worse than showing nothing.
+    //
+    // This screen is the one page in the app that requireUser does NOT gate,
+    // because it is where that gate sends people - which also means it is
+    // the one page you can still reach after you no longer need it. Without
+    // this check somebody whose session is already verified, or an
+    // environment with the feature switched off, gets a verification form
+    // that can only fail, while every other URL lets them straight in.
+    //
+    // Sent to their own area rather than to "/" so the answer does not
+    // depend on a second redirect hop.
+    if (await isTwoFactorSatisfied(sessionId, twoFactorEnrolled)) {
+      redirect(roleHome(user.role));
+    }
 
     const state = await readTwoFactorState(user.id);
 
@@ -208,16 +226,20 @@ function extractSecret(totpURI: string): string {
 // first makes the plugin skip the rotation and keep the session we have.
 //
 // It is not a security shortcut: the flag only decides whether the GATE is
-// active. Turning it on before the code is proven means somebody who
-// abandons enrolment is gated - and that is the safe direction, because
-// `two_factor.verified` is still false, so they land back on the enrol
-// screen with a fresh secret rather than locked out.
+// active, never whether a code was correct. Turning it on before the code
+// is proven means somebody who abandons enrolment is gated, which is the
+// safe direction - they are sent back here rather than let through.
+//
+// Note that they come back to the VERIFY screen, not the enrol one, because
+// two_factor.verified is true from the moment the secret is created. If
+// they never captured the QR, that is a dead end and the way out is
+// scripts/reset-two-factor.mjs.
 // -------------------------------------------------------------------
 export async function verifyTwoFactorService(
   requestDTO: VerifyTwoFactorRequestDTO,
-): Promise<void> {
+): Promise<{ redirectTo: string }> {
   try {
-    const { user, sessionId } = await requireSessionUserForTwoFactor();
+    const { user, sessionId, twoFactorEnrolled } = await requireSessionUserForTwoFactor();
 
     const lock = await getSessionTwoFactorRepo(sessionId);
 
@@ -233,7 +255,22 @@ export async function verifyTwoFactorService(
       throw new DisplayErrorMessage("Set up two-factor authentication first.");
     }
 
-    const enrolling = !state.verified;
+    // ENROLLING IS DECIDED BY THE USER FLAG, not by two_factor.verified.
+    //
+    // That column defaults to TRUE in the schema, and Better Auth's
+    // enableTwoFactor inserts the row without overriding it - so it reads
+    // "verified" from the instant enrolment BEGINS, before any code has been
+    // proven. Deriving `enrolling` from it made it permanently false, the
+    // flag update below never ran, and users.two_factor_enabled stayed
+    // false.
+    //
+    // The effect was a silent loop with no error anywhere: verification
+    // genuinely succeeded, the session was marked verified, the action
+    // returned 200 - and then isTwoFactorSatisfied read the unset flag,
+    // returned false, and redirected the person straight back to this
+    // screen. From the outside it looked exactly like the button doing
+    // nothing.
+    const enrolling = !twoFactorEnrolled;
 
     if (enrolling) {
       await updateUserByIdRepo(user.id, { twoFactorEnabled: true, updatedAt: new Date() });
@@ -272,6 +309,12 @@ export async function verifyTwoFactorService(
         summary: `${user.name ?? user.email} set up two-factor authentication`,
       });
     }
+
+    // Where to send them, decided HERE because this is the only side that
+    // knows the role. The screen used to navigate to "/" and let the public
+    // home redirect onwards, which worked but made the destination depend on
+    // a second hop through a page that has nothing to do with signing in.
+    return { redirectTo: roleHome(user.role) };
   } catch (error) {
     throw handleError("verifyTwoFactorService", error);
   }

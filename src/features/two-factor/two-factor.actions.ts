@@ -60,14 +60,14 @@ export async function beginTwoFactorEnrolmentAction(
 // -------------------------------------------------------------------
 export async function verifyTwoFactorAction(
   requestDTO: VerifyTwoFactorRequestDTO,
-): Promise<ServerApiResponse<null>> {
+): Promise<ServerApiResponse<{ redirectTo: string }>> {
   try {
     const validatedRequest = await validateRequest(VerifyTwoFactorSchema, requestDTO);
     if (!validatedRequest.success) return validatedRequest.response;
 
-    await verifyTwoFactorService(validatedRequest.data);
+    const result = await verifyTwoFactorService(validatedRequest.data);
 
-    return { success: true, data: null } satisfies ServerApiResponse<null>;
+    return { success: true, data: result } satisfies ServerApiResponse<{ redirectTo: string }>;
   } catch (error) {
     return handleServerApiError("verifyTwoFactorAction", error);
   }

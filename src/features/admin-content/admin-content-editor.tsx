@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+
+import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { SITE_CONTENT_KEYS } from "@/lib/data/kysely-database-types";
@@ -127,8 +129,8 @@ function RichTextSection({ item }: { item: SiteContentResponseDTO }) {
       // Re-read the row so the header stops saying "Not yet edited" and shows
       // the date this save just wrote.
       router.refresh();
-    } catch {
-      toast.error("Something went wrong while saving");
+    } catch (error) {
+      handleFrontendErrorWithToast(error);
     } finally {
       setIsPending(false);
     }
