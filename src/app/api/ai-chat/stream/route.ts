@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
-import { getSession } from "@/lib/auth/session-auth-server";
+import { getVerifiedApiSession } from "@/lib/auth/session-auth-server";
 import { DisplayErrorMessage } from "@/lib/errors";
 import { MESSAGES } from "@/lib/constants";
 import { validateRequest } from "@/lib/server-requests";
@@ -40,7 +40,7 @@ export const dynamic = "force-dynamic";
 // client an HTML sign-in page where it expected a stream. This answers 401.
 // -------------------------------------------------------------------
 export async function POST(request: Request): Promise<Response> {
-  const session = await getSession();
+  const session = await getVerifiedApiSession();
 
   if (!session) {
     return NextResponse.json({ error: MESSAGES.UNAUTHORIZED }, { status: 401 });

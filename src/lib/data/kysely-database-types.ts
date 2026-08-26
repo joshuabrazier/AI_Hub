@@ -865,6 +865,35 @@ export type PushSubscription = Selectable<PushSubscriptions>;
 export type NewPushSubscription = Insertable<PushSubscriptions>;
 export type UpdatePushSubscription = Updateable<PushSubscriptions>;
 
+// -------------------------------------------------------------------
+// Session Two Factor Table
+//
+// Whether a given SESSION has cleared the second factor. Keyed on the
+// session and cascading with it, so signing out discards the verification
+// and a second device has to verify on its own.
+//
+// It exists because Better Auth's twoFactor plugin only challenges on the
+// password sign-in path, and sign-in here is Microsoft - see
+// migrations/011_session_two_factor.sql for the full reasoning.
+//
+// `verifiedAt` NULL means attempted and not yet through, which the gate
+// treats the same as no row. The counters are this feature's own rate
+// limiting: the plugin's attempt limiter does not run when a session
+// already exists.
+// -------------------------------------------------------------------
+export interface SessionTwoFactors {
+  sessionId: string;
+  verifiedAt: Date | null;
+  failedCount: Generated<number>;
+  lockedUntil: Date | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type SessionTwoFactor = Selectable<SessionTwoFactors>;
+export type NewSessionTwoFactor = Insertable<SessionTwoFactors>;
+export type UpdateSessionTwoFactor = Updateable<SessionTwoFactors>;
+
 export interface Database {
   users: Users;
   sessions: Sessions;
@@ -883,6 +912,7 @@ export interface Database {
   aiChatRequestLogs: AiChatRequestLogs;
   transcriptions: Transcriptions;
   pushSubscriptions: PushSubscriptions;
+  sessionTwoFactor: SessionTwoFactors;
   auditLogs: AuditLogs;
   // Timesheet read model, derived from Jira and rebuildable from it.
   jiraProject: JiraProjects;

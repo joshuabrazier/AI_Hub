@@ -51,6 +51,10 @@ export type AdminUserResponseDTO = {
   teams: AdminUserTeamDTO[];
   // Denormalised for the table's search/sort, which work on strings.
   teamNames: string;
+  // Whether they have an app-level second factor set up. Drives whether the
+  // reset is offered at all - there is nothing to reset otherwise, and an
+  // always-visible destructive button invites a pointless click.
+  hasTwoFactor: boolean;
 };
 
 // -------------------------------------------------------------------
@@ -60,6 +64,20 @@ export type AdminUserResponseDTO = {
 // admin-guarded, never because the client sent them - Better Auth keeps both
 // `input:false` so no sign-up or profile update can reach them.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// Clear somebody's app-level second factor.
+//
+// The id is the SUBJECT - the person being reset - and it is the only field.
+// The ACTOR is never in this shape: it is resolved from the session inside
+// the service, so there is no request in which one admin could attribute a
+// reset to another.
+// -------------------------------------------------------------------
+export const ResetUserTwoFactorSchema = z.object({
+  id: z.string().min(TABLE_ID_LENGTH),
+});
+
+export type ResetUserTwoFactorRequestDTO = z.infer<typeof ResetUserTwoFactorSchema>;
+
 export const UpdateAdminUserSchema = z.object({
   id: z.string().min(TABLE_ID_LENGTH),
   userRole: z.enum(USER_ROLES).optional(),

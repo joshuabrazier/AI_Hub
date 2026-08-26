@@ -39,6 +39,16 @@ export const AUDIT_ACTIONS = {
   AUTH_SIGNED_OUT: "auth.signed_out",
   AUTH_SIGN_IN_FAILED: "auth.sign_in_failed",
   AUTH_PASSWORD_CHANGED: "auth.password_changed",
+  // App-level two-factor enrolment. A change to how an account is secured,
+  // so it is recorded like a role change. Routine per-session verifications
+  // are deliberately NOT logged - one per person per sign-in would bury the
+  // events worth reading, and the sign-in itself is already audited.
+  AUTH_TWO_FACTOR_ENABLED: "auth.two_factor_enabled",
+  // An admin clearing somebody else's second factor. Recorded like a role
+  // change and naming BOTH parties, because it is the one way a person's
+  // second factor is removed without them proving anything - the same
+  // accountability argument as ai_chat.request_viewed.
+  AUTH_TWO_FACTOR_RESET: "auth.two_factor_reset",
   AUTH_IMPERSONATION_STARTED: "auth.impersonation_started",
 } as const;
 
