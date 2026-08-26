@@ -72,6 +72,18 @@ export const AUDIT_ACTION_META: Record<string, { label: string; category: string
   [AUDIT_ACTIONS.AUTH_SIGN_IN_FAILED]: { label: "Failed sign-in", category: "Auth" },
   [AUDIT_ACTIONS.AUTH_PASSWORD_CHANGED]: { label: "Password changed", category: "Auth" },
   [AUDIT_ACTIONS.AUTH_IMPERSONATION_STARTED]: { label: "Impersonation started", category: "Auth" },
+  [AUDIT_ACTIONS.AUTH_TWO_FACTOR_ENABLED]: { label: "Two-factor enabled", category: "Auth" },
+  // An admin clearing somebody else's second factor is an access event, not
+  // a routine auth one - it is filed alongside role changes for the same
+  // reason viewing an AI chat request is.
+  [AUDIT_ACTIONS.AUTH_TWO_FACTOR_RESET]: { label: "Two-factor reset by admin", category: "Access" },
+
+  // SharePoint. Filed under Access because what these record is whose
+  // permissions a library was read with, which is the question an admin is
+  // asking when they filter to Access.
+  [AUDIT_ACTIONS.SHAREPOINT_LIBRARY_NOMINATED]: { label: "SharePoint library added", category: "Access" },
+  [AUDIT_ACTIONS.SHAREPOINT_LIBRARY_REMOVED]: { label: "SharePoint library removed", category: "Access" },
+  [AUDIT_ACTIONS.SHAREPOINT_CRAWL_STARTED]: { label: "SharePoint crawl started", category: "Access" },
 };
 
 // An action with no entry still shows, labelled with its raw key. Hiding it

@@ -11,6 +11,7 @@ import { sendTwoFactorOtpEmail, sendVerificationEmail } from "../email/send-emai
 import { deleteSessionsByUserIdRepo } from "../data/repositories/sessions.repository";
 import { getUserByUserIdRepo } from "../data/repositories/users.repository";
 import { ROUTES } from "../routes";
+import { GRAPH_SCOPES } from "../sharepoint/graph-client";
 import { accessControl, impersonatorOnly } from "./auth-permissions";
 import { isEmailDomainAllowed, isPasswordSignInEnabled } from "./account-creation-policy";
 import { applyInvitationOnFirstSignIn } from "./apply-invitation";
@@ -205,6 +206,33 @@ export const auth = betterAuth({
             // The photo fetch is an extra Graph call per sign-in for an
             // avatar this app does not display.
             disableProfilePhoto: true,
+            // -------------------------------------------------------------
+            // Graph scopes for the SharePoint inventory.
+            //
+            // APPENDED to Better Auth's defaults for this provider, which
+            // already include openid, profile, email, User.Read and
+            // offline_access - so the refresh token a crawl resumes on is
+            // already being issued, and this only widens what it is good
+            // for.
+            //
+            // BOTH ARE READ-ONLY, and nothing in the app writes to
+            // SharePoint. A write scope would belong in the change that
+            // needed it, not sitting here unused where a mistake could
+            // reach it.
+            //
+            // TWO OPERATIONAL CONSEQUENCES, both real:
+            //
+            //   1. `.All` needs TENANT ADMIN CONSENT. Without it every
+            //      person meets a consent prompt they cannot approve, and
+            //      it surfaces as a 403 from Graph rather than as anything
+            //      self-explanatory.
+            //   2. EVERYONE SIGNS IN AGAIN, ONCE. A refresh token already
+            //      issued carries the scopes it was granted with, so
+            //      adding these does not upgrade an existing one. Anybody
+            //      who signed in before this change keeps working for
+            //      everything except SharePoint until they do.
+            // -------------------------------------------------------------
+            scope: [...GRAPH_SCOPES],
             mapProfileToUser: (profile) => {
               if (profile.acct === 1) {
                 throw new APIError("FORBIDDEN", {

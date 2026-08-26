@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { deidentifyInactiveUsersService } from "@/features/admin-retention/admin-retention.service";
 import { purgeExpiredAiChatsService } from "@/features/ai-chat/ai-chat-retention.service";
+import { purgeExpiredSharepointCrawlsService } from "@/features/sharepoint-sync/sharepoint-crawl.service";
 import { purgeExpiredTranscriptionsService } from "@/features/transcription/transcription-retention.service";
 import { purgeExpiredAuditLogsService } from "@/lib/audit/audit-log.service";
 import { envServer } from "@/lib/env-server";
@@ -29,7 +30,7 @@ function bearerMatches(header: string | null, secret: string): boolean {
 // Trigger for the monthly data-retention job. This bearer secret
 // (RETENTION_JOB_SECRET) is the ONLY authentication here - there is no session
 // behind a scheduler, so the usual role guards do not apply and must not be
-// added. It runs four tasks:
+// added. It runs five tasks:
 //   - purges audit logs older than AUDIT_LOG_RETENTION_DAYS (routine rotation),
 //   - purges AI chat conversations idle longer than AI_CHAT_RETENTION_DAYS,
 //     request-log rows older than AI_CHAT_LOG_RETENTION_DAYS (also routine
@@ -42,6 +43,12 @@ function bearerMatches(header: string | null, secret: string): boolean {
 //     and the recordings still held for them - which is only the failed and
 //     abandoned ones, because a recording is deleted the moment its
 //     transcript is stored,
+//   - purges records of SharePoint crawl RUNS older than
+//     SHAREPOINT_INVENTORY_RETENTION_DAYS. Deliberately not the inventory:
+//     a file path is only disclosive while it describes something real, and
+//     ageing live rows out would force a full re-crawl to rebuild identical
+//     data. De-nominating a library is what removes its contents, and that
+//     cascades,
 //   - de-identifies dormant accounts, but only when RETENTION_JOB_ENABLED is
 //     "true"; otherwise that part runs as a preview and changes nothing.
 //
@@ -70,6 +77,12 @@ export async function POST(request: Request): Promise<Response> {
   // Transcription rotation, on its own window and likewise independent.
   const transcriptions = await purgeExpiredTranscriptionsService();
 
+  // SharePoint crawl records. NOTE what this does not do: it removes the
+  // log of runs, never the inventory. An inventory is removed by an admin
+  // de-nominating its library, which cascades - see the note on the
+  // service.
+  const sharepoint = await purgeExpiredSharepointCrawlsService();
+
   // De-identification. Master switch: preview unless explicitly enabled.
   const dryRun = !envServer.RETENTION_JOB_ENABLED;
   const deidentify = await deidentifyInactiveUsersService({ dryRun });
@@ -85,6 +98,7 @@ export async function POST(request: Request): Promise<Response> {
       `transcriptionsPurged=${transcriptions.purgedTranscriptions} (>${transcriptions.retentionDays}d) ` +
       `transcriptionMediaPurged=${transcriptions.purgedMedia} ` +
       `transcriptionOrphanedMediaPurged=${transcriptions.purgedOrphanedMedia} ` +
+      `sharepointCrawlsPurged=${sharepoint.purgedCrawls} (>${sharepoint.retentionDays}d) ` +
       `dryRun=${deidentify.dryRun} candidates=${deidentify.candidateCount} processed=${deidentify.processedCount}`,
   );
 
@@ -94,6 +108,7 @@ export async function POST(request: Request): Promise<Response> {
     auditLogs,
     aiChats,
     transcriptions,
+    sharepoint,
     deidentify: {
       dryRun: deidentify.dryRun,
       jobEnabled: deidentify.jobEnabled,

@@ -979,6 +979,143 @@ export type SessionTwoFactor = Selectable<SessionTwoFactors>;
 export type NewSessionTwoFactor = Insertable<SessionTwoFactors>;
 export type UpdateSessionTwoFactor = Updateable<SessionTwoFactors>;
 
+// -------------------------------------------------------------------
+// SharePoint inventory
+//
+// A read-only picture of a document library, crawled through the Graph
+// delta endpoint. See migrations/012_sharepoint_inventory.sql for the
+// reasoning behind each column; the notes here are only the ones a
+// TypeScript caller can get wrong.
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+// Where a crawl got to.
+//
+// Two of these are not failures and must not be rendered as one.
+// PAUSED_THROTTLED means Graph asked us to stop and the run resumes by
+// itself; NEEDS_REAUTH means a named person has to sign in again and no
+// amount of waiting will fix it. Collapsing either into FAILED would send
+// somebody looking for a bug that is not there.
+// -------------------------------------------------------------------
+export const SHAREPOINT_CRAWL_STATUSES = {
+  QUEUED: "queued",
+  RUNNING: "running",
+  PAUSED_THROTTLED: "paused_throttled",
+  NEEDS_REAUTH: "needs_reauth",
+  COMPLETED: "completed",
+  FAILED: "failed",
+} as const;
+
+export type SharepointCrawlStatus =
+  (typeof SHAREPOINT_CRAWL_STATUSES)[keyof typeof SHAREPOINT_CRAWL_STATUSES];
+
+export const SHAREPOINT_CRAWL_STATUS_LABELS: Record<SharepointCrawlStatus, string> = {
+  [SHAREPOINT_CRAWL_STATUSES.QUEUED]: "Queued",
+  [SHAREPOINT_CRAWL_STATUSES.RUNNING]: "Running",
+  [SHAREPOINT_CRAWL_STATUSES.PAUSED_THROTTLED]: "Paused, SharePoint is throttling",
+  [SHAREPOINT_CRAWL_STATUSES.NEEDS_REAUTH]: "Needs sign-in",
+  [SHAREPOINT_CRAWL_STATUSES.COMPLETED]: "Finished",
+  [SHAREPOINT_CRAWL_STATUSES.FAILED]: "Failed",
+};
+
+// The states a crawl can still move on from. One definition, because the
+// sweep that picks work up and the guard that stops a second crawl on the
+// same drive must agree about what "in flight" means - if they disagree,
+// either work is dropped or two crawls walk the same drive at once.
+export const SHAREPOINT_CRAWL_UNFINISHED_STATUSES: readonly SharepointCrawlStatus[] = [
+  SHAREPOINT_CRAWL_STATUSES.QUEUED,
+  SHAREPOINT_CRAWL_STATUSES.RUNNING,
+  SHAREPOINT_CRAWL_STATUSES.PAUSED_THROTTLED,
+];
+
+// -------------------------------------------------------------------
+// A nominated document library.
+//
+// `deltaLink` is the resumption token for the NEXT crawl and is written
+// only when a walk finishes. A half-finished walk leaves it alone, because
+// storing it early would claim we had seen the whole library.
+// -------------------------------------------------------------------
+export interface SharepointDrives {
+  driveId: string;
+  siteId: string;
+  siteName: string;
+  driveName: string;
+  webUrl: string;
+  nominatedBy: string | null;
+  nominatedByName: string | null;
+  deltaLink: string | null;
+  deltaLinkUpdatedAt: Date | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type SharepointDrive = Selectable<SharepointDrives>;
+export type NewSharepointDrive = Insertable<SharepointDrives>;
+export type UpdateSharepointDrive = Updateable<SharepointDrives>;
+
+// -------------------------------------------------------------------
+// One run of a crawl.
+//
+// `runAsUserId` is whose delegated token the run uses, and therefore whose
+// SharePoint permissions bound it. It is the access-control story of the
+// whole feature, which is why it is NOT NULL here as well as in the schema.
+// -------------------------------------------------------------------
+export interface SharepointCrawls {
+  id: string;
+  driveId: string;
+  status: Generated<SharepointCrawlStatus>;
+  runAsUserId: string;
+  nextLink: string | null;
+  itemsSeen: Generated<number>;
+  pagesDone: Generated<number>;
+  throttledUntil: Date | null;
+  error: string | null;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type SharepointCrawl = Selectable<SharepointCrawls>;
+export type NewSharepointCrawl = Insertable<SharepointCrawls>;
+export type UpdateSharepointCrawl = Updateable<SharepointCrawls>;
+
+// -------------------------------------------------------------------
+// One file or folder, as we last saw it.
+//
+// `sizeBytes` is BIGINT and is typed as a string on the way out, because
+// that is what node-postgres returns for int8 and silently coercing it in
+// the type would be a lie about values above 2^53. Callers that need to
+// add sizes up should do it in SQL, where the sum is also a bigint.
+//
+// `hasUniquePermissions` is deliberately never written by phase 1. NULL
+// means "not established", which is a gap; false would mean "safe to move",
+// which would be a guess presented as a fact.
+// -------------------------------------------------------------------
+export interface SharepointItems {
+  driveId: string;
+  itemId: string;
+  parentId: string | null;
+  name: string;
+  path: string | null;
+  depth: number | null;
+  isFolder: boolean;
+  sizeBytes: ColumnType<string | null, number | null, number | null>;
+  childCount: number | null;
+  quickXorHash: string | null;
+  createdAtRemote: Date | null;
+  modifiedAtRemote: Date | null;
+  modifiedByName: string | null;
+  hasUniquePermissions: boolean | null;
+  deletedAt: Date | null;
+  firstSeenAt: Generated<Date>;
+  lastSeenAt: Generated<Date>;
+}
+
+export type SharepointItem = Selectable<SharepointItems>;
+export type NewSharepointItem = Insertable<SharepointItems>;
+export type UpdateSharepointItem = Updateable<SharepointItems>;
+
 export interface Database {
   users: Users;
   sessions: Sessions;
@@ -1007,4 +1144,10 @@ export interface Database {
   staffTarget: StaffTargets;
   staffRate: StaffRates;
   manualWorklog: ManualWorklogs;
+  // SharePoint inventory, crawled read-only through Graph. Rebuildable
+  // from SharePoint, but not cheaply - a full crawl of a large library is
+  // tens of thousands of Graph calls.
+  sharepointDrive: SharepointDrives;
+  sharepointCrawl: SharepointCrawls;
+  sharepointItem: SharepointItems;
 }

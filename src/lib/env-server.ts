@@ -242,6 +242,24 @@ const serverEnvSchema = z.object({
   TRANSCRIPTION_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(90),
 
   // -------------------------------------------------------------------
+  // SharePoint inventory
+  // -------------------------------------------------------------------
+
+  // Bearer token the crawl sweep requires. The endpoint is inert (503)
+  // until it is set, and a crawl cannot finish without it - queueing one
+  // from the admin screen only writes a row. Inert by default on purpose:
+  // deploying this must not start reading somebody's document library.
+  SHAREPOINT_SWEEP_SECRET: z.string().min(16).optional(),
+
+  // How long a record of a crawl RUN is kept, in days. Not the inventory
+  // itself: that lives as long as the library stays nominated, because a
+  // path is only disclosive while it describes something real and ageing
+  // live rows out would just force a re-crawl to rebuild the same data.
+  // De-nominating a library is what removes its contents.
+  // Set to 0 to keep crawl records indefinitely.
+  SHAREPOINT_INVENTORY_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(180),
+
+  // -------------------------------------------------------------------
   // Microsoft sign-in (Entra ID)
   //
   // Optional to the schema, but in a real deployment it is the ONLY way in:
@@ -372,6 +390,8 @@ export const envServer = serverEnvSchema.parse({
   AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION,
   AZURE_SPEECH_LOCALE: process.env.AZURE_SPEECH_LOCALE,
   TRANSCRIPTION_RETENTION_DAYS: process.env.TRANSCRIPTION_RETENTION_DAYS,
+  SHAREPOINT_SWEEP_SECRET: process.env.SHAREPOINT_SWEEP_SECRET,
+  SHAREPOINT_INVENTORY_RETENTION_DAYS: process.env.SHAREPOINT_INVENTORY_RETENTION_DAYS,
 
   MICROSOFT_CLIENT_ID: process.env.MICROSOFT_CLIENT_ID,
   MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,
