@@ -71,18 +71,26 @@ describe("isGuaranteedFormat", () => {
     expect(isGuaranteedFormat("call.webm")).toBe(true);
   });
 
-  it("is false for the MP4 family, which is accepted but not promised", () => {
-    // These are what a phone and a meeting tool actually produce, so they
+  it("is false for the video containers, which are accepted but not promised", () => {
+    // These are what a screen recorder or an old camera produces, so they
     // are accepted - but the UI warns, because the Speech service does not
     // list them and may refuse one.
     //
-    // .m4a is in here deliberately. It is AAC in an MP4 container and it
-    // almost always works, but what Microsoft documents is AAC, which
-    // conventionally means raw ADTS - so claiming it is guaranteed would be
-    // putting words in their mouth.
-    for (const fileName of ["meeting.mp4", "meeting.mov", "memo.m4a", "clip.m4v", "call.3gp"]) {
+    // .m4a is deliberately NOT in this list any more. It is a phone voice
+    // memo, which makes it the most common upload there is, and a warning
+    // shown on the most common case is one people learn to click past -
+    // which then costs it its effect on .mov and .avi, where it is doing
+    // real work.
+    for (const fileName of ["meeting.mp4", "meeting.mov", "clip.m4v", "call.3gp", "old.avi"]) {
       expect(isGuaranteedFormat(fileName), fileName).toBe(false);
     }
+  });
+
+  it("does not warn on a phone voice memo", () => {
+    // The regression this guards: .m4a is AAC in an MP4 container, and
+    // Microsoft documents AAC. It is accepted, and the composer must not
+    // caveat it.
+    expect(isGuaranteedFormat("voice memo.m4a")).toBe(true);
   });
 
   it("is true for every format Microsoft lists, including the ones nobody remembers", () => {
@@ -113,15 +121,20 @@ describe("the accepted formats and the recorder agree", () => {
 
   it("prefers a documented format, and only falls back to an undocumented one", () => {
     // The order is the whole point. Every browser but Safari supports the
-    // first candidate, which is documented; Safari supports none of the
-    // documented ones and gets MP4/AAC, which is a real risk taken because
-    // "record it on your phone" is half the feature. A reordering that put
-    // the fallback first would take that risk for everybody.
+    // first candidate; Safari supports none of the Opus ones and lands on
+    // MP4/AAC. A reordering that put a riskier format first would take that
+    // risk for everybody rather than only for the browser that forces it.
     expect(isGuaranteedFormat(`recording${RECORDING_FORMAT_CANDIDATES[0].extension}`)).toBe(true);
 
     const firstUndocumented = RECORDING_FORMAT_CANDIDATES.findIndex(
       (candidate) => !isGuaranteedFormat(`recording${candidate.extension}`),
     );
+
+    // Every candidate is documented now that .m4a is on the guaranteed list,
+    // which is the good case and not something to assert against - findIndex
+    // answers -1, and sliceing from 0 would read the whole list back as
+    // "documented formats after the fallback" and fail.
+    if (firstUndocumented === -1) return;
 
     const documentedAfterIt = RECORDING_FORMAT_CANDIDATES.slice(firstUndocumented + 1).filter((candidate) =>
       isGuaranteedFormat(`recording${candidate.extension}`),
