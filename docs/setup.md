@@ -162,6 +162,30 @@ the app serves fine, but sign-in fails as a cross-origin request, and the E2E
 suite hangs waiting for a URL nothing is listening on. `pnpm start` needs the
 flag as well as `pnpm dev`, because Playwright serves a production build.
 
+## Windows: do this first
+
+Real-time virus scanning inspects every file in `node_modules` and `.next`
+individually. With ~800 MB across ~1,300 packages that turns a one-package
+install into minutes and a build into a coffee break. In an **admin**
+PowerShell, once:
+
+```powershell
+Add-MpPreference -ExclusionPath "C:\Dev\AI_Hub"
+```
+
+Adjust the path if the repo lives elsewhere. This speeds up `pnpm install`,
+`pnpm build` and `pnpm dev` startup together.
+
+**And do not use `pnpm build` to check your work.** `pnpm exec tsc --noEmit`,
+`pnpm lint` and `pnpm test` catch everything it would and finish quickly.
+`next build` type-checks and lints internally, then `output: "standalone"`
+traces and copies most of `node_modules` into `.next/standalone` - which is
+what you are waiting for after "Compiled successfully" appears. Save it for
+when you are actually deploying.
+
+CI runs on Linux and has neither problem, so this is a local annoyance rather
+than anything that affects a deploy.
+
 ## 5. Tests
 
 **Unit (Vitest)** - co-located as `src/**/*.test.ts`, NOT in a `tests/unit`

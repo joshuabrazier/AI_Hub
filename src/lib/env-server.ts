@@ -191,6 +191,25 @@ const serverEnvSchema = z.object({
   // residency argument that pinned Bedrock to Australia applies here with
   // more force, not less.
   // -------------------------------------------------------------------
+  // -----------------------------------------------------------------
+  // Web Push
+  //
+  // The private half of the VAPID pair whose public half is
+  // NEXT_PUBLIC_VAPID_PUBLIC_KEY. Generate the pair ONCE with
+  // `npx web-push generate-vapid-keys` and keep it: changing it invalidates
+  // every existing subscription, and every device has to be turned on again
+  // by hand because nothing can notify them to do so.
+  //
+  // VAPID_SUBJECT identifies the sender to the push service so it has
+  // somebody to contact about a misbehaving one. A mailto: or https: URL.
+  // -----------------------------------------------------------------
+  VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  VAPID_SUBJECT: z.string().min(1).default("mailto:support@example.com"),
+
+  // Bearer token the background transcription sweep requires. The endpoint
+  // is inert (503) until it is set, exactly like the retention job.
+  TRANSCRIPTION_SWEEP_SECRET: z.string().min(16).optional(),
+
   AZURE_SPEECH_KEY: z.string().min(1).optional(),
   AZURE_SPEECH_REGION: z.string().min(1).optional(),
 
@@ -299,6 +318,9 @@ export const envServer = serverEnvSchema.parse({
   AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING,
   AZURE_STORAGE_ATTACHMENT_CONTAINER: process.env.AZURE_STORAGE_ATTACHMENT_CONTAINER,
   AZURE_MEDIA_CONTAINER: process.env.AZURE_MEDIA_CONTAINER,
+  VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+  VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+  TRANSCRIPTION_SWEEP_SECRET: process.env.TRANSCRIPTION_SWEEP_SECRET,
   AZURE_SPEECH_KEY: process.env.AZURE_SPEECH_KEY,
   AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION,
   AZURE_SPEECH_LOCALE: process.env.AZURE_SPEECH_LOCALE,

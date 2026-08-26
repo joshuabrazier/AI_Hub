@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { AudioLines, FileText, Loader2, RefreshCw, Sparkles, TriangleAlert } from "lucide-react";
+import { AudioLines, FileText, RefreshCw, Sparkles, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { ModelMarkdown } from "@/components/model-markdown";
@@ -26,6 +26,7 @@ import {
   startTranscriptionAction,
 } from "../transcription.actions";
 import { formatDuration, formatTimestamp, speakerLabel, type TranscriptionDetailDTO } from "../transcription.types";
+import { TranscriptionProgress } from "./transcription-progress";
 
 // -------------------------------------------------------------------
 // TranscriptionDetail
@@ -40,13 +41,6 @@ import { formatDuration, formatTimestamp, speakerLabel, type TranscriptionDetail
 // -------------------------------------------------------------------
 
 const IN_FLIGHT: readonly string[] = TRANSCRIPTION_IN_FLIGHT_STATUSES;
-
-// What is actually happening, in the words of somebody waiting for it.
-const STATUS_EXPLANATIONS: Record<string, string> = {
-  [TRANSCRIPTION_STATUSES.QUEUED]: "Waiting for the transcription service to pick this up.",
-  [TRANSCRIPTION_STATUSES.TRANSCRIBING]: "Listening to the recording. This takes a few minutes.",
-  [TRANSCRIPTION_STATUSES.SUMMARISING]: "The transcript is ready. Writing the summary.",
-};
 
 function statusVariant(status: string): "default" | "secondary" | "success" | "warning" | "destructive" {
   if (status === TRANSCRIPTION_STATUSES.COMPLETED) return "success";
@@ -197,17 +191,12 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
             Still working
             ------------------------------------------------------------ */}
         {isInFlight ? (
-          <div role="status" className="flex flex-col items-center py-14 text-center">
-            <Loader2 size={26} className="animate-spin text-primary" aria-hidden="true" />
-            <p className="mt-3 text-sm font-medium text-foreground">
-              {TRANSCRIPTION_STATUS_LABELS[current.status]}
-            </p>
-            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-              {STATUS_EXPLANATIONS[current.status]}
-            </p>
-            <p className="mt-4 max-w-sm text-xs text-muted-foreground">
-              You can close this page. It carries on without you, and the transcript will be here when you come
-              back.
+          <div className="flex flex-col items-center py-14 text-center">
+            <TranscriptionProgress status={current.status} />
+
+            <p className="mt-6 max-w-sm text-xs text-muted-foreground">
+              You can close this page. The transcription carries on at the service either way, and it will be
+              collected the next time you open this screen.
             </p>
           </div>
         ) : null}

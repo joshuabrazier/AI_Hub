@@ -12,6 +12,22 @@ async function loadPolicy(domains: string | undefined) {
   return import("./account-creation-policy");
 }
 
+// -------------------------------------------------------------------
+// These tests are slow for a reason that has nothing to do with the code
+// they cover, which is a pure string comparison.
+//
+// Reading the allowlist off the validated env means the module has to be
+// re-imported to see a different one, and resetModules() throws away the
+// WHOLE graph behind it - including the env schema - so every case pays for
+// a full reload. Seven of those runs past the 5s default when the suite is
+// running files in parallel and the machine is busy, which shows up as a
+// flaky CI failure rather than an honest one.
+//
+// Raised here rather than globally: a longer timeout everywhere would hide
+// the next test that is slow for a real reason.
+// -------------------------------------------------------------------
+vi.setConfig({ testTimeout: 30_000 });
+
 const originalValue = process.env.AUTH_ALLOWED_EMAIL_DOMAINS;
 
 beforeEach(() => {
