@@ -5,6 +5,12 @@ import { ROUTES } from "@/lib/routes";
 
 import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { ProductivityChart } from "../productivity-chart";
+import { getForecastForScopeService } from "../admin-timesheets-forecast.service";
+import { getRevenueForFactsService } from "../admin-timesheets-revenue.service";
+import { ForecastChart } from "../forecast-chart";
+import { RevenueTiles } from "../revenue-panels";
+import { getPersonRatesService } from "../admin-timesheets-rate.service";
+import { StaffRateDialog } from "../staff-rate-dialog";
 import { StaffTargetDialog } from "../staff-target-dialog";
 import { ProjectsCard, StatTile, SyncStatusLine } from "../timesheet-panels";
 import TimesheetShell, { filterQuery, periodHref } from "../timesheet-shell";
@@ -36,6 +42,16 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
   // id should not confirm whether an account exists.
   if (!person) notFound();
 
+  const rates = await getPersonRatesService(personId);
+
+  // Scoped to this person, so the forecast is their remaining days and not the
+  // team's - see the note in getForecastForScopeService about why the scope has
+  // to be passed rather than inferred from the dashboard.
+  const revenue = await getRevenueForFactsService(report.facts);
+  const forecast = await getForecastForScopeService(dashboard, period, data.todayIso, revenue, report.facts, [
+    personId,
+  ]);
+
   const backHref = `${ROUTES.ADMIN_TIMESHEETS_STAFF}?${filterQuery({ ...filters, person: "all" })}`;
 
   return (
@@ -58,6 +74,8 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
           target={person.target}
           triggerLabel="Edit target"
         />
+
+        <StaffRateDialog personId={person.personId} personName={person.personName} rates={rates} />
 
         {person.target.isDefault && <Badge variant="warning">Using the company default</Badge>}
         {person.meetsBillableTarget === true && <Badge variant="success">Meeting billable target</Badge>}
@@ -92,6 +110,17 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
         <StatTile label="Logged" hours={person.loggedHours} hint={`${person.daysWorked} days worked`} index={2} />
         <StatTile label="Non-billable" hours={person.nonBillableHours} emphasis="muted" index={3} />
       </div>
+
+      <RevenueTiles revenue={revenue} billableFilter={filters.billable} index={0} />
+
+      <ForecastChart
+        points={forecast.burnUp}
+        periodLabel={period.label}
+        projectedCostCents={forecast.projectedCostCents}
+        projectedValueCents={forecast.projectedValueCents}
+        weekdaysRemaining={forecast.progress.weekdaysRemaining}
+        index={1}
+      />
 
       <ProductivityChart
         series={periodSeries}

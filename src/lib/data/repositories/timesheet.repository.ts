@@ -355,6 +355,18 @@ export async function upsertStaffTargetRepo(row: NewStaffTarget, db: DBClient = 
         oc.column("personId").doUpdateSet((eb) => ({
           personName: eb.ref("excluded.personName"),
           workingDaysTenths: eb.ref("excluded.workingDaysTenths"),
+          // EVERY column the caller can set has to be listed here. A column
+          // left out is not left alone in a useful way - the INSERT half sets
+          // it and the UPDATE half silently keeps the old value, so a new
+          // person gets what was chosen and an existing one gets whatever they
+          // had before. working_weekdays was missed when migration 009 added
+          // it, which meant changing somebody from Mon-Wed to Tue-Thu appeared
+          // to save and then came back Mon-Wed.
+          //
+          // Worse than a no-op, because working_days_tenths above DID update:
+          // picking four days stored a count of four against three stored
+          // days, and the two then disagreed about the same person.
+          workingWeekdays: eb.ref("excluded.workingWeekdays"),
           minutesPerDay: eb.ref("excluded.minutesPerDay"),
           billableTargetPercent: eb.ref("excluded.billableTargetPercent"),
           // updated_at has no trigger in this schema, so it is set here.

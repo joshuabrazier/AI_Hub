@@ -1,5 +1,7 @@
 import "server-only";
 
+import { sql } from "kysely";
+
 import { database, DBClient } from "@/lib/data/kysely-database-client";
 import { handleError } from "@/lib/handle-errors";
 import type { SessionTwoFactor } from "../kysely-database-types";
@@ -85,10 +87,22 @@ export async function recordSessionTwoFactorFailureRepo(
           // Locked once the incremented count reaches the threshold. Compared
           // against the pre-increment value because the SET clause cannot see
           // its own result.
+          //
+          // The CAST is load-bearing, not decoration. Postgres infers a
+          // parameter's type from its context, and inside a CASE whose other
+          // branch is NULL there is no context to infer from - so the
+          // timestamp went over as `text` and the whole statement failed
+          // with "column locked_until is of type timestamp with time zone
+          // but expression is of type text".
+          //
+          // The effect was worse than a broken lockout: this runs on every
+          // wrong code, so a mistyped digit threw a database error instead
+          // of "that code was not right, N attempts left", and two-factor
+          // looked completely broken to anybody who fat-fingered it once.
           lockedUntil: eb
             .case()
             .when(eb("sessionTwoFactor.failedCount", ">=", lockAfter - 1))
-            .then(lockedUntil)
+            .then(sql<Date>`${lockedUntil}::timestamptz`)
             .else(null)
             .end(),
           updatedAt: now,

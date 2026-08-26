@@ -59,7 +59,7 @@ export const ROUTES = {
   // all three.
   ADMIN_TIMESHEETS: "/admin/timesheets",
   ADMIN_TIMESHEETS_ENTRIES: "/admin/timesheets/entries",
-  ADMIN_TIMESHEETS_JOBS: "/admin/timesheets/jobs",
+  ADMIN_TIMESHEETS_CLIENTS: "/admin/timesheets/clients",
   ADMIN_TIMESHEETS_STAFF: "/admin/timesheets/staff",
   ADMIN_TIMESHEETS_REVIEW: "/admin/timesheets/review",
   ADMIN_TIMESHEETS_EXPORT: "/admin/timesheets/export",

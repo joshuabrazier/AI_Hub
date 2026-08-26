@@ -1,6 +1,8 @@
 import { ROUTES } from "@/lib/routes";
 
 import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
+import { getRevenueForFactsService } from "../admin-timesheets-revenue.service";
+import { RevenueTiles } from "../revenue-panels";
 import { ProductivityChart } from "../productivity-chart";
 import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
 import TimesheetShell, { periodHref } from "../timesheet-shell";
@@ -24,6 +26,11 @@ export default async function TimesheetView(request: TimesheetRequest) {
   const { data } = await getStaffDashboardService(request);
   const { period, filters, report, syncStatus, periodTotalHours, periodSeries } = data;
 
+  // Values the rows already on screen. This is the view the ask box links to
+  // after a question about money, so arriving here without the money would
+  // answer the question and then hide the answer.
+  const revenue = await getRevenueForFactsService(report.facts);
+
   const hasEntries = report.totals.worklogCount > 0;
 
   return (
@@ -35,6 +42,11 @@ export default async function TimesheetView(request: TimesheetRequest) {
     >
       {hasEntries ? (
         <>
+          {/* What the selection is worth and what it cost, above the rows it
+              was summed from. Respects every filter, so a two-person billable
+              view prices exactly those rows. */}
+          <RevenueTiles revenue={revenue} billableFilter={filters.billable} index={0} />
+
           {/* The chart leads: the shape of the period is the thing you want
               before any individual figure. */}
           <ProductivityChart

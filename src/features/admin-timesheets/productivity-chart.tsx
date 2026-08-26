@@ -30,7 +30,10 @@ import { TimesheetPeriodDTO } from "./admin-timesheets.types";
 //     them. Filling most of the slot makes the day the unit you see.
 //   - a 2px gap between stacked segments, so they read apart without a border
 //   - solid hairline gridlines one step off the surface, never dashed
-//   - the capacity target is a horizontal line, because capacity is a constant
+//   - the capacity target is a mark PER DAY, at that day's own height. It was
+//     one line across, because capacity used to be a constant; recording which
+//     days somebody works made that untrue, and a rule drawn straight across
+//     claimed a target on days they do not work
 //   - no number on every column: the axis, the tooltip and the table carry them
 //   - a table view of the same figures, so nothing is hover-only
 //
@@ -76,6 +79,7 @@ export function ProductivityChart({
   title,
   previousHref,
   nextHref,
+  showFigures = true,
   className,
 }: {
   series: DailySeries;
@@ -87,12 +91,36 @@ export function ProductivityChart({
   // page at runtime for exactly that reason.
   previousHref: string;
   nextHref: string;
+  // Utilisation and billable share are printed in the header by default,
+  // because on a person or a job this chart is the only place they appear.
+  // The overview carries both as headline tiles immediately above, and the
+  // same number twice on one screen reads as two numbers that happen to
+  // agree - so that screen turns them off.
+  showFigures?: boolean;
   className?: string;
 }) {
   const [showTable, setShowTable] = useState(false);
   const reduceMotion = useReducedMotion();
 
   const { points, capacityHours, totals } = series;
+
+  // True when the target is not what a reader would already assume - which is
+  // "every weekday is a full day, weekends are not".
+  //
+  // A WEEKEND WITH NO TARGET IS NOT A VARIATION. It never had one, and saying
+  // so would change the subtitle on every ordinary week view for no reason.
+  // What counts is a WEEKDAY carrying no target, which only happens once
+  // somebody's actual working days are recorded - or two working days
+  // disagreeing about how long a full day is.
+  const WEEKEND_LABELS = new Set(["Sat", "Sun"]);
+
+  const workingPoints = points.filter((point) => point.capacityHours > 0);
+
+  const daysOff = points.filter(
+    (point) => point.capacityHours === 0 && !WEEKEND_LABELS.has(point.weekdayLabel),
+  ).length;
+
+  const targetVaries = daysOff > 0 || new Set(workingPoints.map((point) => point.capacityHours)).size > 1;
   const top = Math.max(2, Math.ceil(series.maxHours));
   const ticks = axisTicks(top);
 
@@ -105,9 +133,11 @@ export function ProductivityChart({
             <p className="mt-1 text-sm text-muted-foreground">
               {period.granularity === "year"
                 ? `One bar per month, each against that month's own working days. ${capacityHours.toFixed(2)}h a day across everyone in view.`
-                : period.granularity === "week"
-                  ? `Monday to Sunday, each day against ${capacityHours.toFixed(2)}h - a full day for everyone in view.`
-                  : `Each day against ${capacityHours.toFixed(2)}h - a full day for everyone in view.`}
+                : targetVaries
+                  ? `Each day against its own target${daysOff > 0 ? `, and ${daysOff} ${daysOff === 1 ? "weekday is" : "weekdays are"} not worked` : ""}. No line is drawn where there is no target.`
+                  : period.granularity === "week"
+                    ? `Monday to Sunday, each day against ${capacityHours.toFixed(2)}h - a full day for everyone in view.`
+                    : `Each day against ${capacityHours.toFixed(2)}h - a full day for everyone in view.`}
             </p>
           </div>
 
@@ -147,18 +177,20 @@ export function ProductivityChart({
         {/* Two figures, both defined. The tool this replaces shows a "billable
             target" percentage against a target we do not hold, so it is not
             invented here. */}
-        <div className="flex flex-wrap gap-x-8 gap-y-2">
-          <Figure
-            label="Utilisation"
-            value={totals.utilisation === null ? "n/a" : `${Math.round(totals.utilisation * 100)}%`}
-            detail={`${formatHours(totals.loggedHours)} of ${formatHours(totals.availableHours)}`}
-          />
-          <Figure
-            label="Billable share"
-            value={totals.billableShare === null ? "n/a" : `${Math.round(totals.billableShare * 100)}%`}
-            detail={`${formatHours(totals.billableHours)} billable`}
-          />
-        </div>
+        {showFigures && (
+          <div className="flex flex-wrap gap-x-8 gap-y-2">
+            <Figure
+              label="Utilisation"
+              value={totals.utilisation === null ? "n/a" : `${Math.round(totals.utilisation * 100)}%`}
+              detail={`${formatHours(totals.loggedHours)} of ${formatHours(totals.availableHours)}`}
+            />
+            <Figure
+              label="Billable share"
+              value={totals.billableShare === null ? "n/a" : `${Math.round(totals.billableShare * 100)}%`}
+              detail={`${formatHours(totals.billableHours)} billable`}
+            />
+          </div>
+        )}
       </CardHeader>
 
       <CardContent>
@@ -225,13 +257,33 @@ export function ProductivityChart({
                   />
                 ))}
 
-                {/* The capacity target: one horizontal line, because capacity
-                    is a constant. */}
-                <div
-                  className="absolute inset-x-0 border-t"
-                  style={{ top: `${(1 - capacityHours / top) * 100}%`, borderColor: "var(--primary)" }}
-                  aria-hidden
-                />
+                {/* THE CAPACITY TARGET, per day rather than one line across.
+
+                    It used to be a single horizontal rule, because capacity was
+                    a constant - every weekday was a full day for everyone. Now
+                    that a person's actual working days can be recorded, it is
+                    not: a Tue-Thu person has no target on Monday, and a rule
+                    drawn straight across claimed one.
+
+                    So each day carries its own mark, at its own height, and a
+                    day with no capacity gets none. When every day does share a
+                    capacity - the team views, and anybody whose days are unset
+                    - the marks line up and read as the same rule as before. */}
+                <div className="pointer-events-none absolute inset-0 flex items-end" aria-hidden>
+                  {points.map((point) => (
+                    <div key={`target-${point.date}`} className="relative h-full flex-1 px-[3px]">
+                      {point.capacityHours > 0 && (
+                        <div
+                          className="absolute inset-x-[3px] border-t"
+                          style={{
+                            top: `${(1 - point.capacityHours / top) * 100}%`,
+                            borderColor: "var(--primary)",
+                          }}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
 
                 {/* The columns. */}
                 <div className="absolute inset-0 flex items-end">

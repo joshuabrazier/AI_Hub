@@ -20,12 +20,19 @@ export interface TimesheetPeriodDTO {
   start: string;
   // "17-23 Aug 2026", "August 2026", "2026"
   label: string;
-  // Inclusive bounds, 'YYYY-MM-DD'.
+  // Inclusive bounds, 'YYYY-MM-DD'. `from` is the period's start OR the
+  // history floor when that is later - see resolvePeriod. Query and measure
+  // against these, never against `start`.
   from: string;
   to: string;
   previousStart: string;
   nextStart: string;
   hasNext: boolean;
+  // False once stepping back would leave the recorded history entirely.
+  hasPrevious: boolean;
+  // True when `from` moved off `start`, so the label names a longer period
+  // than the figures cover and the screen should say so.
+  clipped: boolean;
   // True when this IS the period containing today, so a "this week" control can
   // disable itself rather than looking like a button that does nothing.
   isCurrent: boolean;
@@ -49,13 +56,36 @@ export interface CategoryOptionDTO {
   worklogCount: number;
 }
 
+// -------------------------------------------------------------------
+// A CLIENT: who the work is for. Jira calls this a project and keys it
+// "TSSS"; the business calls it Trainer Suzie Swim School. The name comes
+// from Jira, so it is whatever the Jira admin typed - never hardcoded here.
+// -------------------------------------------------------------------
+export interface ClientOptionDTO {
+  // 'all', or the Jira project key.
+  value: string;
+  // The client's name, falling back to the key when Jira has no name for it.
+  label: string;
+  category: string | null;
+  hours: number;
+  projectCount: number;
+}
+
+// -------------------------------------------------------------------
+// A PROJECT: the item an invoice is written against. Jira calls this the
+// parent issue and keys it "TSSS-59".
+// -------------------------------------------------------------------
 export interface ProjectOptionDTO {
-  // 'all', or the parent issue key.
+  // 'all', or the project key.
   value: string;
   label: string;
   summary: string | null;
   category: string | null;
   hours: number;
+  // Which client this belongs to, so choosing a client can narrow the list
+  // rather than leaving every project of every client in one long dropdown.
+  clientKey: string | null;
+  clientName: string | null;
 }
 
 // -------------------------------------------------------------------
@@ -71,13 +101,33 @@ export interface PersonOptionDTO {
   daysWorked: number;
 }
 
+// The billable states a screen can narrow to. 'unset' is its own option and
+// not folded into non-billable: "nobody has said whether this bills" is a
+// data-quality problem, and hiding it inside "non-billable" writes hours off
+// in silence - the same reasoning the engine's three-way split uses.
+export const BILLABLE_FILTERS = ["all", "Billable", "Non-billable", "unset"] as const;
+
+export type BillableFilter = (typeof BILLABLE_FILTERS)[number];
+
 export interface TimesheetFiltersDTO {
   granularity: Granularity;
   // The period's start, carried in the URL.
   start: string;
   category: string;
+  // Who the work is for. 'all', or a Jira project key.
+  client: string;
+  // What it is booked against. 'all', or a project key. Narrowed by client
+  // when one is chosen, and reset to 'all' if it does not belong to them.
   project: string;
+  // THE AUTHORITATIVE person filter, and an array because "Louis and Josh"
+  // is a normal thing to ask for. Empty means everyone.
+  people: string[];
+  // The single-person view of the above, kept because the person page and the
+  // staff cards are about one person by definition. Exactly one selected
+  // gives that id; none or several gives 'all'. Derived in one place so the
+  // two can never disagree.
   person: string;
+  billable: BillableFilter;
 }
 
 // -------------------------------------------------------------------
@@ -98,6 +148,7 @@ export interface AdminTimesheetsDTO {
   period: TimesheetPeriodDTO;
   filters: TimesheetFiltersDTO;
   categoryOptions: CategoryOptionDTO[];
+  clientOptions: ClientOptionDTO[];
   projectOptions: ProjectOptionDTO[];
   personOptions: PersonOptionDTO[];
   // The report for the CURRENT filter selection.
@@ -128,6 +179,19 @@ export interface AdminTimesheetsDTO {
 export const StaffTargetSchema = z.object({
   personId: z.string().min(1, "A person is required"),
   personName: z.string().optional(),
+  // WHICH days, as ISO weekday numbers. Optional: leaving it empty keeps the
+  // old behaviour of prorating the count across every weekday, which is the
+  // right default because nothing knows somebody's days until they are set.
+  //
+  // Duplicates are rejected HERE, because a CHECK constraint cannot express it
+  // without a subquery - see migration 009. A repeated Tuesday would double
+  // that day's capacity.
+  workingWeekdays: z
+    .array(z.coerce.number().int().min(1).max(7))
+    .max(7)
+    .optional()
+    .transform((days) => (days && days.length > 0 ? [...new Set(days)].sort((a, b) => a - b) : null))
+    .refine((days) => days === null || days.length > 0, "Choose at least one day, or none at all"),
   // 0 to 7, half days allowed. Someone on leave for a period is legitimately 0.
   workingDaysPerWeek: z.coerce
     .number()
@@ -145,6 +209,9 @@ export const StaffTargetSchema = z.object({
 export type StaffTargetRequestDTO = z.infer<typeof StaffTargetSchema>;
 
 export interface StaffTargetDTO {
+  // ISO weekday numbers the person works, 1 = Monday. Null when only a count
+  // is recorded - see migration 009.
+  workingWeekdays: number[] | null;
   personId: string;
   personName: string | null;
   workingDaysPerWeek: number;

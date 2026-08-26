@@ -100,6 +100,23 @@ const serverEnvSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "JIRA_SYNC_START_DATE must be YYYY-MM-DD")
     .optional(),
 
+  // The first day this organisation kept time in Jira, 'YYYY-MM-DD'.
+  //
+  // A DISPLAY AND MEASUREMENT floor, which is why it is not the same setting
+  // as JIRA_SYNC_START_DATE above. That one decides what the sync FETCHES;
+  // this decides what the screens SHOW and, more importantly, what utilisation
+  // is measured against. Before this date the app holds no worklogs, and
+  // counting contracted hours for days it never covered reports a shortfall
+  // that never happened.
+  //
+  // Unset means no floor, which is the right default for the base repo: a
+  // fresh project has no such date and inventing one would hide real data.
+  // Falls back to JIRA_SYNC_START_DATE so one value can drive both.
+  TIMESHEET_HISTORY_START: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "TIMESHEET_HISTORY_START must be YYYY-MM-DD")
+    .optional(),
+
   // Activity/audit log retention. The monthly job deletes audit_logs older than
   // this many days. Defaults to 180. Set to 0 to disable purging (keep forever).
   // Unlike the de-identification switch this defaults ON, because it is routine
@@ -380,4 +397,5 @@ export const envServer = serverEnvSchema.parse({
   JIRA_SYNC_ENABLED: process.env.JIRA_SYNC_ENABLED,
   JIRA_SYNC_OVERLAP_MINUTES: process.env.JIRA_SYNC_OVERLAP_MINUTES,
   JIRA_SYNC_START_DATE: process.env.JIRA_SYNC_START_DATE,
+  TIMESHEET_HISTORY_START: process.env.TIMESHEET_HISTORY_START,
 });

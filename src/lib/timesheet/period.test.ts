@@ -21,27 +21,51 @@ describe("startOfPeriod", () => {
     expect(startOfPeriod("year", "2026-08-18")).toBe("2026-01-01");
   });
 
-  it("anchors a fortnight to a fixed epoch, not to the anchor's own week", () => {
-    // Two dates a week apart must NOT produce two different fortnights that
-    // both claim to contain them. Whatever the pairing, both resolve to the
-    // same start, so "this fortnight" means one thing to everybody.
-    const first = startOfPeriod("fortnight", "2026-08-17");
-    const second = startOfPeriod("fortnight", "2026-08-24");
-
-    expect(first).not.toBe(second);
-    // Stepping a week inside one fortnight lands on the same start.
-    expect(startOfPeriod("fortnight", "2026-08-18")).toBe(first);
-    expect(startOfPeriod("fortnight", "2026-08-23")).toBe(first);
+  // -------------------------------------------------------------------
+  // A fortnight is THIS WEEK AND LAST WEEK, never this week and next.
+  //
+  // TODAY is 2026-08-18, a Tuesday, so this week runs 17-23 Aug and last week
+  // runs 10-16. The fortnight containing today is therefore 10-23 Aug.
+  // -------------------------------------------------------------------
+  it("ends the current fortnight with the current week", () => {
+    // The behaviour this replaced: a fixed epoch put today in the first half
+    // half the time, so "this fortnight" showed a week that had not happened.
+    expect(startOfPeriod("fortnight", TODAY, TODAY)).toBe("2026-08-10");
+    expect(endOfPeriod("fortnight", startOfPeriod("fortnight", TODAY, TODAY))).toBe("2026-08-23");
   });
 
-  it("keeps fortnights aligned across a year boundary", () => {
-    // Every fortnight start is an even number of weeks from the epoch, so the
-    // grid never slips.
-    const start = startOfPeriod("fortnight", "2027-03-15");
-    const weeks = (new Date(`${start}T00:00:00Z`).getTime() - new Date("2024-01-01T00:00:00Z").getTime()) / (7 * 864e5);
+  it("resolves both weeks of a fortnight to the same start", () => {
+    // Otherwise a link built from a date inside the period would open a
+    // different period from the one it was copied out of.
+    const start = startOfPeriod("fortnight", TODAY, TODAY);
 
-    expect(Number.isInteger(weeks)).toBe(true);
-    expect(weeks % 2).toBe(0);
+    // Both weeks: Mon-Sun of last week, and Mon-Sun of this one.
+    for (const day of ["2026-08-10", "2026-08-13", "2026-08-16", "2026-08-17", "2026-08-18", "2026-08-23"]) {
+      expect(startOfPeriod("fortnight", day, TODAY)).toBe(start);
+    }
+  });
+
+  it("is idempotent, so a reload cannot walk the period backwards", () => {
+    // The trap in a trailing definition: if resolving a START shifted it again,
+    // every reload would slide the fortnight a week earlier.
+    const once = startOfPeriod("fortnight", TODAY, TODAY);
+
+    expect(startOfPeriod("fortnight", once, TODAY)).toBe(once);
+    expect(startOfPeriod("fortnight", startOfPeriod("fortnight", once, TODAY), TODAY)).toBe(once);
+  });
+
+  it("partitions earlier fortnights cleanly, two weeks at a time", () => {
+    // The day before the current fortnight begins falls in the previous one.
+    expect(startOfPeriod("fortnight", "2026-08-09", TODAY)).toBe("2026-07-27");
+    expect(startOfPeriod("fortnight", "2026-08-02", TODAY)).toBe("2026-07-27");
+    expect(startOfPeriod("fortnight", "2026-07-26", TODAY)).toBe("2026-07-13");
+  });
+
+  it("puts a future week in its own fortnight rather than the current one", () => {
+    // Next week must not be dragged into "this fortnight" - that was the whole
+    // complaint about the epoch alignment.
+    expect(startOfPeriod("fortnight", "2026-08-24", TODAY)).toBe("2026-08-24");
+    expect(startOfPeriod("fortnight", "2026-09-01", TODAY)).toBe("2026-08-24");
   });
 });
 
@@ -89,7 +113,7 @@ describe("resolvePeriod", () => {
   it("steps by its own granularity", () => {
     expect(resolvePeriod("week", "2026-08-18", TODAY).previousStart).toBe("2026-08-10");
     expect(resolvePeriod("fortnight", "2026-08-18", TODAY).previousStart).toBe(
-      startOfPeriod("fortnight", "2026-08-04"),
+      startOfPeriod("fortnight", "2026-08-04", TODAY),
     );
     expect(resolvePeriod("month", "2026-08-18", TODAY).previousStart).toBe("2026-07-01");
     expect(resolvePeriod("year", "2026-08-18", TODAY).previousStart).toBe("2025-01-01");
@@ -149,5 +173,94 @@ describe("isCurrent", () => {
     expect(resolvePeriod("week", "2026-08-10", TODAY).isCurrent).toBe(false);
     expect(resolvePeriod("month", "2026-07-15", TODAY).isCurrent).toBe(false);
     expect(resolvePeriod("year", "2025-08-18", TODAY).isCurrent).toBe(false);
+  });
+});
+
+// -------------------------------------------------------------------
+// The history floor.
+//
+// An organisation that started keeping time on a particular day has no
+// records before it. The floor exists so the screens neither offer those
+// months nor measure against capacity for days the records never covered -
+// counting ten contracted days that predate the data reports a shortfall
+// that never happened.
+//
+// `start` must survive untouched throughout: it is the URL, the label and the
+// basis for stepping. Only the RANGE moves.
+// -------------------------------------------------------------------
+describe("history floor", () => {
+  const FLOOR = "2026-08-11";
+
+  it("leaves a period entirely after the floor alone", () => {
+    const period = resolvePeriod("week", "2026-08-17", TODAY, FLOOR);
+
+    expect(period.start).toBe("2026-08-17");
+    expect(period.from).toBe("2026-08-17");
+    expect(period.clipped).toBe(false);
+    expect(period.beforeHistory).toBe(false);
+  });
+
+  it("clips a period that straddles the floor, without moving its start", () => {
+    // August began on the 1st, but the records begin on the 11th. The label
+    // still says August; the figures cover 11-31.
+    const period = resolvePeriod("month", "2026-08-01", TODAY, FLOOR);
+
+    expect(period.start).toBe("2026-08-01");
+    expect(period.label).toBe("August 2026");
+    expect(period.from).toBe(FLOOR);
+    expect(period.clipped).toBe(true);
+  });
+
+  it("still allows stepping back into the period that contains the floor", () => {
+    // The week of 17 Aug steps back to the week of 10 Aug, which holds the
+    // 11th. That week is partly on record, so it is reachable.
+    const period = resolvePeriod("week", "2026-08-17", TODAY, FLOOR);
+
+    expect(period.hasPrevious).toBe(true);
+    expect(period.previousStart).toBe("2026-08-10");
+  });
+
+  it("stops once the previous period is entirely before the floor", () => {
+    // The week of 10 Aug is the earliest with anything in it. Its predecessor
+    // ends on the 9th, which predates every record.
+    const period = resolvePeriod("week", "2026-08-10", TODAY, FLOOR);
+
+    expect(period.hasPrevious).toBe(false);
+  });
+
+  it("marks a period wholly before the floor and never inverts its range", () => {
+    // Only reachable by editing the URL, since hasPrevious blocks the arrow.
+    // `from` must not run past `end` or the query would mean nothing.
+    const period = resolvePeriod("month", "2026-06-01", TODAY, FLOOR);
+
+    expect(period.beforeHistory).toBe(true);
+    expect(period.from <= period.end).toBe(true);
+  });
+
+  it("does nothing at all when no floor is configured", () => {
+    // The base-repo default. A project that has not said when its records
+    // begin must see everything rather than a date this code invented.
+    const period = resolvePeriod("month", "2020-01-01", TODAY);
+
+    expect(period.from).toBe(period.start);
+    expect(period.clipped).toBe(false);
+    expect(period.hasPrevious).toBe(true);
+    expect(period.beforeHistory).toBe(false);
+  });
+
+  it("ignores a malformed floor rather than throwing", () => {
+    const period = resolvePeriod("month", "2026-08-01", TODAY, "not-a-date");
+
+    expect(period.from).toBe("2026-08-01");
+    expect(period.clipped).toBe(false);
+  });
+
+  it("clips a year to the floor, so 2026 is measured from August", () => {
+    const period = resolvePeriod("year", "2026-01-01", TODAY, FLOOR);
+
+    expect(period.start).toBe("2026-01-01");
+    expect(period.from).toBe(FLOOR);
+    expect(period.clipped).toBe(true);
+    expect(period.hasPrevious).toBe(false);
   });
 });

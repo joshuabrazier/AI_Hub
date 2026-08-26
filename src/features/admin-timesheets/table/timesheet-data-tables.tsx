@@ -6,7 +6,7 @@ import { DataTable } from "@/components/data-table";
 import { BudgetRow, WorklogFactRow } from "@/lib/timesheet/timesheet.types";
 
 import { getEntriesColumns } from "./entries-columns";
-import { getJobsColumns } from "./jobs-columns";
+import { getProjectsColumns } from "./projects-columns";
 
 // -------------------------------------------------------------------
 // The timesheet tables, mounted in the shared DataTable the rest of the
@@ -81,15 +81,15 @@ export function EntriesDataTable({ facts }: { facts: WorklogFactRow[] }) {
 }
 
 export function JobsDataTable({ jobs }: { jobs: BudgetRow[] }) {
-  const columns = useMemo(() => getJobsColumns(), []);
+  const columns = useMemo(() => getProjectsColumns(), []);
 
   return (
     <DataTable
       columns={columns}
       data={jobs}
-      searchPlaceholder="Search jobs..."
-      searchKeys={["parentKey", "parentSummary", "category", "billable"]}
-      emptyMessage="No jobs match this filter."
+      searchPlaceholder="Search projects..."
+      searchKeys={["projectKey", "projectSummary", "category", "billable"]}
+      emptyMessage="No projects match this filter."
       pageSize={20}
       sortOptions={[
         { id: "hours", label: "Most hours", compare: (a, b) => b.actualSeconds - a.actualSeconds },
@@ -101,7 +101,7 @@ export function JobsDataTable({ jobs }: { jobs: BudgetRow[] }) {
           compare: (a, b) => (b.varianceSeconds ?? -Infinity) - (a.varianceSeconds ?? -Infinity),
         },
         { id: "budget", label: "Largest budget", compare: (a, b) => (b.currentSeconds ?? 0) - (a.currentSeconds ?? 0) },
-        { id: "key", label: "By key", compare: (a, b) => a.parentKey.localeCompare(b.parentKey) },
+        { id: "key", label: "By key", compare: (a, b) => a.projectKey.localeCompare(b.projectKey) },
       ]}
       facetFilters={[
         {

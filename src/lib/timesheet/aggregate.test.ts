@@ -417,7 +417,7 @@ describe("rollUpByProject", () => {
   const report = buildReport(SNAPSHOT);
 
   it("rolls time up to the Project item above the deliverable", () => {
-    expect(report.byProject.map((project) => project.parentKey)).toEqual(["TSSS-1", "DS-1"]);
+    expect(report.byProject.map((project) => project.projectKey)).toEqual(["TSSS-1", "DS-1"]);
   });
 
   it("totals every deliverable underneath", () => {
@@ -435,14 +435,14 @@ describe("rollUpByProject", () => {
     });
 
     expect(parentless.byProject).toHaveLength(1);
-    expect(parentless.byProject[0].parentKey).toBeNull();
+    expect(parentless.byProject[0].projectKey).toBeNull();
     expect(parentless.byProject[0].seconds).toBe(7200);
   });
 });
 
 describe("rollUpBudget", () => {
   const budget = buildReport(SNAPSHOT).budget;
-  const byKey = new Map(budget.map((row) => [row.parentKey, row]));
+  const byKey = new Map(budget.map((row) => [row.projectKey, row]));
 
   it("reports baseline, current and actual side by side", () => {
     const tsss = byKey.get("TSSS-1");
@@ -521,11 +521,11 @@ describe("rollUpBudget", () => {
       ],
     });
 
-    const job = untouched.budget.find((row) => row.parentKey === "NEW-1");
+    const job = untouched.budget.find((row) => row.projectKey === "NEW-1");
     expect(job).toBeDefined();
     expect(job?.actualSeconds).toBe(0);
     expect(job?.worklogCount).toBe(0);
-    expect(job?.parentSummary).toBe("Not started");
+    expect(job?.projectSummary).toBe("Not started");
   });
 });
 
