@@ -10,6 +10,7 @@ import { createAuthMiddleware } from "better-auth/api";
 import { sendTwoFactorOtpEmail, sendVerificationEmail } from "../email/send-email";
 import { deleteSessionsByUserIdRepo } from "../data/repositories/sessions.repository";
 import { getUserByUserIdRepo } from "../data/repositories/users.repository";
+import { ROUTES } from "../routes";
 import { accessControl, impersonatorOnly } from "./auth-permissions";
 import { isEmailDomainAllowed, isPasswordSignInEnabled } from "./account-creation-policy";
 import { applyInvitationOnFirstSignIn } from "./apply-invitation";
@@ -318,6 +319,27 @@ export const auth = betterAuth({
   // -------------------------------------------------------------------
   // Better Auth Settings Model
   // -------------------------------------------------------------------
+  // -------------------------------------------------------------------
+  // Where a failed auth request lands.
+  //
+  // The per-sign-in `errorCallbackURL` is not enough on its own, and the
+  // reason is circular: Better Auth stores it INSIDE the OAuth state row,
+  // so the one failure it cannot use it for is a missing state row. That is
+  // exactly what "State mismatch: verification not found" is - a callback
+  // replayed after the state was consumed (a refresh or a back button on
+  // the return URL), or one that came back after the row expired.
+  //
+  // Without this the person is dropped on Better Auth's bare error page at
+  // /api/auth/error. With it they land back on sign-in and can simply try
+  // again, which is the correct answer for both causes.
+  //
+  // `throw` stays false: an auth error should redirect somebody, not
+  // surface as an unhandled exception in a request handler.
+  // -------------------------------------------------------------------
+  onAPIError: {
+    errorURL: ROUTES.PUBLIC_AUTH_SIGN_IN,
+  },
+
   session: {
     modelName: "sessions",
     // The IDLE window. Stop using the app for this long and the session is
