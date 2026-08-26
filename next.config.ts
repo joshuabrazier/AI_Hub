@@ -20,7 +20,11 @@ const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 //     never meant to be framed).
 //   - X-Content-Type-Options: stop MIME sniffing.
 //   - Referrer-Policy: don't leak full URLs cross-origin.
-//   - Permissions-Policy: switch off device APIs the app doesn't use.
+//   - Permissions-Policy: switch off device APIs the app doesn't use. The
+//     microphone is the one exception, allowed for SAME-ORIGIN documents
+//     only, because the transcription recorder needs it. Camera and
+//     geolocation stay fully off - nothing in the app asks for either, and
+//     an empty allowlist is a header the browser enforces for us.
 //   - CSP (partial): base-uri/object-src/form-action lock down tag-injection
 //     and form hijacking WITHOUT constraining script/style, so nothing breaks.
 //
@@ -36,7 +40,13 @@ const securityHeaders = [
   { key: "X-DNS-Prefetch-Control", value: "on" },
   {
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+    // `microphone=(self)` is NOT the same as removing the directive. It
+    // permits this origin's own documents and continues to deny every
+    // embedded third-party frame, which is what an omitted directive would
+    // silently allow. Anything narrower breaks /{admin,manage,portal}/transcription:
+    // the browser refuses getUserMedia outright, with no permission prompt
+    // and nothing in the UI to explain why.
+    value: "camera=(), microphone=(self), geolocation=(), browsing-topics=()",
   },
   {
     key: "Content-Security-Policy",

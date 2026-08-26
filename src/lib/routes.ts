@@ -46,6 +46,7 @@ export const ROUTES = {
   ADMIN_USERS: "/admin/users",
   ADMIN_TEAMS: "/admin/teams",
   ADMIN_AI_CHAT: "/admin/ai-chat",
+  ADMIN_TRANSCRIPTION: "/admin/transcription",
   ADMIN_CONTENT: "/admin/content",
   ADMIN_HOME_PAGE: "/admin/home-page",
   ADMIN_EMAILS: "/admin/emails",
@@ -69,11 +70,13 @@ export const ROUTES = {
   MANAGE: "/manage",
   MANAGE_TEAMS: "/manage/teams",
   MANAGE_AI_CHAT: "/manage/ai-chat",
+  MANAGE_TRANSCRIPTION: "/manage/transcription",
   manageTeam: (teamId: string) => `/manage/teams/${teamId}`,
 
   // Member portal
   PORTAL: "/portal",
   PORTAL_AI_CHAT: "/portal/ai-chat",
+  PORTAL_TRANSCRIPTION: "/portal/transcription",
   PORTAL_ACCOUNT: "/portal/account",
 
   // Errors

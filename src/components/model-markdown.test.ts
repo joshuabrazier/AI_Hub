@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { AiChatMarkdown } from "./components/ai-chat-markdown";
+import { ModelMarkdown } from "./model-markdown";
 
 // -------------------------------------------------------------------
 // What a model's reply actually turns into.
@@ -17,9 +17,9 @@ import { AiChatMarkdown } from "./components/ai-chat-markdown";
 // back whatever it was given, so anything a user can paste into a message
 // can come back inside a reply and be rendered by this component.
 // -------------------------------------------------------------------
-const render = (markdown: string) => renderToStaticMarkup(createElement(AiChatMarkdown, { content: markdown }));
+const render = (markdown: string) => renderToStaticMarkup(createElement(ModelMarkdown, { content: markdown }));
 
-describe("AiChatMarkdown renders formatting", () => {
+describe("ModelMarkdown renders formatting", () => {
   it("turns emphasis into real elements", () => {
     expect(render("**bold text**")).toContain("<strong");
     expect(render("*italic text*")).toContain("<em");
@@ -69,7 +69,7 @@ describe("AiChatMarkdown renders formatting", () => {
   });
 });
 
-describe("AiChatMarkdown is safe with hostile input", () => {
+describe("ModelMarkdown is safe with hostile input", () => {
   it("never parses raw HTML out of a reply", () => {
     // The single most important assertion here. If this ever fails,
     // something added rehype-raw and a reply can now inject markup.

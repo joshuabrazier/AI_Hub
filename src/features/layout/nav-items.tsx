@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   Briefcase,
   ChartColumn,
   ClipboardCheck,
@@ -71,6 +72,12 @@ const ADMIN_NAV: NavGroup[] = [
     items: [
       { label: "Home", href: ROUTES.ADMIN_DASHBOARD, icon: House, tooltip: "Home" },
       { label: "AI chat", href: ROUTES.ADMIN_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
+      {
+        label: "Transcription",
+        href: ROUTES.ADMIN_TRANSCRIPTION,
+        icon: AudioLines,
+        tooltip: "Transcribe and summarise a meeting",
+      },
     ],
   },
   {
@@ -162,6 +169,12 @@ const MANAGER_NAV: NavGroup[] = [
     items: [
       { label: "Home", href: ROUTES.MANAGE, icon: House, tooltip: "Home" },
       { label: "AI chat", href: ROUTES.MANAGE_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
+      {
+        label: "Transcription",
+        href: ROUTES.MANAGE_TRANSCRIPTION,
+        icon: AudioLines,
+        tooltip: "Transcribe and summarise a meeting",
+      },
     ],
   },
   {
@@ -181,6 +194,12 @@ const MEMBER_NAV: NavGroup[] = [
     items: [
       { label: "Home", href: ROUTES.PORTAL, icon: House, tooltip: "Home" },
       { label: "AI chat", href: ROUTES.PORTAL_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
+      {
+        label: "Transcription",
+        href: ROUTES.PORTAL_TRANSCRIPTION,
+        icon: AudioLines,
+        tooltip: "Transcribe and summarise a meeting",
+      },
       { label: "Account", href: ROUTES.PORTAL_ACCOUNT, icon: UserCircle, tooltip: "Your details" },
     ],
   },

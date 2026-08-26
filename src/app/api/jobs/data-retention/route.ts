@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { deidentifyInactiveUsersService } from "@/features/admin-retention/admin-retention.service";
 import { purgeExpiredAiChatsService } from "@/features/ai-chat/ai-chat-retention.service";
+import { purgeExpiredTranscriptionsService } from "@/features/transcription/transcription-retention.service";
 import { purgeExpiredAuditLogsService } from "@/lib/audit/audit-log.service";
 import { envServer } from "@/lib/env-server";
 
@@ -28,7 +29,7 @@ function bearerMatches(header: string | null, secret: string): boolean {
 // Trigger for the monthly data-retention job. This bearer secret
 // (RETENTION_JOB_SECRET) is the ONLY authentication here - there is no session
 // behind a scheduler, so the usual role guards do not apply and must not be
-// added. It runs three tasks:
+// added. It runs four tasks:
 //   - purges audit logs older than AUDIT_LOG_RETENTION_DAYS (routine rotation),
 //   - purges AI chat conversations idle longer than AI_CHAT_RETENTION_DAYS,
 //     request-log rows older than AI_CHAT_LOG_RETENTION_DAYS (also routine
@@ -37,6 +38,10 @@ function bearerMatches(header: string | null, secret: string): boolean {
 //     never sent, after AI_CHAT_STAGED_ATTACHMENT_HOURS - nothing else
 //     collects those, because the cascades only reach a file once it
 //     belongs to a message,
+//   - purges meeting transcriptions older than TRANSCRIPTION_RETENTION_DAYS
+//     and the recordings still held for them - which is only the failed and
+//     abandoned ones, because a recording is deleted the moment its
+//     transcript is stored,
 //   - de-identifies dormant accounts, but only when RETENTION_JOB_ENABLED is
 //     "true"; otherwise that part runs as a preview and changes nothing.
 //
@@ -62,6 +67,9 @@ export async function POST(request: Request): Promise<Response> {
   // Chat rotation, likewise independent of that switch.
   const aiChats = await purgeExpiredAiChatsService();
 
+  // Transcription rotation, on its own window and likewise independent.
+  const transcriptions = await purgeExpiredTranscriptionsService();
+
   // De-identification. Master switch: preview unless explicitly enabled.
   const dryRun = !envServer.RETENTION_JOB_ENABLED;
   const deidentify = await deidentifyInactiveUsersService({ dryRun });
@@ -74,6 +82,9 @@ export async function POST(request: Request): Promise<Response> {
       `aiChatLogsPurged=${aiChats.purgedRequestLogs} (>${aiChats.logRetentionDays}d) ` +
       `aiChatStagedFilesPurged=${aiChats.purgedStagedAttachments} (>${aiChats.stagedAttachmentHours}h) ` +
       `aiChatOrphanedBlobsPurged=${aiChats.purgedOrphanedBlobs} ` +
+      `transcriptionsPurged=${transcriptions.purgedTranscriptions} (>${transcriptions.retentionDays}d) ` +
+      `transcriptionMediaPurged=${transcriptions.purgedMedia} ` +
+      `transcriptionOrphanedMediaPurged=${transcriptions.purgedOrphanedMedia} ` +
       `dryRun=${deidentify.dryRun} candidates=${deidentify.candidateCount} processed=${deidentify.processedCount}`,
   );
 
@@ -82,6 +93,7 @@ export async function POST(request: Request): Promise<Response> {
     ok: true,
     auditLogs,
     aiChats,
+    transcriptions,
     deidentify: {
       dryRun: deidentify.dryRun,
       jobEnabled: deidentify.jobEnabled,

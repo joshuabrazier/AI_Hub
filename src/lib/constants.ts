@@ -35,6 +35,10 @@ export const MESSAGES = {
   AI_CHAT_DELETED: "Conversation deleted",
   AI_CHAT_RENAMED: "Conversation renamed",
 
+  TRANSCRIPTION_STARTED: "Transcribing. This takes a few minutes.",
+  TRANSCRIPTION_DELETED: "Transcription deleted",
+  TRANSCRIPTION_RENAMED: "Transcription renamed",
+
   CONTENT_SAVED: "Content saved",
 
   PASSWORD_RESET_LINK_SENT: "If an account exists for that email, a reset link has been sent.",
