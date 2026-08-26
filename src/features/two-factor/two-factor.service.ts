@@ -184,16 +184,20 @@ function extractSecret(totpURI: string): string {
 // first makes the plugin skip the rotation and keep the session we have.
 //
 // It is not a security shortcut: the flag only decides whether the GATE is
-// active. Turning it on before the code is proven means somebody who
-// abandons enrolment is gated - and that is the safe direction, because
-// `two_factor.verified` is still false, so they land back on the enrol
-// screen with a fresh secret rather than locked out.
+// active, never whether a code was correct. Turning it on before the code
+// is proven means somebody who abandons enrolment is gated, which is the
+// safe direction - they are sent back here rather than let through.
+//
+// Note that they come back to the VERIFY screen, not the enrol one, because
+// two_factor.verified is true from the moment the secret is created. If
+// they never captured the QR, that is a dead end and the way out is
+// scripts/reset-two-factor.mjs.
 // -------------------------------------------------------------------
 export async function verifyTwoFactorService(
   requestDTO: VerifyTwoFactorRequestDTO,
 ): Promise<void> {
   try {
-    const { user, sessionId } = await requireSessionUserForTwoFactor();
+    const { user, sessionId, twoFactorEnrolled } = await requireSessionUserForTwoFactor();
 
     const lock = await getSessionTwoFactorRepo(sessionId);
 
@@ -209,7 +213,22 @@ export async function verifyTwoFactorService(
       throw new DisplayErrorMessage("Set up two-factor authentication first.");
     }
 
-    const enrolling = !state.verified;
+    // ENROLLING IS DECIDED BY THE USER FLAG, not by two_factor.verified.
+    //
+    // That column defaults to TRUE in the schema, and Better Auth's
+    // enableTwoFactor inserts the row without overriding it - so it reads
+    // "verified" from the instant enrolment BEGINS, before any code has been
+    // proven. Deriving `enrolling` from it made it permanently false, the
+    // flag update below never ran, and users.two_factor_enabled stayed
+    // false.
+    //
+    // The effect was a silent loop with no error anywhere: verification
+    // genuinely succeeded, the session was marked verified, the action
+    // returned 200 - and then isTwoFactorSatisfied read the unset flag,
+    // returned false, and redirected the person straight back to this
+    // screen. From the outside it looked exactly like the button doing
+    // nothing.
+    const enrolling = !twoFactorEnrolled;
 
     if (enrolling) {
       await updateUserByIdRepo(user.id, { twoFactorEnabled: true, updatedAt: new Date() });
