@@ -4,7 +4,7 @@ import { MAX_DOCUMENT_BYTES } from "@/lib/ai/attachment-formats";
 import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
 import { getVerifiedApiSession } from "@/lib/auth/session-auth-server";
 import { MESSAGES } from "@/lib/constants";
-import { DisplayErrorMessage } from "@/lib/errors";
+import { isDisplayError } from "@/lib/errors";
 import { validateRequest } from "@/lib/server-requests";
 
 import { uploadAiChatAttachmentService } from "@/features/ai-chat/ai-chat.service";
@@ -116,8 +116,8 @@ export async function POST(request: Request): Promise<Response> {
     // A DisplayErrorMessage here is a validation result meant for the person
     // who chose the file - an unsupported type, an image too large. Anything
     // else has already been logged with context by handleError.
-    const message = error instanceof DisplayErrorMessage ? error.message : MESSAGES.SOMETHING_WENT_WRONG;
-    const status = error instanceof DisplayErrorMessage ? 400 : 500;
+    const message = isDisplayError(error) ? error.message : MESSAGES.SOMETHING_WENT_WRONG;
+    const status = isDisplayError(error) ? 400 : 500;
 
     return NextResponse.json({ error: message }, { status });
   }
