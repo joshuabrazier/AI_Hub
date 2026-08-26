@@ -28,6 +28,7 @@ import {
   getBedrockClient,
   isBedrockConfigured,
 } from "@/lib/ai/bedrock-client";
+import { buildHouseVoiceBlock } from "@/lib/ai/house-voice";
 import {
   attachmentStorageKey,
   deleteAttachment,
@@ -802,6 +803,18 @@ function buildConverseRequest(
     { text: appKnowledgePrompt(viewer.role, viewer.name) },
     { text: timesheetToolPrompt(todayInAppZone()) },
   ];
+
+  // How we write, as its own block ahead of the conversation and therefore
+  // inside the cached prefix.
+  //
+  // It sits AFTER the three blocks above because it is the one most likely
+  // to be edited, and everything before a change has to stay byte-identical
+  // for the cache to survive it. It is also the least urgent: a reply that
+  // is right in the wrong register beats one in the right register that is
+  // wrong, and putting voice first would invert that.
+  const houseVoice = buildHouseVoiceBlock();
+
+  if (houseVoice) system.push({ text: houseVoice });
 
   if (summary) {
     system.push({
