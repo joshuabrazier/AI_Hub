@@ -37,6 +37,7 @@ import {
   type BillableFilter,
   AdminTimesheetsDTO,
   CategoryOptionDTO,
+  ClientOptionDTO,
   PersonOptionDTO,
   ProjectOptionDTO,
   OverviewDTO,
@@ -82,6 +83,14 @@ function toSnapshotIssues(rows: Awaited<ReturnType<typeof getJiraIssuesRepo>>): 
 }
 
 // What the URL asked for. Every field is untrusted and validated below.
+//
+// Route pages take their searchParams as Promise<TimesheetSearchParams> so a
+// new filter is declared in ONE place. Six inline copies is how "billable"
+// came to be read by the service and declared by none of the routes: the
+// spread meant it still worked, so the types were quietly wrong rather than
+// noisily wrong, which is the worse of the two.
+export type TimesheetSearchParams = TimesheetRequest;
+
 export interface TimesheetRequest {
   // "week" | "fortnight" | "month" | "year". Anything else falls back to the
   // default rather than erroring, so a stale link still opens.
@@ -90,6 +99,9 @@ export interface TimesheetRequest {
   // start of its period, so the 15th and the 20th open the same month.
   start?: string;
   category?: string;
+  // The Jira project key of the client. Validated against this period's own
+  // client list, so an invented one narrows nothing.
+  client?: string;
   project?: string;
   // A single id, or several comma-separated - "louis,josh" is a normal ask.
   // Parsed and validated against this period's own options, so a stale or
@@ -173,6 +185,7 @@ function toCategoryOptions(rows: FactRows, projects: Awaited<ReturnType<typeof g
 // them in.
 // -------------------------------------------------------------------
 type IssueRows = Awaited<ReturnType<typeof getJiraIssuesRepo>>;
+type ProjectRows = Awaited<ReturnType<typeof getJiraProjectsRepo>>;
 
 // The Jira issue type that sits at job level, above deliverables. Read from
 // the issue rather than guessed: this instance calls level 1 "Project".
@@ -224,33 +237,84 @@ function toPersonOptions(rows: FactRows): PersonOptionDTO[] {
   return [{ value: ALL_CATEGORIES, label: "Everyone", hours: 0, daysWorked: 0 }, ...people];
 }
 
-function toProjectOptions(rows: FactRows, issues: IssueRows): ProjectOptionDTO[] {
+function toProjectOptions(rows: FactRows, issues: IssueRows, projects: ProjectRows): ProjectOptionDTO[] {
   const totals = new Map<string, number>();
   for (const row of rows) {
     if (!row.parentKey) continue;
     totals.set(row.parentKey, (totals.get(row.parentKey) ?? 0) + row.timeSpentSeconds);
   }
 
+  // Jira's project key to the name somebody actually recognises. Never
+  // hardcoded: an installation renames a client and this follows.
+  const clientNames = new Map(projects.map((project) => [project.projectKey, project.name]));
+
   const options: ProjectOptionDTO[] = [
-    { value: ALL_CATEGORIES, label: "All jobs", summary: null, category: null, hours: 0 },
+    {
+      value: ALL_CATEGORIES,
+      label: "All projects",
+      summary: null,
+      category: null,
+      hours: 0,
+      clientKey: null,
+      clientName: null,
+    },
   ];
 
-  // Seeded from the jobs themselves, not from the logged time, so a job with
-  // nothing booked to it is still selectable. That is the whole point of a job
-  // list: you have to be able to look at the job that has not started.
-  const jobs = selectJobIssues(issues).map((issue) => ({
+  // Seeded from the projects themselves, not from the logged time, so a
+  // project with nothing booked to it is still selectable. That is the whole
+  // point of the list: you have to be able to look at the one nobody started.
+  const projectRows = selectJobIssues(issues).map((issue) => ({
     value: issue.issueKey,
     label: issue.issueKey,
     summary: issue.summary,
     category: issue.category,
     hours: toHours(totals.get(issue.issueKey) ?? 0),
+    clientKey: issue.projectKey ?? null,
+    clientName: issue.projectKey ? (clientNames.get(issue.projectKey) ?? issue.projectKey) : null,
   }));
 
-  // Busiest first, then alphabetical, so the empty jobs gather at the bottom
+  // Busiest first, then alphabetical, so the empty ones gather at the bottom
   // in a stable order rather than shuffling between renders.
-  jobs.sort((left, right) => right.hours - left.hours || left.value.localeCompare(right.value));
+  projectRows.sort((left, right) => right.hours - left.hours || left.value.localeCompare(right.value));
 
-  return [...options, ...jobs];
+  return [...options, ...projectRows];
+}
+
+// -------------------------------------------------------------------
+// The clients: who the work is for.
+//
+// Built from the JIRA PROJECT list rather than from the logged time, for the
+// same reason the project list is: a client with nothing booked this period is
+// still a client, and a selector that hides them cannot be used to ask "why is
+// there nothing against them".
+// -------------------------------------------------------------------
+function toClientOptions(rows: FactRows, issues: IssueRows, projects: ProjectRows): ClientOptionDTO[] {
+  const totals = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.projectKey) continue;
+    totals.set(row.projectKey, (totals.get(row.projectKey) ?? 0) + row.timeSpentSeconds);
+  }
+
+  const projectCounts = new Map<string, number>();
+  for (const issue of selectJobIssues(issues)) {
+    if (!issue.projectKey) continue;
+    projectCounts.set(issue.projectKey, (projectCounts.get(issue.projectKey) ?? 0) + 1);
+  }
+
+  const clients = projects.map((project) => ({
+    value: project.projectKey,
+    label: project.name || project.projectKey,
+    category: project.category,
+    hours: toHours(totals.get(project.projectKey) ?? 0),
+    projectCount: projectCounts.get(project.projectKey) ?? 0,
+  }));
+
+  clients.sort((left, right) => right.hours - left.hours || left.label.localeCompare(right.label));
+
+  return [
+    { value: ALL_CATEGORIES, label: "All clients", category: null, hours: 0, projectCount: 0 },
+    ...clients,
+  ];
 }
 
 // -------------------------------------------------------------------
@@ -282,17 +346,28 @@ export async function getAdminTimesheetsService(
     const todayIso = todayInAppZone();
 
     const granularity: Granularity = isGranularity(request.granularity) ? request.granularity : DEFAULT_GRANULARITY;
-    const resolved = resolvePeriod(granularity, request.start ?? todayIso, todayIso);
+    // The floor the whole feature measures against. Falls back to the sync
+    // start date so one setting can drive both; undefined means no floor.
+    const resolved = resolvePeriod(
+      granularity,
+      request.start ?? todayIso,
+      todayIso,
+      envServer.TIMESHEET_HISTORY_START ?? envServer.JIRA_SYNC_START_DATE,
+    );
 
     const period: TimesheetPeriodDTO = {
       granularity,
       start: resolved.start,
       label: resolved.label,
-      from: resolved.start,
+      // resolved.from, NOT resolved.start: this is the clamped range, and it
+      // is what makes capacity stop counting days that predate the records.
+      from: resolved.from,
       to: resolved.end,
       previousStart: resolved.previousStart,
       nextStart: resolved.nextStart,
       hasNext: resolved.hasNext,
+      hasPrevious: resolved.hasPrevious,
+      clipped: resolved.clipped,
       isCurrent: resolved.isCurrent,
     };
 
@@ -309,7 +384,8 @@ export async function getAdminTimesheetsService(
     // would make the selector erase its own options: pick External once and
     // Internal disappears, with no way back.
     const categoryOptions = toCategoryOptions(factRows, projectRows);
-    const projectOptions = toProjectOptions(factRows, issueRows);
+    const clientOptions = toClientOptions(factRows, issueRows, projectRows);
+    const allProjectOptions = toProjectOptions(factRows, issueRows, projectRows);
     const personOptions = toPersonOptions(factRows);
 
     // A filter value that is not in this period's options falls back to "all"
@@ -318,6 +394,20 @@ export async function getAdminTimesheetsService(
     const category = categoryOptions.some((option) => option.value === request.category)
       ? (request.category as string)
       : ALL_CATEGORIES;
+    const client = clientOptions.some((option) => option.value === request.client)
+      ? (request.client as string)
+      : ALL_CATEGORIES;
+
+    // The project list NARROWS to the chosen client, so the dropdown offers
+    // that client's work rather than everybody's. Built after the client is
+    // known, and it is the list the project value is validated against - which
+    // is what makes a project belonging to another client fall back to "all"
+    // instead of silently showing nothing.
+    const projectOptions =
+      client === ALL_CATEGORIES
+        ? allProjectOptions
+        : allProjectOptions.filter((option) => option.value === ALL_CATEGORIES || option.clientKey === client);
+
     const project = projectOptions.some((option) => option.value === request.project)
       ? (request.project as string)
       : ALL_CATEGORIES;
@@ -345,6 +435,8 @@ export async function getAdminTimesheetsService(
     const filteredRows = factRows.filter(
       (row) =>
         (category === ALL_CATEGORIES || row.category === category) &&
+        // The fact still speaks Jira here: its projectKey is the client.
+        (client === ALL_CATEGORIES || row.projectKey === client) &&
         (project === ALL_CATEGORIES || row.parentKey === project) &&
         (people.length === 0 || peopleSet.has(row.personId)) &&
         // 'unset' means the row's billable flag is null - its own state, never
@@ -359,6 +451,7 @@ export async function getAdminTimesheetsService(
     // showing none.
     const filteredIssues = issueRows.filter((issue) => {
       if (category !== ALL_CATEGORIES && issue.category !== category) return false;
+      if (client !== ALL_CATEGORIES && issue.projectKey !== client) return false;
       if (project !== ALL_CATEGORIES && issue.issueKey !== project && issue.parentKey !== project) return false;
       return true;
     });
@@ -383,8 +476,9 @@ export async function getAdminTimesheetsService(
     return {
       period,
       todayIso,
-      filters: { granularity, start: period.start, category, project, people, person, billable },
+      filters: { granularity, start: period.start, category, client, project, people, person, billable },
       categoryOptions,
+      clientOptions,
       projectOptions,
       personOptions,
       report,
@@ -483,7 +577,7 @@ export async function getAdminTimesheetsCsvService(
     // The filename records the filter, so two exports from the same month do
     // not overwrite each other in the downloads folder and nobody invoices
     // from the wrong one.
-    const scope = [filters.category, filters.project, filters.person]
+    const scope = [filters.category, filters.client, filters.project, filters.person]
       .filter((part) => part !== ALL_CATEGORIES)
       // An accountId contains a colon, which is not valid in a filename.
       .map((part) => part.replace(/[^A-Za-z0-9-]+/g, ""))

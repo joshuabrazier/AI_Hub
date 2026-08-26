@@ -17,23 +17,23 @@ function hoursOrDash(value: number | null): string {
   return value === null ? "-" : `${value.toFixed(2)} h`;
 }
 
-export function getJobsColumns(): ColumnDef<BudgetRow>[] {
+export function getProjectsColumns(): ColumnDef<BudgetRow>[] {
   return [
     {
       id: "job",
-      accessorFn: (row) => row.parentSummary ?? row.parentKey,
-      meta: { label: "Job" },
-      header: columnHeader("Job"),
+      accessorFn: (row) => row.projectSummary ?? row.projectKey,
+      meta: { label: "Project" },
+      header: columnHeader("Project"),
       cell: ({ row }) => {
         const untouched = row.original.worklogCount === 0;
 
         return (
           <div className="flex min-w-0 flex-col">
             <span className={cn("truncate", untouched ? "text-muted-foreground" : "font-medium text-foreground")}>
-              {row.original.parentSummary ?? row.original.parentKey}
+              {row.original.projectSummary ?? row.original.projectKey}
             </span>
             <span className="font-mono text-xs text-muted-foreground">
-              {row.original.parentKey}
+              {row.original.projectKey}
               {row.original.billable && ` - ${row.original.billable}`}
             </span>
           </div>

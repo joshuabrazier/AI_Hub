@@ -26,6 +26,25 @@ const dialect = new PostgresDialect({
       // user: envServer.DATABASE_USER,
       // password: envServer.DATABASE_PASSWORD,
       connectionString: envServer.DATABASE_URL,
+
+      // Stated rather than left to node-postgres' default of 10, because the
+      // number matters and a silent default invites nobody to think about it.
+      // A page that fans out into concurrent reads will queue behind this, and
+      // queueing is the correct behaviour - a managed Postgres has its own
+      // connection ceiling, and exceeding it fails the request outright where
+      // waiting merely delays it.
+      max: 10,
+
+      // Do not let a request wait forever for a connection. Without this a
+      // saturated pool looks exactly like a hung page: no error, no log line,
+      // just a spinner. Ten seconds is long enough for a slow query to finish
+      // and short enough that a real problem surfaces as one.
+      connectionTimeoutMillis: 10_000,
+
+      // Hand idle connections back. This database is a managed instance that
+      // can move or restart underneath us, and a long-idle socket is the one
+      // most likely to be dead when it is next picked up.
+      idleTimeoutMillis: 30_000,
     }),
 });
 

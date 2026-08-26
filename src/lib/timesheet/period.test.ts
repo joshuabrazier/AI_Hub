@@ -175,3 +175,92 @@ describe("isCurrent", () => {
     expect(resolvePeriod("year", "2025-08-18", TODAY).isCurrent).toBe(false);
   });
 });
+
+// -------------------------------------------------------------------
+// The history floor.
+//
+// An organisation that started keeping time on a particular day has no
+// records before it. The floor exists so the screens neither offer those
+// months nor measure against capacity for days the records never covered -
+// counting ten contracted days that predate the data reports a shortfall
+// that never happened.
+//
+// `start` must survive untouched throughout: it is the URL, the label and the
+// basis for stepping. Only the RANGE moves.
+// -------------------------------------------------------------------
+describe("history floor", () => {
+  const FLOOR = "2026-08-11";
+
+  it("leaves a period entirely after the floor alone", () => {
+    const period = resolvePeriod("week", "2026-08-17", TODAY, FLOOR);
+
+    expect(period.start).toBe("2026-08-17");
+    expect(period.from).toBe("2026-08-17");
+    expect(period.clipped).toBe(false);
+    expect(period.beforeHistory).toBe(false);
+  });
+
+  it("clips a period that straddles the floor, without moving its start", () => {
+    // August began on the 1st, but the records begin on the 11th. The label
+    // still says August; the figures cover 11-31.
+    const period = resolvePeriod("month", "2026-08-01", TODAY, FLOOR);
+
+    expect(period.start).toBe("2026-08-01");
+    expect(period.label).toBe("August 2026");
+    expect(period.from).toBe(FLOOR);
+    expect(period.clipped).toBe(true);
+  });
+
+  it("still allows stepping back into the period that contains the floor", () => {
+    // The week of 17 Aug steps back to the week of 10 Aug, which holds the
+    // 11th. That week is partly on record, so it is reachable.
+    const period = resolvePeriod("week", "2026-08-17", TODAY, FLOOR);
+
+    expect(period.hasPrevious).toBe(true);
+    expect(period.previousStart).toBe("2026-08-10");
+  });
+
+  it("stops once the previous period is entirely before the floor", () => {
+    // The week of 10 Aug is the earliest with anything in it. Its predecessor
+    // ends on the 9th, which predates every record.
+    const period = resolvePeriod("week", "2026-08-10", TODAY, FLOOR);
+
+    expect(period.hasPrevious).toBe(false);
+  });
+
+  it("marks a period wholly before the floor and never inverts its range", () => {
+    // Only reachable by editing the URL, since hasPrevious blocks the arrow.
+    // `from` must not run past `end` or the query would mean nothing.
+    const period = resolvePeriod("month", "2026-06-01", TODAY, FLOOR);
+
+    expect(period.beforeHistory).toBe(true);
+    expect(period.from <= period.end).toBe(true);
+  });
+
+  it("does nothing at all when no floor is configured", () => {
+    // The base-repo default. A project that has not said when its records
+    // begin must see everything rather than a date this code invented.
+    const period = resolvePeriod("month", "2020-01-01", TODAY);
+
+    expect(period.from).toBe(period.start);
+    expect(period.clipped).toBe(false);
+    expect(period.hasPrevious).toBe(true);
+    expect(period.beforeHistory).toBe(false);
+  });
+
+  it("ignores a malformed floor rather than throwing", () => {
+    const period = resolvePeriod("month", "2026-08-01", TODAY, "not-a-date");
+
+    expect(period.from).toBe("2026-08-01");
+    expect(period.clipped).toBe(false);
+  });
+
+  it("clips a year to the floor, so 2026 is measured from August", () => {
+    const period = resolvePeriod("year", "2026-01-01", TODAY, FLOOR);
+
+    expect(period.start).toBe("2026-01-01");
+    expect(period.from).toBe(FLOOR);
+    expect(period.clipped).toBe(true);
+    expect(period.hasPrevious).toBe(false);
+  });
+});

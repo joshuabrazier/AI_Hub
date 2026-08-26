@@ -121,13 +121,13 @@ export function TopJobsCard({ jobs, index }: { jobs: JobSlice[]; index: number }
           <div className="flex items-start justify-between gap-3">
             <div>
               <CardTitle className="text-base">Where the time went</CardTitle>
-              <CardDescription>Jobs consuming the most hours this period.</CardDescription>
+              <CardDescription>Projects consuming the most hours this period.</CardDescription>
             </div>
             <Link
-              href={ROUTES.ADMIN_TIMESHEETS_JOBS}
+              href={ROUTES.ADMIN_TIMESHEETS_CLIENTS}
               className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             >
-              All jobs
+              All clients
               <ArrowRight className="size-3.5" aria-hidden />
             </Link>
           </div>

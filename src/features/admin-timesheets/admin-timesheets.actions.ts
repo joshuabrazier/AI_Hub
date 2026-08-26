@@ -60,7 +60,7 @@ export async function syncTimesheetsNowAction(): Promise<ServerApiResponse<SyncN
     // once this returns. Revalidating the layout segment covers them in one
     // call rather than four that could drift apart.
     revalidatePath(ROUTES.ADMIN_TIMESHEETS);
-    revalidatePath(ROUTES.ADMIN_TIMESHEETS_JOBS);
+    revalidatePath(ROUTES.ADMIN_TIMESHEETS_CLIENTS);
     revalidatePath(ROUTES.ADMIN_TIMESHEETS_STAFF);
     revalidatePath(ROUTES.ADMIN_TIMESHEETS_REVIEW);
 

@@ -286,12 +286,12 @@ export function ProjectsCard({
         </TableHeader>
         <TableBody>
           {projects.map((project) => (
-            <TableRow key={project.parentKey ?? "no-parent"} className="transition-colors hover:bg-muted/50">
+            <TableRow key={project.projectKey ?? "no-parent"} className="transition-colors hover:bg-muted/50">
               <TableCell>
-                {project.parentKey ? (
+                {project.projectKey ? (
                   <div className="flex min-w-0 flex-col">
-                    <span className="font-medium">{project.parentSummary ?? project.parentKey}</span>
-                    <span className="font-mono text-xs text-muted-foreground">{project.parentKey}</span>
+                    <span className="font-medium">{project.projectSummary ?? project.projectKey}</span>
+                    <span className="font-mono text-xs text-muted-foreground">{project.projectKey}</span>
                   </div>
                 ) : (
                   <span className="italic text-muted-foreground">No parent item</span>

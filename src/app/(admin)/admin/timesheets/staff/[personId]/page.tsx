@@ -1,3 +1,4 @@
+import type { TimesheetSearchParams } from "@/features/admin-timesheets/admin-timesheets.service";
 import PersonView from "@/features/admin-timesheets/views/person.view";
 
 export default async function AdminTimesheetPerson({
@@ -5,7 +6,7 @@ export default async function AdminTimesheetPerson({
   searchParams,
 }: {
   params: Promise<{ personId: string }>;
-  searchParams: Promise<{ granularity?: string; start?: string; category?: string; project?: string }>;
+  searchParams: Promise<TimesheetSearchParams>;
 }) {
   const { personId } = await params;
   const query = await searchParams;

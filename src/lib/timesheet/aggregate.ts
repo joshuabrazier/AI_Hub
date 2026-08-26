@@ -220,7 +220,7 @@ export function rollUpByPerson(facts: WorklogFactRow[]): PersonTotal[] {
 // a 0% utilisation bar under everyone's name every Sunday.
 // -------------------------------------------------------------------
 export function rollUpByPersonDay(facts: WorklogFactRow[], workingHoursPerDay: number): PersonDayTotal[] {
-  const groups = groupBy(facts, (fact) => `${fact.personId} ${fact.workDate}`);
+  const groups = groupBy(facts, (fact) => `${fact.personId}\0${fact.workDate}`);
 
   const totals = [...groups.values()].map((dayFacts) => {
     const seconds = sumSeconds(dayFacts);
@@ -247,19 +247,24 @@ export function rollUpByPersonDay(facts: WorklogFactRow[], workingHoursPerDay: n
 }
 
 // -------------------------------------------------------------------
-// Hours to project, rolled up to the Project item above the deliverable -
-// that being the level an invoice is written at. Work with no parent groups
-// under a null key rather than being dropped.
+// Hours rolled up to the PROJECT above the deliverable - that being the level
+// an invoice is written at. Work with nothing above it groups under a null key
+// rather than being dropped.
+//
+// THIS IS THE TRANSLATION POINT between the two vocabularies. A fact speaks
+// Jira: `parentKey` is the issue above it, `projectKey` is the space it lives
+// in. The output speaks the business: `projectKey` is what an invoice is
+// written against, and `clientKey` is who it goes to.
 // -------------------------------------------------------------------
 export function rollUpByProject(facts: WorklogFactRow[]): ProjectTotal[] {
-  const groups = groupBy(facts, (fact) => fact.parentKey ?? " none");
+  const groups = groupBy(facts, (fact) => fact.parentKey ?? "\0none");
 
   const totals = [...groups.values()].map((projectFacts) => {
     const first = projectFacts[0];
     return {
-      parentKey: first.parentKey,
-      parentSummary: projectFacts.reduce<string | null>((summary, fact) => fact.parentSummary ?? summary, null),
-      projectKey: first.projectKey,
+      projectKey: first.parentKey,
+      projectSummary: projectFacts.reduce<string | null>((summary, fact) => fact.parentSummary ?? summary, null),
+      clientKey: first.projectKey,
       category: projectFacts.reduce<string | null>((category, fact) => fact.category ?? category, null),
       ...toDurationTotals(sumSeconds(projectFacts)),
       worklogCount: projectFacts.length,
@@ -268,7 +273,7 @@ export function rollUpByProject(facts: WorklogFactRow[]): ProjectTotal[] {
   });
 
   return totals.sort(
-    (left, right) => right.seconds - left.seconds || (left.parentKey ?? "").localeCompare(right.parentKey ?? ""),
+    (left, right) => right.seconds - left.seconds || (left.projectKey ?? "").localeCompare(right.projectKey ?? ""),
   );
 }
 
@@ -322,11 +327,13 @@ export function rollUpBudget(facts: WorklogFactRow[], issues: SnapshotIssue[]): 
     const varianceSeconds = currentSeconds !== null ? actualSeconds - currentSeconds : null;
 
     return {
-      parentKey,
-      parentSummary: cleanText(issue?.summary),
-      projectKey: cleanText(issue?.projectKey),
-      // A job with no time booked still has a category, because the category
-      // belongs to the Jira project rather than to any worklog.
+      // The same translation as rollUpByProject: Jira's parent issue is our
+      // project, and Jira's project is our client.
+      projectKey: parentKey,
+      projectSummary: cleanText(issue?.summary),
+      clientKey: cleanText(issue?.projectKey),
+      // A project with no time booked still has a category, because the
+      // category belongs to the client rather than to any worklog.
       category: cleanText(issue?.category),
       billable: cleanText(issue?.billable),
       split: summariseSplit(parentFacts),
@@ -346,7 +353,9 @@ export function rollUpBudget(facts: WorklogFactRow[], issues: SnapshotIssue[]): 
     };
   });
 
-  return rows.sort((left, right) => right.actualSeconds - left.actualSeconds || left.parentKey.localeCompare(right.parentKey));
+  return rows.sort(
+    (left, right) => right.actualSeconds - left.actualSeconds || left.projectKey.localeCompare(right.projectKey),
+  );
 }
 
 // -------------------------------------------------------------------

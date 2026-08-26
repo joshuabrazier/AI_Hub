@@ -20,12 +20,19 @@ export interface TimesheetPeriodDTO {
   start: string;
   // "17-23 Aug 2026", "August 2026", "2026"
   label: string;
-  // Inclusive bounds, 'YYYY-MM-DD'.
+  // Inclusive bounds, 'YYYY-MM-DD'. `from` is the period's start OR the
+  // history floor when that is later - see resolvePeriod. Query and measure
+  // against these, never against `start`.
   from: string;
   to: string;
   previousStart: string;
   nextStart: string;
   hasNext: boolean;
+  // False once stepping back would leave the recorded history entirely.
+  hasPrevious: boolean;
+  // True when `from` moved off `start`, so the label names a longer period
+  // than the figures cover and the screen should say so.
+  clipped: boolean;
   // True when this IS the period containing today, so a "this week" control can
   // disable itself rather than looking like a button that does nothing.
   isCurrent: boolean;
@@ -49,13 +56,36 @@ export interface CategoryOptionDTO {
   worklogCount: number;
 }
 
+// -------------------------------------------------------------------
+// A CLIENT: who the work is for. Jira calls this a project and keys it
+// "TSSS"; the business calls it Trainer Suzie Swim School. The name comes
+// from Jira, so it is whatever the Jira admin typed - never hardcoded here.
+// -------------------------------------------------------------------
+export interface ClientOptionDTO {
+  // 'all', or the Jira project key.
+  value: string;
+  // The client's name, falling back to the key when Jira has no name for it.
+  label: string;
+  category: string | null;
+  hours: number;
+  projectCount: number;
+}
+
+// -------------------------------------------------------------------
+// A PROJECT: the item an invoice is written against. Jira calls this the
+// parent issue and keys it "TSSS-59".
+// -------------------------------------------------------------------
 export interface ProjectOptionDTO {
-  // 'all', or the parent issue key.
+  // 'all', or the project key.
   value: string;
   label: string;
   summary: string | null;
   category: string | null;
   hours: number;
+  // Which client this belongs to, so choosing a client can narrow the list
+  // rather than leaving every project of every client in one long dropdown.
+  clientKey: string | null;
+  clientName: string | null;
 }
 
 // -------------------------------------------------------------------
@@ -84,6 +114,10 @@ export interface TimesheetFiltersDTO {
   // The period's start, carried in the URL.
   start: string;
   category: string;
+  // Who the work is for. 'all', or a Jira project key.
+  client: string;
+  // What it is booked against. 'all', or a project key. Narrowed by client
+  // when one is chosen, and reset to 'all' if it does not belong to them.
   project: string;
   // THE AUTHORITATIVE person filter, and an array because "Louis and Josh"
   // is a normal thing to ask for. Empty means everyone.
@@ -114,6 +148,7 @@ export interface AdminTimesheetsDTO {
   period: TimesheetPeriodDTO;
   filters: TimesheetFiltersDTO;
   categoryOptions: CategoryOptionDTO[];
+  clientOptions: ClientOptionDTO[];
   projectOptions: ProjectOptionDTO[];
   personOptions: PersonOptionDTO[];
   // The report for the CURRENT filter selection.

@@ -1,9 +1,10 @@
+import type { TimesheetSearchParams } from "@/features/admin-timesheets/admin-timesheets.service";
 import ReviewView from "@/features/admin-timesheets/views/review.view";
 
 export default async function AdminTimesheetReview({
   searchParams,
 }: {
-  searchParams: Promise<{ granularity?: string; start?: string; category?: string; project?: string; person?: string }>;
+  searchParams: Promise<TimesheetSearchParams>;
 }) {
   const params = await searchParams;
   return <ReviewView {...params} />;

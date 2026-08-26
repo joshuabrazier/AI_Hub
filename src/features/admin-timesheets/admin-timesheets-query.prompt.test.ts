@@ -21,7 +21,15 @@ const categories: CategoryOptionDTO[] = [
 ];
 
 const projects: ProjectOptionDTO[] = [
-  { value: "TSSS-2", label: "TSSS-2", summary: "Internal timesheet and billing application", category: "Internal", hours: 5 },
+  {
+    value: "TSSS-2",
+    label: "TSSS-2",
+    summary: "Internal timesheet and billing application",
+    category: "Internal",
+    hours: 5,
+    clientKey: "TSSS",
+    clientName: "Trainer Suzie Swim School",
+  },
 ];
 
 const people: PersonOptionDTO[] = [

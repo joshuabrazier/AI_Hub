@@ -1,10 +1,11 @@
-import JobsView from "@/features/admin-timesheets/views/jobs.view";
+import type { TimesheetSearchParams } from "@/features/admin-timesheets/admin-timesheets.service";
+import ClientsView from "@/features/admin-timesheets/views/clients.view";
 
-export default async function AdminTimesheetJobs({
+export default async function AdminTimesheetsClients({
   searchParams,
 }: {
-  searchParams: Promise<{ granularity?: string; start?: string; category?: string; project?: string; person?: string }>;
+  searchParams: Promise<TimesheetSearchParams>;
 }) {
   const params = await searchParams;
-  return <JobsView {...params} />;
+  return <ClientsView {...params} />;
 }

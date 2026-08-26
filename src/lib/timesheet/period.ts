@@ -35,6 +35,20 @@ export interface ResolvedPeriod {
   // Inclusive bounds, 'YYYY-MM-DD'.
   start: string;
   end: string;
+  // The first date actually covered: `start`, or the history floor when that
+  // falls later. `start` stays the calendar truth because it is what the URL
+  // carries, what the label is built from and what stepping works on - only
+  // the RANGE moves. Everything that queries or measures capacity uses this.
+  from: string;
+  // True when `from` had to move, so a screen can say "August 2026" and still
+  // admit it is only showing part of it.
+  clipped: boolean;
+  // False when the previous period lies entirely before the history floor, so
+  // the back arrow can stop rather than walking into empty months forever.
+  hasPrevious: boolean;
+  // True when the whole period predates the records. Only reachable by editing
+  // the URL, since hasPrevious blocks navigating there.
+  beforeHistory: boolean;
   // "17-23 Aug 2026", "August 2026", "2026"
   label: string;
   // Anchors for the previous and next period of the same granularity.
@@ -201,7 +215,15 @@ function step(granularity: Granularity, start: string, direction: 1 | -1): strin
 // `today` decides only whether the next period is offered, and is passed in
 // rather than read from the clock.
 // -------------------------------------------------------------------
-export function resolvePeriod(granularity: Granularity, anchor: string, today: string): ResolvedPeriod {
+export function resolvePeriod(
+  granularity: Granularity,
+  anchor: string,
+  today: string,
+  // The first day with records, 'YYYY-MM-DD'. Optional, and undefined means no
+  // floor at all - a project with no such date shows everything, which is the
+  // only honest default when nobody has said when the records begin.
+  historyStart?: string,
+): ResolvedPeriod {
   // An unusable anchor falls back to today rather than throwing: a stale or
   // hand-edited link should show the current period, not an error page.
   const safeAnchor = isValidDate(anchor) ? anchor : today;
@@ -209,16 +231,34 @@ export function resolvePeriod(granularity: Granularity, anchor: string, today: s
   const start = startOfPeriod(granularity, safeAnchor, today);
   const end = endOfPeriod(granularity, start);
   const nextStart = step(granularity, start, 1);
+  const previousStart = step(granularity, start, -1);
+
+  // A malformed floor is ignored rather than throwing. Dates are compared
+  // lexicographically throughout - see the note in kysely-database-client.ts
+  // about why these stay strings.
+  const floor = historyStart && isValidDate(historyStart) ? historyStart : undefined;
+
+  const beforeHistory = floor !== undefined && end < floor;
+
+  // Never past `end`, or a period entirely before the floor would produce an
+  // inverted range and a query that means nothing.
+  const from = floor !== undefined && floor > start ? (floor > end ? end : floor) : start;
 
   return {
     granularity,
     start,
     end,
+    from,
+    clipped: from !== start,
+    beforeHistory,
     label: labelFor(granularity, start, end),
-    previousStart: step(granularity, start, -1),
+    previousStart,
     nextStart,
     // Only offer the next period once it has actually begun.
     hasNext: nextStart <= today,
+    // Symmetrical: only offer the previous one if any of it is on record. The
+    // period containing the floor is the last one you can step back to.
+    hasPrevious: floor === undefined || endOfPeriod(granularity, previousStart) >= floor,
     isCurrent: start === startOfPeriod(granularity, today, today),
   };
 }

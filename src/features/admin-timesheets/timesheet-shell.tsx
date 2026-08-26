@@ -9,7 +9,7 @@ import { ROUTES } from "@/lib/routes";
 import { AdminTimesheetsDTO } from "./admin-timesheets.types";
 import { RefreshButton } from "./refresh-button";
 import { PeriodControl } from "./period-control";
-import { CategorySegmentedControl, ProjectSelect } from "./timesheet-filters";
+import { CategorySegmentedControl, ClientSelect, ProjectSelect } from "./timesheet-filters";
 import { appendFilterParams } from "./timesheet-url";
 
 // -------------------------------------------------------------------
@@ -50,6 +50,17 @@ export function periodHref(pathname: string, filters: AdminTimesheetsDTO["filter
   return `${pathname}?${filterQuery(filters, start)}`;
 }
 
+// "2026-08-11" -> "11 Aug 2026". Built from the string's own parts rather
+// than through a Date: these are calendar dates, and parsing one into a Date
+// to format it is exactly how a day-shift gets in. See the type parser note in
+// kysely-database-client.ts.
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function formatPeriodDate(iso: string): string {
+  const month = SHORT_MONTHS[Number(iso.slice(5, 7)) - 1];
+  return month ? `${Number(iso.slice(8, 10))} ${month} ${iso.slice(0, 4)}` : iso;
+}
+
 export default function TimesheetShell({
   data,
   title,
@@ -59,6 +70,7 @@ export default function TimesheetShell({
   backLink,
   showProjectFilter = true,
   showCategoryFilter = true,
+  showClientFilter = true,
   children,
 }: {
   data: AdminTimesheetsDTO;
@@ -70,15 +82,28 @@ export default function TimesheetShell({
   backLink?: { href: string; label: string };
   showProjectFilter?: boolean;
   showCategoryFilter?: boolean;
+  // The Clients screen turns this off: that view IS the client list, so
+  // filtering it to one would leave a single row and no way back.
+  showClientFilter?: boolean;
   children: React.ReactNode;
 }) {
-  const { filters, period, todayIso, categoryOptions, projectOptions, report } = data;
+  const { filters, period, todayIso, categoryOptions, clientOptions, projectOptions, report } = data;
+
+  // A clipped period's LABEL names more time than its figures cover - "August
+  // 2026" when the records only begin on the 11th. Saying so once here, rather
+  // than in each view, means no screen can quietly present a partial month as
+  // a whole one. It is the same honesty an unfinished period needs: the
+  // shortfall against a full month is an artefact of when we started, not
+  // something anybody failed to do.
+  const pageDescription = period.clipped
+    ? `${description} Records start ${formatPeriodDate(period.from)}, so earlier days are not counted.`
+    : description;
 
   return (
     <PortalPage
       eyebrow={USER_ROLE_LABELS[USER_ROLES.ADMIN]}
       title={title}
-      description={description}
+      description={pageDescription}
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <RefreshButton />
@@ -110,11 +135,14 @@ export default function TimesheetShell({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-muted/20 p-2">
           <PeriodControl filters={filters} period={period} todayIso={todayIso} pathname={pathname} />
 
-          {(showProjectFilter || showCategoryFilter) && (
+          {(showProjectFilter || showCategoryFilter || showClientFilter) && (
             <span className="hidden h-6 w-px bg-border sm:block" aria-hidden />
           )}
 
           {showCategoryFilter && <CategorySegmentedControl filters={filters} options={categoryOptions} />}
+          {/* Client before project, because choosing the first narrows the
+              second. Reading order matches the narrowing order. */}
+          {showClientFilter && <ClientSelect filters={filters} options={clientOptions} />}
           {showProjectFilter && <ProjectSelect filters={filters} options={projectOptions} />}
         </div>
 

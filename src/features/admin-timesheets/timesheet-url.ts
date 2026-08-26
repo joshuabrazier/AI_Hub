@@ -35,6 +35,7 @@ import { ALL_CATEGORIES, type TimesheetFiltersDTO } from "./admin-timesheets.typ
 // deploy. Falling back costs nothing and keeps navigation working.
 export function appendFilterParams(params: URLSearchParams, filters: TimesheetFiltersDTO): void {
   if (filters.category && filters.category !== ALL_CATEGORIES) params.set("category", filters.category);
+  if (filters.client && filters.client !== ALL_CATEGORIES) params.set("client", filters.client);
   if (filters.project && filters.project !== ALL_CATEGORIES) params.set("project", filters.project);
 
   // `person` is the single-value field every older link used, so it is the

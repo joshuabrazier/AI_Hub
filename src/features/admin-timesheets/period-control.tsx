@@ -114,15 +114,32 @@ export function PeriodControl({
           than a separate button beside it - one fewer control, and the thing
           you click is the thing you want to change. */}
       <div className="inline-flex items-center rounded-lg border border-border">
-        <Button asChild variant="ghost" size="icon" className="size-8 rounded-r-none">
-          <Link
-            href={`${pathname}?${filterQuery(filters, period.previousStart)}`}
+        {/* Stops at the first period on record, the same way the forward
+            arrow stops at the current one. Walking back into months that
+            predate the records showed empty screens that looked like lost
+            data rather than like history that never existed. */}
+        {period.hasPrevious ? (
+          <Button asChild variant="ghost" size="icon" className="size-8 rounded-r-none">
+            <Link
+              href={`${pathname}?${filterQuery(filters, period.previousStart)}`}
+              aria-label={`Previous ${GRANULARITY_LABELS[period.granularity].toLowerCase()}`}
+              scroll={false}
+            >
+              <ChevronLeft aria-hidden />
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 rounded-r-none"
+            disabled
             aria-label={`Previous ${GRANULARITY_LABELS[period.granularity].toLowerCase()}`}
-            scroll={false}
+            title="Nothing recorded before this"
           >
             <ChevronLeft aria-hidden />
-          </Link>
-        </Button>
+          </Button>
+        )}
 
         {period.isCurrent ? (
           <span className="min-w-[142px] px-1 text-center text-sm font-medium tabular-nums text-foreground">

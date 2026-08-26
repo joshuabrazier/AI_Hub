@@ -63,8 +63,8 @@ export function getEntriesColumns(): ColumnDef<WorklogFactRow>[] {
     {
       id: "job",
       accessorFn: (row) => row.parentSummary ?? row.parentKey ?? "No job",
-      meta: { label: "Job" },
-      header: columnHeader("Job"),
+      meta: { label: "Project" },
+      header: columnHeader("Project"),
       cell: ({ row }) => (
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-foreground">
