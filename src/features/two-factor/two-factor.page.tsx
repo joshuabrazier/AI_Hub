@@ -31,7 +31,7 @@ export default async function TwoFactorPage() {
       </div>
 
       {screen.mode === "enrol" ? (
-        <TwoFactorEnrol email={screen.email} />
+        <TwoFactorEnrol email={screen.email} requiresPassword={screen.requiresPassword} />
       ) : (
         <TwoFactorVerifyForm />
       )}

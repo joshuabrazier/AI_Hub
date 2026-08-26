@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BeginTwoFactorEnrolmentSchema,
   TWO_FACTOR_LOCK_MINUTES,
   TWO_FACTOR_MAX_ATTEMPTS,
   VerifyTwoFactorSchema,
@@ -80,5 +81,51 @@ describe("two-factor lockout policy", () => {
 
   it("locks for long enough that retrying is not free", () => {
     expect(TWO_FACTOR_LOCK_MINUTES).toBeGreaterThanOrEqual(5);
+  });
+});
+
+// -------------------------------------------------------------------
+// Starting enrolment.
+//
+// The password is optional because in a real environment there is none to
+// send: sign-in is Microsoft, an Entra account has no credential row, and
+// Better Auth skips the password check for accounts that have none. It is
+// present only for the local development account, which does have one - and
+// without it that account could reach the enrolment screen and never get past
+// it, which is what made the feature untestable on a developer machine.
+// -------------------------------------------------------------------
+describe("BeginTwoFactorEnrolmentSchema", () => {
+  it("accepts no password at all, which is the production case", () => {
+    const result = BeginTwoFactorEnrolmentSchema.safeParse({});
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.password).toBeUndefined();
+  });
+
+  it("accepts a password when one is supplied", () => {
+    const result = BeginTwoFactorEnrolmentSchema.safeParse({ password: "Temp123!" });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.password).toBe("Temp123!");
+  });
+
+  it("rejects an empty string rather than forwarding it as a password", () => {
+    // An empty field must not reach the plugin looking like an attempt: the
+    // service branches on the field being truthy to decide whether this is a
+    // "no password supplied" or a "wrong password" failure, and an empty
+    // string would send it down the wrong branch and show the wrong message.
+    expect(BeginTwoFactorEnrolmentSchema.safeParse({ password: "" }).success).toBe(false);
+  });
+
+  it("bounds the length, so an oversized field cannot be forwarded", () => {
+    expect(BeginTwoFactorEnrolmentSchema.safeParse({ password: "x".repeat(257) }).success).toBe(false);
+    expect(BeginTwoFactorEnrolmentSchema.safeParse({ password: "x".repeat(256) }).success).toBe(true);
+  });
+
+  it("does not impose a minimum length beyond non-empty", () => {
+    // This is an EXISTING password being re-entered, not one being chosen.
+    // A minimum here would reject a valid short password and teach nothing;
+    // the only authority on whether it is right is the auth layer.
+    expect(BeginTwoFactorEnrolmentSchema.safeParse({ password: "a" }).success).toBe(true);
   });
 });

@@ -13,6 +13,7 @@ import {
   markSessionTwoFactorVerifiedRepo,
   recordSessionTwoFactorFailureRepo,
 } from "@/lib/data/repositories/session-two-factor.repository";
+import { hasCredentialAccountRepo } from "@/lib/data/repositories/accounts.repository";
 import { updateUserByIdRepo } from "@/lib/data/repositories/users.repository";
 import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
@@ -20,6 +21,7 @@ import { handleError } from "@/lib/handle-errors";
 import {
   TWO_FACTOR_LOCK_MINUTES,
   TWO_FACTOR_MAX_ATTEMPTS,
+  type BeginTwoFactorEnrolmentRequestDTO,
   type TwoFactorEnrolmentDTO,
   type TwoFactorScreenDTO,
   type VerifyTwoFactorRequestDTO,
@@ -69,6 +71,10 @@ export async function getTwoFactorScreenService(): Promise<TwoFactorScreenDTO> {
     return {
       mode: state.verified ? "verify" : "enrol",
       email: user.email,
+      // Asked of the database rather than inferred from a flag: the question
+      // is whether THIS account has a password, and only an account that has
+      // one is ever asked for it.
+      requiresPassword: await hasCredentialAccountRepo(user.id),
     };
   } catch (error) {
     throw handleError("getTwoFactorScreenService", error);
@@ -88,13 +94,27 @@ export async function getTwoFactorScreenService(): Promise<TwoFactorScreenDTO> {
 // stolen session cookie could silently replace the victim's secret with
 // their own and walk straight through the gate.
 //
-// No password is passed. `allowPasswordless` in auth.ts makes the plugin
-// skip the password check for accounts that have none, which is every real
-// Entra account here; a local dev account WITH a password would still be
-// asked for it and this call would fail - which is correct, and only ever
-// happens on a developer machine.
+// THE PASSWORD, and why it is optional rather than absent.
+//
+// `allowPasswordless` in auth.ts makes the plugin skip the password check for
+// accounts that have NONE, which is every real Entra account here. An account
+// that HAS one is still asked - and that is the local development account,
+// which made this call fail with INVALID_PASSWORD and dead-end on a screen
+// offering a Microsoft sign-in that is not configured locally. The feature
+// could be switched on and then never satisfied by anybody.
+//
+// So a password is accepted and forwarded when the account has one. That is
+// re-authentication before changing a security setting, which is what the
+// plugin wants it for, and it is the same thing the Microsoft-issued session
+// stands in for on the Entra path.
+//
+// PRODUCTION IS UNCHANGED, and not because a flag says so: a real account has
+// no credential row, requiresPassword is false, the field is never shown, and
+// the body sent is the empty one it has always been.
 // -------------------------------------------------------------------
-export async function beginTwoFactorEnrolmentService(): Promise<TwoFactorEnrolmentDTO> {
+export async function beginTwoFactorEnrolmentService(
+  requestDTO: BeginTwoFactorEnrolmentRequestDTO = {},
+): Promise<TwoFactorEnrolmentDTO> {
   try {
     const { user } = await requireSessionUserForTwoFactor();
 
@@ -110,7 +130,9 @@ export async function beginTwoFactorEnrolmentService(): Promise<TwoFactorEnrolme
 
     try {
       result = await auth.api.enableTwoFactor({
-        body: {},
+        // Omitted entirely when there is none rather than sent as undefined:
+        // the plugin branches on the field being present.
+        body: requestDTO.password ? { password: requestDTO.password } : {},
         headers: await headers(),
       });
     } catch (error) {
@@ -118,14 +140,16 @@ export async function beginTwoFactorEnrolmentService(): Promise<TwoFactorEnrolme
       // it surface as "we could not start two-factor setup".
       //
       // allowPasswordless only skips the password check for accounts that
-      // have NONE. A local development account made by
-      // scripts/create-dev-user.mjs has a `credential` row, so the plugin
-      // asks for a password, none is passed, and it answers
-      // INVALID_PASSWORD. Nothing is broken - it is simply the one account
-      // type this cannot enrol, and it only exists on a developer machine.
+      // have NONE. An account with a `credential` row is asked for its
+      // password, so this arrives either because none was supplied or because
+      // the one supplied was wrong. Those are different mistakes and get
+      // different sentences: somebody who just typed a password needs to know
+      // it was rejected, not to be told to go and use Microsoft instead.
       if ((error as { body?: { code?: string } }).body?.code === "INVALID_PASSWORD") {
         throw new DisplayErrorMessage(
-          "This account signs in with a password, and two-factor setup is only available for accounts that sign in with Microsoft. Sign in with Microsoft and try again.",
+          requestDTO.password
+            ? "That password was not right."
+            : "This account needs its password to set up two-factor authentication.",
         );
       }
 

@@ -9,7 +9,9 @@ import {
   verifyTwoFactorService,
 } from "./two-factor.service";
 import {
+  BeginTwoFactorEnrolmentSchema,
   VerifyTwoFactorSchema,
+  type BeginTwoFactorEnrolmentRequestDTO,
   type TwoFactorEnrolmentDTO,
   type VerifyTwoFactorRequestDTO,
 } from "./two-factor.types";
@@ -26,15 +28,22 @@ import {
 // Start enrolment and return the QR code, the typed key and the backup
 // codes. Called from the enrol screen on mount.
 //
-// It takes no input at all, which is what keeps it safe to trigger: there
-// is nothing in a request that could aim it at another account, and it
-// refuses outright once the account is already verified.
+// The ONLY input is a password, and it can only ever re-authenticate the
+// caller's own account: the acting person comes from the session inside the
+// service, so there is nothing in a request that could aim this at somebody
+// else. It refuses outright once the account is already verified.
+//
+// In a real environment the field is never sent, because a Microsoft account
+// has no password to send. See the service.
 // -------------------------------------------------------------------
-export async function beginTwoFactorEnrolmentAction(): Promise<
-  ServerApiResponse<TwoFactorEnrolmentDTO>
-> {
+export async function beginTwoFactorEnrolmentAction(
+  requestDTO: BeginTwoFactorEnrolmentRequestDTO = {},
+): Promise<ServerApiResponse<TwoFactorEnrolmentDTO>> {
   try {
-    const enrolment = await beginTwoFactorEnrolmentService();
+    const validatedRequest = await validateRequest(BeginTwoFactorEnrolmentSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const enrolment = await beginTwoFactorEnrolmentService(validatedRequest.data);
 
     return { success: true, data: enrolment } satisfies ServerApiResponse<TwoFactorEnrolmentDTO>;
   } catch (error) {
