@@ -1,6 +1,7 @@
 import "server-only";
 
 import { handleError } from "../handle-errors";
+import { fakeSharepointBaseUrl } from "./dev-fake";
 import {
   GraphContractError,
   parseDeltaPage,
@@ -38,6 +39,22 @@ import {
 // -------------------------------------------------------------------
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
+
+// -------------------------------------------------------------------
+// Where requests actually go.
+//
+// A FUNCTION rather than the constant, because local development can point
+// the crawl at a fake server it is running itself - see dev-fake.ts for the
+// two conditions that allows, both of which must hold, neither of which can
+// hold on a deployed environment.
+//
+// Resolved per call rather than once at module load, so nothing is baked in
+// at import time and the production answer is the one you get unless
+// somebody has deliberately opened the local door.
+// -------------------------------------------------------------------
+function graphBaseUrl(): string {
+  return fakeSharepointBaseUrl() ?? GRAPH_BASE_URL;
+}
 
 // -------------------------------------------------------------------
 // The scopes a crawl needs, and why each one.
@@ -327,8 +344,8 @@ export async function fetchSite(
     .join("/");
 
   const url = encodedPath
-    ? `${GRAPH_BASE_URL}/sites/${host}:/${encodedPath}`
-    : `${GRAPH_BASE_URL}/sites/${host}`;
+    ? `${graphBaseUrl()}/sites/${host}:/${encodedPath}`
+    : `${graphBaseUrl()}/sites/${host}`;
 
   const payload = await graphRequest(url, accessToken, options);
 
@@ -351,7 +368,7 @@ export async function fetchDrivesForSite(
   accessToken: string,
   options: { fetchImpl?: typeof fetch } = {},
 ): Promise<ParsedDrive[]> {
-  const url = `${GRAPH_BASE_URL}/sites/${encodeURIComponent(siteId)}/drives`;
+  const url = `${graphBaseUrl()}/sites/${encodeURIComponent(siteId)}/drives`;
 
   const payload = await graphRequest(url, accessToken, options);
 
@@ -367,7 +384,7 @@ export async function fetchDrivesForSite(
 // -------------------------------------------------------------------
 export function deltaStartUrl(driveId: string): string {
   const select = DELTA_SELECT_FIELDS.join(",");
-  return `${GRAPH_BASE_URL}/drives/${encodeURIComponent(driveId)}/root/delta?$select=${select}`;
+  return `${graphBaseUrl()}/drives/${encodeURIComponent(driveId)}/root/delta?$select=${select}`;
 }
 
 // -------------------------------------------------------------------

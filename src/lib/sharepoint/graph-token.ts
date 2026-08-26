@@ -1,6 +1,7 @@
 import "server-only";
 
 import { auth } from "../auth/auth";
+import { FAKE_GRAPH_TOKEN, isFakeSharepointEnabled } from "./dev-fake";
 import { GRAPH_OUTCOMES, GraphRequestError } from "./graph-client";
 
 // -------------------------------------------------------------------
@@ -81,6 +82,12 @@ const MICROSOFT_PROVIDER_ID = "microsoft";
 // there is no expiry arithmetic here to get wrong.
 // -------------------------------------------------------------------
 export async function getDelegatedGraphToken(userId: string): Promise<string> {
+  // Local development against a fake SharePoint. There is no Microsoft
+  // account to mint a token from and nothing real on the other end to
+  // protect - see dev-fake.ts for the two conditions, both of which must
+  // hold and neither of which can hold on a deployed environment.
+  if (isFakeSharepointEnabled()) return FAKE_GRAPH_TOKEN;
+
   let result;
 
   try {

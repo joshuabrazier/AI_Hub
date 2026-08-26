@@ -260,6 +260,21 @@ const serverEnvSchema = z.object({
   SHAREPOINT_INVENTORY_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(180),
 
   // -------------------------------------------------------------------
+  // LOCAL DEVELOPMENT ONLY. Point the crawl at a fake SharePoint you are
+  // running yourself, instead of graph.microsoft.com.
+  //
+  // Same shape and same argument as DEV_PASSWORD_SIGN_IN: it is honoured
+  // only when this is set AND MODE is not production, two conditions
+  // because an .env gets copied. It exists because with no MICROSOFT_*
+  // variables there is no delegated token and the crawl cannot be run at
+  // all, which makes the feature undevelopable without an Entra tenant.
+  //
+  // It grants access to nothing. There is no real SharePoint behind it, so
+  // every figure it produces is fake. See src/lib/sharepoint/dev-fake.ts.
+  // -------------------------------------------------------------------
+  DEV_FAKE_SHAREPOINT_URL: z.string().url().optional(),
+
+  // -------------------------------------------------------------------
   // Microsoft sign-in (Entra ID)
   //
   // Optional to the schema, but in a real deployment it is the ONLY way in:
@@ -392,6 +407,7 @@ export const envServer = serverEnvSchema.parse({
   TRANSCRIPTION_RETENTION_DAYS: process.env.TRANSCRIPTION_RETENTION_DAYS,
   SHAREPOINT_SWEEP_SECRET: process.env.SHAREPOINT_SWEEP_SECRET,
   SHAREPOINT_INVENTORY_RETENTION_DAYS: process.env.SHAREPOINT_INVENTORY_RETENTION_DAYS,
+  DEV_FAKE_SHAREPOINT_URL: process.env.DEV_FAKE_SHAREPOINT_URL,
 
   MICROSOFT_CLIENT_ID: process.env.MICROSOFT_CLIENT_ID,
   MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,
