@@ -23,6 +23,7 @@ import {
   isGuaranteedFormat,
   mediaTypeForFileName,
 } from "../transcription.types";
+import { convertForTranscription, needsConversion } from "./audio-convert";
 import {
   assembleRecording,
   discardRecording,
@@ -75,6 +76,10 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
   // crashed tab, a closed laptop, a refresh mid-upload.
   const [pending, setPending] = useState<PendingRecording | null>(null);
   const [isRecovering, setIsRecovering] = useState(false);
+  // Decoding an hour of audio takes a few seconds and blocks nothing else,
+  // so the screen has to say what it is doing or the file simply appears to
+  // not attach.
+  const [isConverting, setIsConverting] = useState(false);
 
   // The default name for a recording. A function, not a value, because it
   // reads the clock - computing it during render would differ between
@@ -112,7 +117,7 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
     };
   }, []);
 
-  const chooseFile = (chosen: File | null) => {
+  const chooseFile = async (chosen: File | null) => {
     if (!chosen) return;
 
     // Checked here so an unusable file is refused before anybody waits for
@@ -129,10 +134,67 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
       return;
     }
 
-    setFile(chosen);
+    // The title comes from the name the PERSON chose, not the converted
+    // one - "Board meeting.m4a" and "Board meeting.wav" derive the same
+    // title, but taking it before the swap keeps that true if the
+    // conversion ever changes the stem.
+    const chosenTitle = deriveTranscriptionTitle(chosen.name);
+
+    // -------------------------------------------------------------------
+    // MP4-family files are converted here, before upload.
+    //
+    // Azure Speech downloads an .m4a happily and then refuses it with
+    // "InvalidData: The recordings URI contains invalid data" - it is AAC
+    // in an MP4 container, and the batch decoder will not unwrap it. A
+    // phone voice memo is the most common upload there is, so this is the
+    // common path rather than an edge case.
+    //
+    // Converting in the browser avoids needing ffmpeg on the server, which
+    // the App Service Node runtime does not have, and sends less over the
+    // network besides: 16 kHz mono is about a tenth of what a phone
+    // records.
+    //
+    // Anything that cannot be converted is uploaded untouched. The service
+    // may still read a format this cannot, and refusing here would take a
+    // recording of a meeting that already happened.
+    // -------------------------------------------------------------------
+    let toUpload = chosen;
+
+    if (needsConversion(chosen.name)) {
+      setIsConverting(true);
+
+      try {
+        const result = await convertForTranscription(chosen);
+
+        if (result.converted) {
+          toUpload = result.file;
+        } else if (result.reason === "too-long") {
+          toast.warning(
+            "That recording is too long to convert in the browser. It will be uploaded as it is, and may not transcribe.",
+          );
+        } else if (result.reason !== "not-needed") {
+          toast.warning("That file could not be converted. It will be uploaded as it is, and may not transcribe.");
+        }
+      } finally {
+        setIsConverting(false);
+      }
+    }
+
+    // Re-checked AFTER conversion. WAV is uncompressed, so a small
+    // compressed file can come out of this larger than it went in - an
+    // hour of 16 kHz mono is about 115 MB - and the server enforces the
+    // same limit from storage regardless.
+    if (toUpload.size > MAX_MEDIA_BYTES) {
+      toast.error(
+        `Converted, that recording is larger than the ${Math.round(MAX_MEDIA_BYTES / MEGABYTE)} MB limit. Try a shorter recording.`,
+      );
+      return;
+    }
+
+    setFile(toUpload);
     // Only if they have not named it themselves - retyping a title because
     // the file was swapped is a small thing done often.
-    setTitle((current) => (current.trim().length === 0 ? deriveTranscriptionTitle(chosen.name) : current));
+    setTitle((current) => (current.trim().length === 0 ? chosenTitle : current));
   };
 
   const submitFile = async () => {
@@ -311,7 +373,7 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
               accept={MEDIA_ACCEPT_ATTRIBUTE}
               className="sr-only"
               onChange={(event) => {
-                chooseFile(event.target.files?.[0] ?? null);
+                void chooseFile(event.target.files?.[0] ?? null);
                 // Cleared so choosing the same file twice still fires a
                 // change event - otherwise a re-pick after an error does
                 // nothing at all.
@@ -323,11 +385,22 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
               type="button"
               variant="outline"
               className="mt-4"
-              disabled={isUploading}
+              disabled={isUploading || isConverting}
               onClick={() => fileInputRef.current?.click()}
             >
-              {file ? "Choose a different file" : "Choose a file"}
+              {isConverting
+                ? "Preparing..."
+                : file
+                  ? "Choose a different file"
+                  : "Choose a file"}
             </Button>
+
+            {isConverting ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Converting to a format the transcription service accepts. This can take a moment for a long
+                recording.
+              </p>
+            ) : null}
           </div>
 
           {warnAboutFormat ? (
