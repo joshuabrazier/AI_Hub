@@ -19,6 +19,7 @@ import {
   SUMMARY_STYLES,
   SUMMARY_STYLE_DESCRIPTIONS,
   SUMMARY_STYLE_LABELS,
+  SUMMARY_STYLE_RESULT_HEADINGS,
   type SummariesPageDTO,
   type SummaryStyle,
 } from "../summaries.types";
@@ -244,7 +245,7 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
         <div className="flex min-h-64 flex-col rounded-xl border border-border">
           <div className="flex items-center justify-between gap-3 border-b border-border p-4">
             <p className="text-sm font-medium text-foreground">
-              {SUMMARY_STYLE_LABELS[style]} summary
+              {SUMMARY_STYLE_RESULT_HEADINGS[style]}
             </p>
 
             {summary && !isStreaming ? (
