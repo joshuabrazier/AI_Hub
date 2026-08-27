@@ -234,3 +234,67 @@ describe("parseDriveList", () => {
     expect(drives[0].driveType).toBe("somethingNew");
   });
 });
+
+// -------------------------------------------------------------------
+// Percent signs in real folder names.
+//
+// THIS IS A REGRESSION TEST FOR A CRAWL THAT DIED IN PRODUCTION. A library
+// contained a folder with a bare "%" in its name, Graph sent the path
+// unencoded, decodeURIComponent threw URIError, and the whole run failed
+// after 11,465 items across 50 pages - reported as "URI malformed", naming
+// neither the folder nor the item.
+//
+// The rule these pin: a COSMETIC step must never cost us an item. Decoding
+// a path is presentation. The item, its id, its parent and its depth are
+// all perfectly readable whether or not the pretty name comes out.
+// -------------------------------------------------------------------
+describe("parseFolderPath - percent signs", () => {
+  it("survives a bare percent sign instead of throwing", () => {
+    // "Q1 100% complete" is an entirely ordinary folder name and is not
+    // valid percent-encoding.
+    expect(parseFolderPath("/drives/b!abc/root:/Finance/Q1 100% complete")).toEqual({
+      path: "/Finance/Q1 100% complete",
+      depth: 2,
+    });
+  });
+
+  it("still decodes properly encoded names", () => {
+    expect(parseFolderPath("/drives/b!abc/root:/Reports/50%25 done")).toEqual({
+      path: "/Reports/50% done",
+      depth: 2,
+    });
+  });
+
+  it("keeps DEPTH correct even when the decode falls back", () => {
+    // The whole reason falling back is safe: slashes are structure and are
+    // never encoded, so depth does not depend on the decode succeeding.
+    expect(parseFolderPath("/drives/b!abc/root:/A/B 50%/C").depth).toBe(3);
+  });
+
+  it("does not lose the item that carries such a path", () => {
+    const item = parseDriveItem({
+      id: "01PCT",
+      name: "Margin % by client.xlsx",
+      parentReference: { id: "01P", path: "/drives/b!abc/root:/Finance/100% billable" },
+      file: { hashes: { quickXorHash: "H" } },
+    });
+
+    expect(item.itemId).toBe("01PCT");
+    expect(item.path).toBe("/Finance/100% billable");
+    expect(item.depth).toBe(2);
+  });
+
+  it("does not take a whole page down for one such item", () => {
+    // The failure that actually happened: one bad path inside a page, and
+    // every good item on it lost with it.
+    const page = parseDeltaPage({
+      value: [
+        { id: "01A", name: "fine.docx", parentReference: { id: "r", path: "/drives/b!abc/root:/Ok" } },
+        { id: "01B", name: "also fine.docx", parentReference: { id: "r", path: "/drives/b!abc/root:/50% off" } },
+      ],
+    });
+
+    expect(page.items).toHaveLength(2);
+    expect(page.items[1].path).toBe("/50% off");
+  });
+});

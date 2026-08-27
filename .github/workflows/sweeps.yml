@@ -23,12 +23,15 @@ name: Background sweeps
 # The target comes from the NEXT_PUBLIC_APP_URL repo Variable that deploy.yml
 # already uses, so there is no second copy of the hostname to drift.
 #
-# THAT VARIABLE HOLDS A BARE HOSTNAME, no scheme - deploy.yml prepends
-# https:// for the same reason (see the note above its Build step, and keep
-# the Variable itself scheme-less). Every URL below therefore adds the
-# scheme. Passing the bare host to curl would let it guess, which means
-# http, which means a redirect that drops the POST body and the auth header
-# and reports a cheerful 200 having done nothing.
+# THE VARIABLE IS ACCEPTED WITH OR WITHOUT A SCHEME. deploy.yml documents it
+# as a bare hostname and prepends https:// itself, but nothing enforces that,
+# and the first version of this workflow trusted the convention and built
+# "https://https://host" - which curl rejects outright. The config step now
+# strips any scheme and trailing slash and puts exactly one scheme back.
+#
+# The scheme has to be there. Handing curl a bare host lets it guess, which
+# means http, which means a redirect - and a redirect drops the POST body and
+# the Authorization header, then reports a cheerful 200 having done nothing.
 #
 # Each endpoint is SKIPPED when its secret is not set, so you can enable
 # one without the other, and the workflow does nothing at all until
@@ -88,7 +91,45 @@ jobs:
           SP: ${{ secrets.SHAREPOINT_SWEEP_SECRET }}
           TR: ${{ secrets.TRANSCRIPTION_SWEEP_SECRET }}
         run: |
-          if [ -n "$HOST" ]; then echo "base=true" >> "$GITHUB_OUTPUT"; else
+          if [ -n "$HOST" ]; then
+            # NORMALISE, rather than assume a format.
+            #
+            # deploy.yml documents this Variable as a bare hostname and
+            # prepends https:// itself, but that is a convention, not
+            # something anything enforces - and a value set WITH the scheme
+            # produced "https://https://host" here, which curl rejects as a
+            # malformed URL. Strip any scheme and trailing slash and put
+            # exactly one scheme back, so either spelling works.
+            # WHITESPACE FIRST, and this is the one that actually bit.
+            #
+            # A Variable pasted with a trailing newline or carriage return
+            # looks perfect everywhere - in the settings UI, and in the
+            # workflow log, which even renders it as a link. curl then gets
+            # "https://host\n/api/..." and answers
+            # "URL rejected: Malformed input to a URL function", naming
+            # nothing useful. Invisible input, invisible cause.
+            host="$(printf '%s' "$HOST" | tr -d '[:space:]')"
+            host="${host#https://}"
+            host="${host#http://}"
+            host="${host%/}"
+
+            # Then a whitelist, because whitespace is not the only thing that
+            # survives a copy and paste. A host[:port] is only ever these
+            # characters, so anything else is contamination.
+            clean="$(printf '%s' "$host" | tr -cd 'A-Za-z0-9.:-')"
+
+            if [ "$clean" != "$host" ]; then
+              echo "WARNING: NEXT_PUBLIC_APP_URL contained characters that are not valid in a hostname."
+              echo "They have been stripped, but fix the Variable - something is wrong with its value."
+            fi
+
+            echo "base_url=https://$clean" >> "$GITHUB_OUTPUT"
+            echo "base=true" >> "$GITHUB_OUTPUT"
+            # In brackets on purpose: a stray trailing character is invisible
+            # on its own, and visible against a closing bracket. A hostname is
+            # not a secret.
+            echo "Target: [https://$clean]"
+          else
             echo "NEXT_PUBLIC_APP_URL is not set - this workflow ships as an unconfigured template."
             echo "base=false" >> "$GITHUB_OUTPUT"
           fi
@@ -117,7 +158,7 @@ jobs:
         if: steps.config.outputs.base == 'true' && steps.config.outputs.sharepoint == 'true'
         env:
           SECRET: ${{ secrets.SHAREPOINT_SWEEP_SECRET }}
-          BASE: https://${{ vars.NEXT_PUBLIC_APP_URL }}
+          BASE: ${{ steps.config.outputs.base_url }}
         run: |
           for i in $(seq 1 10); do
             body=$(curl -sS -X POST \
@@ -147,7 +188,7 @@ jobs:
         if: steps.config.outputs.base == 'true' && steps.config.outputs.transcription == 'true'
         env:
           SECRET: ${{ secrets.TRANSCRIPTION_SWEEP_SECRET }}
-          BASE: https://${{ vars.NEXT_PUBLIC_APP_URL }}
+          BASE: ${{ steps.config.outputs.base_url }}
         run: |
           body=$(curl -sS -X POST \
             -H "Authorization: Bearer $SECRET" \

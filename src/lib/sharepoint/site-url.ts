@@ -117,7 +117,20 @@ export function parseSharepointSiteUrl(rawUrl: string): SharepointSiteAddress {
     throw new SharepointUrlError("The address has no site in it");
   }
 
-  let segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  // Same trap as parseFolderPath: decodeURIComponent throws on a bare
+  // percent sign, and a site or library with one in its name would take the
+  // whole lookup down with an unhelpful "URI malformed". The raw segment is
+  // what SharePoint sent, so it is the right fallback.
+  let segments = url.pathname
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        return segment;
+      }
+    });
 
   // Unwrap a sharing link before anything else, so the rest of this
   // function only ever sees an ordinary server-relative path.
