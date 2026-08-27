@@ -62,6 +62,11 @@ const DOCUMENT_LIBRARY_DRIVE_TYPE = "documentLibrary";
 // not enough to turn the page into a log viewer.
 const CRAWL_HISTORY_LIMIT = 5;
 
+// An unfinished crawl untouched for this long is not "about to start", it is
+// waiting for a sweep that is never coming. Generous against a sweep meant to
+// run every minute or two, so this cannot fire on a merely slow one.
+const STALLED_AFTER_MINUTES = 10;
+
 // -------------------------------------------------------------------
 // Turn a Graph failure into something an admin can act on.
 //
@@ -115,7 +120,7 @@ export async function findSharepointLibrariesService(
   try {
     const user = await requireUserRole([USER_ROLES.ADMIN]);
 
-    const { hostname, sitePath } = parseSharepointSiteUrl(requestDTO.siteUrl);
+    const { hostname, sitePath, isTenantRoot } = parseSharepointSiteUrl(requestDTO.siteUrl);
 
     const accessToken = await getDelegatedGraphToken(user.id);
 
@@ -127,6 +132,7 @@ export async function findSharepointLibrariesService(
     return {
       siteName: site.displayName,
       siteWebUrl: site.webUrl,
+      isTenantRoot,
       libraries: drives
         .filter((drive) => drive.driveType === DOCUMENT_LIBRARY_DRIVE_TYPE)
         .map((drive) => ({
@@ -343,15 +349,29 @@ export async function listSharepointDrivesService(): Promise<SharepointDriveDTO[
 // is working.
 // -------------------------------------------------------------------
 function toCrawlDTO(crawl: SharepointCrawl): SharepointCrawlDTO {
+  const isFinished =
+    crawl.status === SHAREPOINT_CRAWL_STATUSES.COMPLETED ||
+    crawl.status === SHAREPOINT_CRAWL_STATUSES.FAILED ||
+    crawl.status === SHAREPOINT_CRAWL_STATUSES.NEEDS_REAUTH;
+
+  // Parked behind a throttle is not stalled - it is waiting on purpose, and
+  // throttledUntil says until when.
+  const waitingOnThrottle =
+    crawl.status === SHAREPOINT_CRAWL_STATUSES.PAUSED_THROTTLED &&
+    crawl.throttledUntil !== null &&
+    crawl.throttledUntil.getTime() > Date.now();
+
+  const idleMinutes = (Date.now() - crawl.updatedAt.getTime()) / 60_000;
+
   return {
     id: crawl.id,
     status: crawl.status,
     statusLabel: SHAREPOINT_CRAWL_STATUS_LABELS[crawl.status],
     isFailure: crawl.status === SHAREPOINT_CRAWL_STATUSES.FAILED,
-    isFinished:
-      crawl.status === SHAREPOINT_CRAWL_STATUSES.COMPLETED ||
-      crawl.status === SHAREPOINT_CRAWL_STATUSES.FAILED ||
-      crawl.status === SHAREPOINT_CRAWL_STATUSES.NEEDS_REAUTH,
+    isFinished,
+    // The sweep is meant to run every minute or two, so untouched for this
+    // long means nothing is calling it at all.
+    looksStalled: !isFinished && !waitingOnThrottle && idleMinutes > STALLED_AFTER_MINUTES,
     itemsSeen: crawl.itemsSeen,
     pagesDone: crawl.pagesDone,
     error: crawl.error,
