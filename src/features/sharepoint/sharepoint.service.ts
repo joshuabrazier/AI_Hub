@@ -23,6 +23,7 @@ import {
   upsertSharepointDriveRepo,
 } from "@/lib/data/repositories/sharepoint-drive.repository";
 import { getSharepointDriveTotalsRepo } from "@/lib/data/repositories/sharepoint-item.repository";
+import { runCrawlSliceService } from "@/features/sharepoint-sync/sharepoint-crawl.service";
 import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
 import { fetchDrivesForSite, fetchSite, GRAPH_OUTCOMES, GraphRequestError } from "@/lib/sharepoint/graph-client";
@@ -36,6 +37,7 @@ import {
   type SharepointCrawlDTO,
   type SharepointDriveDTO,
   type SharepointSiteLookup,
+  type StartCrawlResultDTO,
 } from "./sharepoint.types";
 
 // -------------------------------------------------------------------
@@ -66,6 +68,12 @@ const CRAWL_HISTORY_LIMIT = 5;
 // waiting for a sweep that is never coming. Generous against a sweep meant to
 // run every minute or two, so this cannot fire on a merely slow one.
 const STALLED_AFTER_MINUTES = 10;
+
+// How much of the crawl the BUTTON does before handing over to the sweep.
+// Small on purpose: this runs inside somebody's click, so the job is to
+// prove it is working and show real numbers, not to finish the library.
+const INLINE_CRAWL_MAX_PAGES = 5;
+const INLINE_CRAWL_BUDGET_MS = 8_000;
 
 // -------------------------------------------------------------------
 // Turn a Graph failure into something an admin can act on.
@@ -222,7 +230,9 @@ export async function nominateSharepointLibraryService(requestDTO: NominateLibra
 // double every write and spend the tenant throttle budget twice for the
 // same answer.
 // -------------------------------------------------------------------
-export async function startSharepointCrawlService(requestDTO: DriveIdDTO): Promise<void> {
+export async function startSharepointCrawlService(
+  requestDTO: DriveIdDTO,
+): Promise<StartCrawlResultDTO> {
   try {
     const user = await requireUserRole([USER_ROLES.ADMIN]);
 
@@ -238,7 +248,7 @@ export async function startSharepointCrawlService(requestDTO: DriveIdDTO): Promi
       throw new DisplayErrorMessage("This library is already being crawled. Wait for that run to finish.");
     }
 
-    await addSharepointCrawlRepo({
+    const crawl = await addSharepointCrawlRepo({
       id: generateId(),
       driveId: drive.driveId,
       status: SHAREPOINT_CRAWL_STATUSES.QUEUED,
@@ -259,6 +269,47 @@ export async function startSharepointCrawlService(requestDTO: DriveIdDTO): Promi
       // preserve, and an actor is not the same field as a subject.
       subjectUserId: user.id,
     });
+
+    // -----------------------------------------------------------------
+    // DO SOME OF THE WORK NOW, rather than only queueing it.
+    //
+    // Queueing alone was correct and felt broken. A crawl of a real library
+    // is dozens of pages and cannot finish inside a request, so the button
+    // wrote a row and returned, and the screen said "Queued, 0 items" until
+    // a scheduler happened to come along. With no scheduler configured that
+    // is indistinguishable from the feature not working, and that is
+    // exactly how it was read.
+    //
+    // So the button now walks a small first slice itself. The library still
+    // needs the sweep to FINISH, but pressing it produces real numbers
+    // immediately, and a small library can be finished by pressing again.
+    //
+    // Bounded by time as well as pages: whoever is watching gets an answer
+    // in a few seconds, and the request never approaches App Service's 230
+    // second front-end timeout.
+    //
+    // FAILURES ARE SWALLOWED HERE ON PURPOSE. The row exists and the audit
+    // entry is written, so the crawl is genuinely started whatever happens
+    // next; the slice either advanced it or recorded its own failure on the
+    // row, and either way the card shows the truth. Throwing would report
+    // "could not start" about a crawl that did start.
+    // -----------------------------------------------------------------
+    try {
+      const slice = await runCrawlSliceService(crawl.id, {
+        maxPages: INLINE_CRAWL_MAX_PAGES,
+        budgetMs: INLINE_CRAWL_BUDGET_MS,
+      });
+
+      return {
+        itemsSeen: slice.itemsSeen,
+        pagesDone: slice.pagesDone,
+        finished: slice.status === SHAREPOINT_CRAWL_STATUSES.COMPLETED,
+      };
+    } catch (error) {
+      handleError("startSharepointCrawlService.inlineSlice", error);
+
+      return { itemsSeen: 0, pagesDone: 0, finished: false };
+    }
   } catch (error) {
     throw handleError("startSharepointCrawlService", error);
   }
