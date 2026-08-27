@@ -26,6 +26,22 @@ export type TwoFactorScreenDTO = {
   mode: TwoFactorMode;
   /** The address the authenticator entry will be labelled with. Display only. */
   email: string;
+  /**
+   * True when enrolment will need this account's password.
+   *
+   * ONLY EVER TRUE ON A DEVELOPER MACHINE, and not because of a flag saying
+   * so - it is true when the account genuinely HAS a password, which in a
+   * real environment no account does. Sign-in is Microsoft, an Entra account
+   * carries no credential row, and Better Auth's own rule is the same one:
+   * allowPasswordless skips the password check for accounts that have none.
+   *
+   * It exists because without it the local flow dead-ends. A dev account made
+   * by scripts/create-dev-user.mjs does have a password, so enableTwoFactor
+   * demanded one, none was passed, and the screen could only say "sign in
+   * with Microsoft instead" - on a machine with no Microsoft configured. The
+   * feature could be switched on locally and never satisfied.
+   */
+  requiresPassword: boolean;
 };
 
 // -------------------------------------------------------------------
@@ -59,6 +75,24 @@ export type TwoFactorEnrolmentDTO = {
 // cryptographic one, and being strict here would only reject a valid code
 // because of a hyphen.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// Starting enrolment.
+//
+// The password is OPTIONAL because in every real environment there is none
+// to send. It is required only when the account has one, and that is decided
+// server-side by asking the accounts table rather than by trusting this
+// field to be present.
+// -------------------------------------------------------------------
+export const BeginTwoFactorEnrolmentSchema = z.object({
+  // Bounded rather than shaped: this is an existing password being re-entered
+  // for re-authentication, not one being chosen, so the only wrong answer is
+  // one the auth layer rejects. A minimum here would reject a valid short
+  // password and teach nothing.
+  password: z.string().min(1).max(256).optional(),
+});
+
+export type BeginTwoFactorEnrolmentRequestDTO = z.infer<typeof BeginTwoFactorEnrolmentSchema>;
+
 export const VerifyTwoFactorSchema = z.object({
   code: z.string().trim().min(1, "Enter the code from your authenticator").max(64),
   useBackupCode: z.boolean().default(false),

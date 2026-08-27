@@ -14,7 +14,8 @@
     "dev:storage": "azurite-blob --location .azurite --silent --skipApiVersionCheck",
     "dev:storage:cors": "node --env-file=.env scripts/configure-dev-storage.mjs",
     "db:check": "node --env-file=.env scripts/check-migrations.mjs",
-    "dev:turbopack": "next dev -p 3100"
+    "dev:turbopack": "next dev -p 3100",
+    "dev:fake-sharepoint": "node scripts/dev-fake-sharepoint.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1102.0",

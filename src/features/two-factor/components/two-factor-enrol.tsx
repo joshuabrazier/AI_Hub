@@ -18,27 +18,85 @@ import { TwoFactorVerifyForm } from "./two-factor-verify-form";
 // development double-render generating two secrets and leaving the QR the
 // person just scanned pointing at the discarded one.
 // -------------------------------------------------------------------
-export function TwoFactorEnrol({ email }: { email: string }) {
+export function TwoFactorEnrol({ email, requiresPassword }: { email: string; requiresPassword: boolean }) {
   const [enrolment, setEnrolment] = useState<TwoFactorEnrolmentDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [codesAcknowledged, setCodesAcknowledged] = useState(false);
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const started = useRef(false);
 
+  const begin = async (withPassword?: string) => {
+    setSubmitting(true);
+    setError(null);
+
+    const response = await beginTwoFactorEnrolmentAction(withPassword ? { password: withPassword } : {});
+
+    setSubmitting(false);
+
+    if (!response.success) {
+      setError(response.formError ?? "We could not start two-factor setup.");
+      return;
+    }
+
+    setEnrolment(response.data);
+  };
+
   useEffect(() => {
-    if (started.current) return;
+    // Only auto-start when there is nothing to ask for. An account with a
+    // password has to supply it, so starting on mount would fail before the
+    // person had a chance to type anything - and the failure would burn the
+    // one-shot guard below, leaving them stuck on an error.
+    if (requiresPassword || started.current) return;
     started.current = true;
 
-    void (async () => {
-      const response = await beginTwoFactorEnrolmentAction();
+    void begin();
+  }, [requiresPassword]);
 
-      if (!response.success) {
-        setError(response.formError ?? "We could not start two-factor setup.");
-        return;
-      }
+  // Re-authentication before a security setting is changed, for the one
+  // account type that has a password to re-authenticate WITH. A Microsoft
+  // account never reaches this branch, because it has no password and the
+  // session Microsoft issued stands in for one. See the service.
+  //
+  // The error renders inline here rather than through the block below, so a
+  // rejected password leaves the field on screen to be corrected instead of
+  // replacing the form with a dead end.
+  if (requiresPassword && !enrolment) {
+    return (
+      <form
+        className="mt-6 flex max-w-sm flex-col gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!password || submitting) return;
+          void begin(password);
+        }}
+      >
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="two-factor-password" className="text-sm font-medium text-foreground">
+            Confirm your password
+          </label>
+          <p className="text-sm text-muted-foreground">
+            Setting up a second factor changes how this account is secured, so it asks for your password first.
+          </p>
+          <input
+            id="two-factor-password"
+            type="password"
+            autoComplete="current-password"
+            autoFocus
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            className="mt-1 h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </div>
 
-      setEnrolment(response.data);
-    })();
-  }, []);
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <Button type="submit" disabled={!password || submitting} className="self-start">
+          {submitting ? "Checking..." : "Continue"}
+        </Button>
+      </form>
+    );
+  }
 
   if (error) {
     return (

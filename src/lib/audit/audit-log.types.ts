@@ -50,6 +50,19 @@ export const AUDIT_ACTIONS = {
   // accountability argument as ai_chat.request_viewed.
   AUTH_TWO_FACTOR_RESET: "auth.two_factor_reset",
   AUTH_IMPERSONATION_STARTED: "auth.impersonation_started",
+
+  // SharePoint inventory.
+  //
+  // These record WHOSE ACCESS a library is being read with, which is the
+  // only access-control question the feature has. A crawl runs on one
+  // person's delegated token and can therefore see exactly what that
+  // person can see - so "who nominated this" and "whose token walked it"
+  // are the two facts that make the inventory accountable. Without them
+  // the answer to "why does this list contain the HR folder" would have to
+  // be reconstructed from nothing.
+  SHAREPOINT_LIBRARY_NOMINATED: "sharepoint.library_nominated",
+  SHAREPOINT_LIBRARY_REMOVED: "sharepoint.library_removed",
+  SHAREPOINT_CRAWL_STARTED: "sharepoint.crawl_started",
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
@@ -60,6 +73,7 @@ export const AUDIT_ENTITY_TYPES = {
   TEAM_MEMBER: "team_member",
   AI_CHAT_REQUEST: "ai_chat_request",
   AUTH: "auth",
+  SHAREPOINT_DRIVE: "sharepoint_drive",
 } as const;
 
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[keyof typeof AUDIT_ENTITY_TYPES];

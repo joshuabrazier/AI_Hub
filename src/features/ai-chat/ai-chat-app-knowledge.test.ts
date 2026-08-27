@@ -79,3 +79,49 @@ describe("appKnowledgePrompt", () => {
     expect(prompt).toContain("never writes to Jira");
   });
 });
+
+// -------------------------------------------------------------------
+// The block must not read as a job description.
+//
+// These exist because it did. The app knowledge was added, and the
+// assistant concluded the portal was its subject - declining ordinary
+// questions as out of scope. The block is long, specific and ends in a
+// list of limits, and without an explicit frame that shape tells a model
+// what it is FOR rather than what it happens to know.
+//
+// So these pin the frame, not the prose: something has to say the block is
+// context, and the limits have to be anchored to the app rather than left
+// as bare statements about what the assistant knows.
+// -------------------------------------------------------------------
+describe("appKnowledgePrompt - staying a general assistant", () => {
+  it("frames the block as background rather than as scope", () => {
+    const prompt = appKnowledgePrompt(USER_ROLES.ADMIN, "Louis");
+
+    expect(prompt).toContain("It does NOT narrow what you can help with");
+    expect(prompt).toContain("You remain a general assistant");
+  });
+
+  it("anchors the knowledge limit to the portal, not to the assistant", () => {
+    const prompt = appKnowledgePrompt(USER_ROLES.ADMIN, "Louis");
+
+    // The exact sentence that caused the regression. It generalised to
+    // "I only know this app", so it must not come back.
+    expect(prompt).not.toContain("You only know the app as described above");
+    expect(prompt).toContain("Your knowledge OF THIS PORTAL is limited to the screens listed above");
+  });
+
+  it("says the limits are about the app rather than about everything", () => {
+    const prompt = appKnowledgePrompt(USER_ROLES.MEMBER, "Someone");
+
+    expect(prompt).toContain("LIMITS THAT APPLY TO THIS APP AND ITS DATA");
+    expect(prompt).toContain("not a limit on your general knowledge");
+  });
+
+  it("confirms it can read files attached to the conversation", () => {
+    // The old wording only said which files it could NOT read, which left
+    // the useful half implied.
+    const prompt = appKnowledgePrompt(USER_ROLES.MEMBER, "Someone");
+
+    expect(prompt).toContain("You CAN read the files attached to this conversation");
+  });
+});
