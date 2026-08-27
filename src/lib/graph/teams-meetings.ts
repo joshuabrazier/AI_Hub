@@ -173,11 +173,17 @@ export async function listRecentTeamsMeetings(
     // just left. `truncated` below is what actually covers that.
     .sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime());
 
-  // Graph only sends a nextLink when there was more to send, so its presence
-  // is proof the window was cut short. Reported rather than swallowed: a list
-  // that is quietly missing the meeting somebody is looking for reads as "the
-  // import is broken", which is a much worse place to leave them than "there
-  // were more than we could show".
+  // Graph sends a nextLink when the calendar window held more ENTRIES than one
+  // page - not more MEETINGS. The online-meeting filter above runs here, after
+  // the page was built, so a diary full of ordinary appointments sets this
+  // even when every Teams meeting of the fortnight is already in the list.
+  //
+  // So it is a "there may be more" signal and never a count. False is
+  // trustworthy; true only means we cannot promise the list is complete, and
+  // the wording on screen has to be that careful. Reported rather than
+  // swallowed all the same: a list quietly missing the meeting somebody wants
+  // reads as "the import is broken", which is a much worse place to leave
+  // them.
   return { meetings, truncated: typeof payload["@odata.nextLink"] === "string" };
 }
 

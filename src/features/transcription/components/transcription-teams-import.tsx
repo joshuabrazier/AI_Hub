@@ -180,8 +180,22 @@ export function TranscriptionTeamsImport({ onImported }: { onImported: (transcri
   if (page.meetings.length === 0) {
     return (
       <TeamsMessage
-        title="No Teams meetings in the last fortnight"
-        detail={`Nothing in your calendar for the past ${page.lookbackDays} days was a Teams meeting. Record one here instead, or upload a file.`}
+        // TWO DIFFERENT SENTENCES, because only one of them is something we
+        // actually know. The truncation notice further down renders beside a
+        // LIST, so it cannot appear here - and this is precisely the case
+        // where the screen would otherwise state as fact ("nothing in your
+        // calendar was a Teams meeting") something it has no way to
+        // establish: Microsoft had more to send and we did not read it.
+        title={
+          page.truncated
+            ? "No Teams meetings in the part of your calendar we could read"
+            : "No Teams meetings in the last fortnight"
+        }
+        detail={
+          page.truncated
+            ? `You have more calendar entries in the past ${page.lookbackDays} days than fit in one list, and none of the ones we could read was a Teams meeting. An older one may still be there. Record the meeting here instead, or upload a file.`
+            : `Nothing in your calendar for the past ${page.lookbackDays} days was a Teams meeting. Record one here instead, or upload a file.`
+        }
       >
         <Button type="button" variant="outline" className="mt-4" onClick={() => void refresh()}>
           <RefreshCw size={14} aria-hidden="true" />
@@ -208,13 +222,22 @@ export function TranscriptionTeamsImport({ onImported }: { onImported: (transcri
 
       {/* Only when Microsoft actually had more to send. A person with a very
           full fortnight would otherwise scan the list, not find the meeting
-          they want, and conclude the import is broken. */}
+          they want, and conclude the import is broken.
+
+          IT NAMES NO END, and that is deliberate. With the ordering honoured
+          the ones dropped are the oldest - but the whole reason this flag
+          exists is that Microsoft can ignore an unsupported query parameter
+          silently, and calendarView's own default order is ASCENDING, which
+          would drop the newest instead. The flag knows the list was cut
+          short; it cannot know at which end, and saying "the oldest" would be
+          confidently wrong in exactly the case it was added for. */}
       {page.truncated ? (
         <p
           role="status"
           className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
         >
-          You have more meetings in this period than fit in one list, so the oldest are not shown.
+          You have more calendar entries in this period than fit in one list, so some meetings may not be
+          shown. If the one you want is missing, record it on the Record tab instead.
         </p>
       ) : null}
 

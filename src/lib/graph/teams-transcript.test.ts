@@ -223,25 +223,72 @@ describe("parseTeamsVtt, shapes that used to be dropped silently", () => {
     expect(parseTeamsVtt(terse)[0].startMs).toBe(1_500);
   });
 
-  it("still skips NOTE and STYLE blocks now that headers are not matched first", () => {
-    // The header check moved AFTER the timing search, so this guards the
-    // thing that change could have broken.
-    const noisy = [
+  it("does not read a MULTI-LINE NOTE block as something somebody said", () => {
+    // The case that matters, and the one an inline "NOTE 00:00:01.000 -->..."
+    // sample cannot test: TIMING is anchored, so a line beginning "NOTE "
+    // never matches it and such a test passes without exercising anything.
+    // Here the timing line is INSIDE the note, so a parser that identifies a
+    // cue by merely containing one turns the comment into a spoken turn - and
+    // splits the real speaker's turn in two around it.
+    const noted = [
       "WEBVTT",
       "",
-      "NOTE 00:00:01.000 --> 00:00:02.000 looks like a cue but is a note",
+      "00:00:01.000 --> 00:00:02.000",
+      "<v A>One.</v>",
+      "",
+      "NOTE",
+      "00:00:02.000 --> 00:00:03.000",
+      "redacted for privacy",
+      "",
+      "00:00:04.000 --> 00:00:05.000",
+      "<v A>Two.</v>",
+    ].join("\n");
+
+    const segments = parseTeamsVtt(noted);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0].speakerName).toBe("A");
+    expect(segments[0].text).toBe("One. Two.");
+  });
+
+  it("does not read a STYLE rule as something somebody said", () => {
+    const styled = [
+      "WEBVTT",
       "",
       "STYLE",
+      "00:00:01.000 --> 00:00:02.000",
       "::cue { color: white }",
       "",
       "00:00:05.000 --> 00:00:06.000",
       "<v Sam>Only this is a cue.</v>",
     ].join("\n");
 
-    const segments = parseTeamsVtt(noisy);
+    const segments = parseTeamsVtt(styled);
 
     expect(segments).toHaveLength(1);
     expect(segments[0].text).toBe("Only this is a cue.");
+  });
+
+  it("reads every cue in a file with no blank lines between them", () => {
+    // A malformed file, so the whole thing arrives as one block. Taking
+    // everything after the FIRST timing line as the body would fold the
+    // second cue's timestamp into the first cue's text - a turn reading
+    // "One. 00:00:03.000 --> 00:00:04.000 Two." That is a wrong answer that
+    // looks right, which is the worst kind.
+    const dense = [
+      "WEBVTT",
+      "00:00:01.000 --> 00:00:02.000",
+      "<v A>One.</v>",
+      "00:00:03.000 --> 00:00:04.000",
+      "<v B>Two.</v>",
+    ].join("\n");
+
+    const segments = parseTeamsVtt(dense);
+
+    expect(segments).toHaveLength(2);
+    expect(segments[0].text).toBe("One.");
+    expect(segments[1].text).toBe("Two.");
+    expect(segments[1].startMs).toBe(3_000);
   });
 
   it("does not merge two people who each speak twice in a row", () => {

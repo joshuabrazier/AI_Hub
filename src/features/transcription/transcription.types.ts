@@ -260,11 +260,12 @@ export type TeamsMeetingsDTO = {
   isConfigured: boolean;
   lookbackDays: number;
   meetings: TeamsMeetingDTO[];
-  // True when Microsoft had more meetings than the one page asked for, so the
-  // list on screen is not all of them. Said out loud rather than swallowed: a
-  // list quietly missing the meeting somebody is looking for reads as "the
-  // import is broken", which is a far worse place to leave them than "there
-  // were more than fit".
+  // True when the calendar window held more ENTRIES than the one page asked
+  // for. The online-meeting filter runs after that page is built, so this can
+  // be set while every Teams meeting is already listed: it means older
+  // meetings MAY be missing, never that any definitely are. Said out loud
+  // rather than swallowed, because a list quietly missing the meeting
+  // somebody wants reads as "the import is broken".
   truncated: boolean;
 };
 

@@ -27,9 +27,11 @@ import type { TranscriptionSegment } from "@/lib/data/kysely-database-types";
 //   - Timestamps are HH:MM:SS.mmm, but the hours field is sometimes absent
 //     on short meetings, so MM:SS.mmm has to parse too - and an offset can be
 //     NEGATIVE when transcription was started after people began talking.
-//   - A block is identified as a cue by CONTAINING a timing line, never by
-//     what its first line looks like. Microsoft's examples show the WEBVTT
-//     header run together with the first cue.
+//   - A block is identified as a cue by CONTAINING a timing line, except for
+//     NOTE/STYLE/REGION blocks, which are skipped on their keyword because
+//     their bodies are free text and can contain anything. WEBVTT is not
+//     skipped that way: Microsoft's examples show it run together with the
+//     first cue, so skipping on it would drop the opening turn.
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
@@ -135,56 +137,86 @@ export function parseTeamsVtt(vtt: string): TranscriptionSegment[] {
 
     if (lines.length === 0) continue;
 
-    const timingIndex = lines.findIndex((line) => TIMING.test(line));
-
-    // No timing line means this is not a cue - the WEBVTT header, a NOTE, a
-    // STYLE or REGION block, or a stray identifier. Skipped rather than
-    // guessed at.
+    // -----------------------------------------------------------------
+    // NOTE, STYLE and REGION blocks are not cues, and their bodies are FREE
+    // TEXT - a line inside one can look like a timing line. Searching the
+    // whole block for one would turn a comment or a stylesheet rule into
+    // something somebody said, and that text would go on to the screen, the
+    // download and the summariser as though it had been spoken.
     //
-    // THE ORDER MATTERS: this is checked BEFORE the header patterns, not
-    // after. Microsoft's own examples show `WEBVTT` glued to the first cue
-    // with no blank line between them, which makes the header and the first
-    // real turn one block - and testing lines[0] first would throw away the
-    // opening of the meeting rather than a header.
-    if (timingIndex === -1) continue;
+    // WEBVTT IS DELIBERATELY NOT IN THAT LIST, and the two cases cannot be
+    // told apart by position: Microsoft's own examples show the file header
+    // glued to the first cue with no blank line between them, which gives a
+    // block with the keyword on line one and a real turn under it - exactly
+    // the shape of a NOTE block. The keyword itself is the only discriminator,
+    // because a NOTE body may contain anything while WEBVTT is only ever a
+    // header. A block that is nothing but the header falls out below on
+    // having no timing line at all.
+    // -----------------------------------------------------------------
+    if (/^(NOTE|STYLE|REGION)\b/.test(lines[0])) continue;
 
-    const timing = TIMING.exec(lines[timingIndex]);
-    if (!timing) continue;
+    // Every timing line in this block, not just the first.
+    //
+    // Normally there is exactly one - cues are separated by a blank line and
+    // the split above already divided them. A block with several means a file
+    // with no blank lines in it, and taking everything after the first timing
+    // line as the body would fold the SECOND cue's timestamp into the first
+    // cue's text: a turn reading "One. 00:00:03.000 --> 00:00:04.000 Two."
+    // That is a wrong answer that looks right, so each cue is read out
+    // separately instead.
+    const timingIndexes: number[] = [];
 
-    const startMs = toMs(timing[1], timing[2], timing[3], timing[4], timing[5]);
-    const endMs = toMs(timing[6], timing[7], timing[8], timing[9], timing[10]);
+    for (let index = 0; index < lines.length; index++) {
+      if (TIMING.test(lines[index])) timingIndexes.push(index);
+    }
 
-    const body = lines.slice(timingIndex + 1).join(" ").trim();
+    // No timing line means this is not a cue - the WEBVTT header on its own,
+    // or a stray identifier. Skipped rather than guessed at.
+    if (timingIndexes.length === 0) continue;
 
-    if (body.length === 0) continue;
+    for (let cue = 0; cue < timingIndexes.length; cue++) {
+      const at = timingIndexes[cue];
+      // The body runs to the next cue's timing line, or to the end.
+      const until = timingIndexes[cue + 1] ?? lines.length;
 
-    // Usually exactly one piece. See VOICE_SPLIT for why more than one is
-    // handled at all.
-    const pieces = body.split(VOICE_SPLIT).filter((piece) => piece.trim().length > 0);
+      const timing = TIMING.exec(lines[at]);
+      if (!timing) continue;
 
-    for (const piece of pieces) {
-      const voice = VOICE.exec(piece.trim());
+      const startMs = toMs(timing[1], timing[2], timing[3], timing[4], timing[5]);
+      const endMs = toMs(timing[6], timing[7], timing[8], timing[9], timing[10]);
 
-      // A name of "" is treated as no name. An empty <v> span carries no more
-      // information than an absent one, and a blank label on screen reads as
-      // a bug.
-      const speakerName = voice?.[1]?.trim() || null;
-      const text = stripCueTags(voice ? voice[2] : piece);
+      const body = lines.slice(at + 1, until).join(" ").trim();
 
-      if (text.length === 0) continue;
+      if (body.length === 0) continue;
 
-      const previous = segments[segments.length - 1];
+      // Usually exactly one piece. See VOICE_SPLIT for why more than one is
+      // handled at all.
+      const pieces = body.split(VOICE_SPLIT).filter((piece) => piece.trim().length > 0);
 
-      // Same person still talking - extend rather than start a new turn.
-      // Compared on the name, including the null case, so a run of
-      // unattributed cues merges too rather than becoming one turn per cue.
-      if (previous && (previous.speakerName ?? null) === speakerName) {
-        previous.text = `${previous.text} ${text}`;
-        previous.endMs = endMs;
-        continue;
+      for (const piece of pieces) {
+        const voice = VOICE.exec(piece.trim());
+
+        // A name of "" is treated as no name. An empty <v> span carries no
+        // more information than an absent one, and a blank label on screen
+        // reads as a bug.
+        const speakerName = voice?.[1]?.trim() || null;
+        const text = stripCueTags(voice ? voice[2] : piece);
+
+        if (text.length === 0) continue;
+
+        const previous = segments[segments.length - 1];
+
+        // Same person still talking - extend rather than start a new turn.
+        // Compared on the name, including the null case, so a run of
+        // unattributed cues merges too rather than becoming one turn per cue.
+        if (previous && (previous.speakerName ?? null) === speakerName) {
+          previous.text = `${previous.text} ${text}`;
+          previous.endMs = endMs;
+          continue;
+        }
+
+        segments.push({ speaker: null, speakerName, startMs, endMs, text });
       }
-
-      segments.push({ speaker: null, speakerName, startMs, endMs, text });
     }
   }
 
