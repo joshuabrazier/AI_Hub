@@ -47,7 +47,12 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
   const [isRemoving, startRemove] = useTransition();
 
   const crawl = drive.latestCrawl;
-  const isRunning = Boolean(crawl && !crawl.isFinished);
+  // "In flight" is not the same as "running". A QUEUED crawl is waiting for
+  // the sweep to pick it up and nothing is happening yet, so calling it
+  // "Crawling" told people work was under way when none was.
+  const inFlight = Boolean(crawl && !crawl.isFinished);
+  const isRunning = crawl?.status === SHAREPOINT_CRAWL_STATUSES.RUNNING;
+  const isQueued = crawl?.status === SHAREPOINT_CRAWL_STATUSES.QUEUED;
 
   function onCrawl() {
     startCrawl(async () => {
@@ -104,13 +109,13 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
             </Button>
           ) : null}
 
-          <Button type="button" size="sm" onClick={onCrawl} disabled={isStarting || isRunning}>
+          <Button type="button" size="sm" onClick={onCrawl} disabled={isStarting || inFlight}>
             {isStarting ? (
               <Loader2 size={15} aria-hidden="true" className="animate-spin" />
             ) : (
               <Play size={15} aria-hidden="true" />
             )}
-            {isRunning ? "Crawling" : "Crawl now"}
+            {isRunning ? "Crawling" : isQueued ? "Queued" : inFlight ? "Waiting" : "Crawl now"}
           </Button>
 
           <Button
@@ -169,6 +174,21 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
           ) : null}
 
           {crawl.error ? <span className="w-full text-muted-foreground">{crawl.error}</span> : null}
+
+          {/* A crawl only moves when something POSTs the sweep endpoint.
+              Without that it sits here forever, and "Queued, 0 pages" looks
+              identical to "about to start" - so say which it is. */}
+          {crawl.looksStalled ? (
+            <div className="w-full rounded-lg border border-data-caution/40 bg-data-caution-surface p-3 text-data-caution-text">
+              <p className="font-semibold">Nothing has picked this crawl up.</p>
+              <p className="mt-0.5">
+                A crawl only advances when something calls
+                <span className="font-mono"> /api/jobs/sharepoint-crawl-sweep </span>
+                on a timer. Queueing one here does not run it. Check that a scheduler is pointed at that
+                endpoint with the right bearer secret.
+              </p>
+            </div>
+          ) : null}
         </div>
       ) : (
         <p className="mt-4 border-t border-border pt-3 text-sm text-muted-foreground">

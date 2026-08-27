@@ -54,6 +54,109 @@ Set these once on the App Service - the workflow does not manage them:
   Every secret among these belongs in **Key Vault**, referenced by the App
   Service setting rather than pasted into it.
 
+  **The job secrets are easy to miss and each one silently disables a
+  feature rather than breaking it.** Every endpoint below answers 503 until
+  its secret is set, which reads as "nothing is happening" rather than as an
+  error:
+  `RETENTION_JOB_SECRET` (the monthly retention and de-identification job),
+  `TRANSCRIPTION_SWEEP_SECRET` (carries transcriptions forward when nobody
+  has the page open - without it a locked phone never gets a notification),
+  `SHAREPOINT_SWEEP_SECRET` (without it a queued crawl never walks at all),
+  and `JIRA_SYNC_SECRET` plus the `JIRA_*` settings for the timesheet sync.
+
+  Setting them is only half of it - see **Scheduled work** below, because
+  nothing calls any of these endpoints on its own.
+
+  Optional, with sensible defaults: `SHAREPOINT_INVENTORY_RETENTION_DAYS`
+  (180), `TRANSCRIPTION_RETENTION_DAYS` (90), `AI_CHAT_RETENTION_DAYS` (365),
+  `AI_CHAT_LOG_RETENTION_DAYS` (30), `AUDIT_LOG_RETENTION_DAYS` (180).
+
+  **Never set `DEV_FAKE_SHAREPOINT_URL` on a deployed environment.** It
+  points the SharePoint crawl at a fake server. `MODE=production` refuses it
+  regardless, but do not rely on that.
+
+## Scheduled work
+
+**Nothing in this app runs on a timer by itself.** Four endpoints exist to be
+called from outside, and each one is inert until something calls it. This is
+the single most common way a deployment ends up half working: the feature is
+configured, the secret is set, and nothing ever happens.
+
+| Endpoint | Cadence | What breaks without it |
+| --- | --- | --- |
+| `/api/jobs/sharepoint-crawl-sweep` | every 1-2 min | A queued crawl never walks. The admin screen sits at "Queued, 0 pages" forever. |
+| `/api/jobs/transcription-sweep` | every 1-2 min | A transcription only advances while somebody has the page open, so a locked phone never gets a "ready" notification. |
+| `/api/jobs/jira-sync` | hourly or nightly | Timesheet figures stop updating. |
+| `/api/jobs/data-retention` | monthly | Nothing is ever purged or de-identified. |
+
+All four take `Authorization: Bearer <secret>` and nothing else. There is no
+session behind a scheduler, so the usual role guards do not apply and must
+not be added.
+
+### The recommended way: an Azure Logic App
+
+A Consumption Logic App with a Recurrence trigger and one HTTP action. Cheap,
+keeps to its schedule, and lives next to the app it drives. One per cadence,
+or one with several HTTP actions.
+
+In the Logic App Designer, switch to Code view and use:
+
+```json
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "triggers": {
+      "Every2Minutes": {
+        "type": "Recurrence",
+        "recurrence": { "frequency": "Minute", "interval": 2 }
+      }
+    },
+    "actions": {
+      "SharePointCrawlSweep": {
+        "type": "Http",
+        "inputs": {
+          "method": "POST",
+          "uri": "https://YOUR-APP.azurewebsites.net/api/jobs/sharepoint-crawl-sweep",
+          "headers": { "Authorization": "Bearer YOUR_SHAREPOINT_SWEEP_SECRET" }
+        }
+      },
+      "TranscriptionSweep": {
+        "type": "Http",
+        "inputs": {
+          "method": "POST",
+          "uri": "https://YOUR-APP.azurewebsites.net/api/jobs/transcription-sweep",
+          "headers": { "Authorization": "Bearer YOUR_TRANSCRIPTION_SWEEP_SECRET" }
+        },
+        "runAfter": {}
+      }
+    }
+  }
+}
+```
+
+Both actions have an empty `runAfter`, so they run in parallel and a failure
+of one does not stop the other. Put the secrets in Key Vault and reference
+them rather than inlining, exactly as with the App Service settings.
+
+One call of the crawl sweep walks a bounded number of pages and then
+re-queues, so a large library needs several. At a 2 minute recurrence that
+resolves itself; nothing is lost, it just takes longer.
+
+### The zero-infrastructure fallback
+
+`.github/workflows/sweeps.yml` does the same job from GitHub Actions, and
+loops the crawl sweep until nothing is due so a library finishes in one run.
+It ships inert - set the repo Secrets
+`SHAREPOINT_SWEEP_SECRET` / `TRANSCRIPTION_SWEEP_SECRET` to enable it. The
+target comes from the `NEXT_PUBLIC_APP_URL` Variable that `deploy.yml`
+already uses, so there is no second copy of the hostname to keep in step.
+
+Understand what you are accepting: GitHub's scheduler has a 5 minute minimum,
+is routinely late by 15 minutes or more, drops runs when the platform is
+busy, and disables scheduled workflows after 60 days of repository
+inactivity. Fine for crawls, which resume exactly where they stopped.
+Mediocre for transcription notifications, where a person is waiting.
+
 ## GitHub configuration
 
 - **Repo Secrets:** `DATABASE_URL`, `AZURE_WEBAPP_PUBLISH_PROFILE`.
@@ -79,11 +182,20 @@ verifying, but people see a stale or duplicated name.
 
 Optional, and off unless the three `MICROSOFT_*` settings are present.
 
-**How access actually works, because two things are easy to conflate.** The
-invitation is the gate: an account can only be created for an address that
-already has a usable invitation, whatever sign-in method is used. Microsoft is
-how somebody proves they are that address. Turning Entra on does **not** open
-the app to everyone in the tenant.
+**How access actually works, because two things are easy to conflate.**
+`AUTH_ALLOWED_EMAIL_DOMAINS` is the gate, and it is the whole gate. Anyone in
+the tenant on a listed domain gets an account as a `member` on first sign-in -
+the app AUTO-PROVISIONS. Leaving that variable unset means **no restriction**,
+not "no access".
+
+An invitation is **not** a gate. It is a pre-assignment: a pending invitation
+matching the address Entra verified sets the role and team the person lands
+with. Without one they land as a member in no team, but they still land.
+
+So turning Entra on with a domain listed **does** open the app to everyone in
+the tenant on that domain, as members. That is the intended design, but it is
+the opposite of what an invitation-gated model would do, so decide it
+deliberately.
 
 Both rules are enforced in `src/lib/auth/account-creation-policy.ts` from a
 Better Auth `databaseHooks.user.create.before` hook - the database layer, not a

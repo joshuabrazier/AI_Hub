@@ -7,6 +7,7 @@ import {
   SUMMARY_STYLES,
   SUMMARY_STYLE_DESCRIPTIONS,
   SUMMARY_STYLE_LABELS,
+  SUMMARY_STYLE_RESULT_HEADINGS,
   SummariseTextSchema,
 } from "./summaries.types";
 
@@ -76,6 +77,24 @@ describe("the styles are completely described", () => {
     for (const style of Object.values(SUMMARY_STYLES)) {
       expect(SUMMARY_STYLE_LABELS[style], style).toBeTruthy();
       expect(SUMMARY_STYLE_DESCRIPTIONS[style], style).toBeTruthy();
+    }
+  });
+
+  it("names the result without repeating itself", () => {
+    // "Summary summary" - what the heading read before it had its own map,
+    // because it was built as `${label} summary` and one of the three
+    // labels is the noun rather than an adjective. No suffix reads
+    // correctly for all three, so each heading is written out.
+    expect(SUMMARY_STYLE_RESULT_HEADINGS[SUMMARY_STYLES.SUMMARY]).toBe("Summary");
+    expect(SUMMARY_STYLE_RESULT_HEADINGS[SUMMARY_STYLES.DETAILED]).toBe("Detailed summary");
+    expect(SUMMARY_STYLE_RESULT_HEADINGS[SUMMARY_STYLES.EXECUTIVE]).toBe("Executive summary");
+
+    // The general form of the same mistake, so a fourth style added later
+    // cannot reintroduce it under a different word.
+    for (const style of Object.values(SUMMARY_STYLES)) {
+      const words = SUMMARY_STYLE_RESULT_HEADINGS[style].toLowerCase().split(" ");
+
+      expect(new Set(words).size, SUMMARY_STYLE_RESULT_HEADINGS[style]).toBe(words.length);
     }
   });
 

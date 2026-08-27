@@ -36,6 +36,19 @@ export const SUMMARY_STYLE_LABELS: Record<SummaryStyle, string> = {
   [SUMMARY_STYLES.EXECUTIVE]: "Executive",
 };
 
+// What to call the result once it exists.
+//
+// A separate map rather than `${label} summary`, which is where "Summary
+// summary" came from. Two of the three labels are adjectives and one is the
+// noun itself, so there is no suffix that reads correctly for all of them -
+// composing a heading from a label only works when every label is the same
+// part of speech, and these are not.
+export const SUMMARY_STYLE_RESULT_HEADINGS: Record<SummaryStyle, string> = {
+  [SUMMARY_STYLES.DETAILED]: "Detailed summary",
+  [SUMMARY_STYLES.SUMMARY]: "Summary",
+  [SUMMARY_STYLES.EXECUTIVE]: "Executive summary",
+};
+
 // Shown under each option so somebody picks on purpose rather than guessing
 // from a one-word label.
 export const SUMMARY_STYLE_DESCRIPTIONS: Record<SummaryStyle, string> = {
