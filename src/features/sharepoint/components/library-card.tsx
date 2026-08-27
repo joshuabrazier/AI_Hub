@@ -64,9 +64,22 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
           return;
         }
 
-        // Queued, not done. Saying "crawl finished" here would be a lie
-        // for anything but a tiny library - the walk happens in the sweep.
-        toast.success("Queued. The crawl runs in the background.");
+        // Report what the inline slice ACTUALLY did. "Queued" was true and
+        // read as "nothing happened", which is how this button spent a week
+        // looking broken while working correctly.
+        const { itemsSeen, finished } = response.data;
+
+        if (finished) {
+          toast.success(`Done. ${itemsSeen.toLocaleString()} files and folders catalogued.`);
+        } else if (itemsSeen > 0) {
+          toast.success(
+            `Started. ${itemsSeen.toLocaleString()} items so far - the rest continues in the background.`,
+          );
+        } else {
+          // No progress in the inline slice. Not necessarily wrong, but not
+          // worth dressing up as success either.
+          toast.info("Crawl queued. It will continue in the background.");
+        }
       } catch (error) {
         handleFrontendErrorWithToast(error);
       }

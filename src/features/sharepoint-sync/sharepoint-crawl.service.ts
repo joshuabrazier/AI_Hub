@@ -111,7 +111,28 @@ export interface CrawlSliceResult {
 // have completely different remedies and a generic failure hides which is
 // which.
 // -------------------------------------------------------------------
-export async function runCrawlSliceService(crawlId: string): Promise<CrawlSliceResult> {
+// -------------------------------------------------------------------
+// How much work one slice may do.
+//
+// The sweep leaves both unset and gets the full 25-page slice. A BUTTON
+// PRESS passes a small budget instead, because the two have completely
+// different constraints: a scheduler is happy to wait 25 seconds, and a
+// person watching a spinner is not.
+//
+// `budgetMs` bounds by WALL CLOCK rather than pages, which is what actually
+// matters. A fast library gets through more pages inside the budget, a slow
+// one bails out earlier, and neither ends up holding a request open long
+// enough to meet App Service's 230 second front-end timeout.
+// -------------------------------------------------------------------
+export interface CrawlSliceOptions {
+  maxPages?: number;
+  budgetMs?: number;
+}
+
+export async function runCrawlSliceService(
+  crawlId: string,
+  options: CrawlSliceOptions = {},
+): Promise<CrawlSliceResult> {
   const now = new Date();
 
   // The claim IS the lock. Failing it means another slice is already
@@ -131,7 +152,7 @@ export async function runCrawlSliceService(crawlId: string): Promise<CrawlSliceR
   }
 
   try {
-    return await walkClaimedCrawl(claimed);
+    return await walkClaimedCrawl(claimed, options);
   } catch (error) {
     // Anything that got past the classified failures below is a real
     // fault. The crawl is failed rather than left running, so it stops
@@ -151,7 +172,12 @@ export async function runCrawlSliceService(crawlId: string): Promise<CrawlSliceR
 // -------------------------------------------------------------------
 // The walk itself, on a crawl this process now owns.
 // -------------------------------------------------------------------
-async function walkClaimedCrawl(crawl: SharepointCrawl): Promise<CrawlSliceResult> {
+async function walkClaimedCrawl(
+  crawl: SharepointCrawl,
+  options: CrawlSliceOptions = {},
+): Promise<CrawlSliceResult> {
+  const maxPages = options.maxPages ?? MAX_PAGES_PER_SLICE;
+  const startedAtMs = Date.now();
   const drive = await getSharepointDriveRepo(crawl.driveId);
 
   if (!drive) {
@@ -195,7 +221,12 @@ async function walkClaimedCrawl(crawl: SharepointCrawl): Promise<CrawlSliceResul
   let itemsSeen = crawl.itemsSeen;
   let itemsDeleted = 0;
 
-  for (let page = 0; page < MAX_PAGES_PER_SLICE; page++) {
+  for (let page = 0; page < maxPages; page++) {
+    // Out of time rather than out of pages. Checked BEFORE the fetch, so
+    // the budget bounds when we stop ASKING - bounding it after the fact
+    // would let one slow page overrun the whole allowance.
+    if (options.budgetMs !== undefined && Date.now() - startedAtMs >= options.budgetMs) break;
+
     let deltaPage;
 
     try {
@@ -316,7 +347,7 @@ async function walkClaimedCrawl(crawl: SharepointCrawl): Promise<CrawlSliceResul
   // that has never started looks like. Saying it yielded mid-library is the
   // difference between "working, come back" and "nothing is running this".
   console.info(
-    `[sharepoint-crawl] crawl=${crawl.id} yielded after ${MAX_PAGES_PER_SLICE} pages ` +
+    `[sharepoint-crawl] crawl=${crawl.id} yielded after ${pagesDone - crawl.pagesDone} pages ` +
       `(${itemsSeen} items so far) - requeued to continue`,
   );
 
