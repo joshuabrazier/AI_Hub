@@ -104,6 +104,31 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+// -------------------------------------------------------------------
+// Percent-decode, or give back what we were given.
+//
+// decodeURIComponent THROWS on a percent sign that does not begin a valid
+// escape, and real document libraries are full of them: "Q1 100% complete",
+// "50% off", "Margin % by client". Graph does not always encode them, so
+// the raw path arrives with a bare % in it and the decode blows up.
+//
+// That is not a hypothetical. It killed a real crawl of a real library
+// after 11,465 items and 50 pages: one folder name, whole run failed,
+// reported as "URI malformed" with nothing naming the folder. An item we
+// can read perfectly well must never be lost to a cosmetic step.
+//
+// Falling back to the raw text is not a compromise. It is what SharePoint
+// actually sent, so a literal % displays as a literal %, and DEPTH IS
+// UNAFFECTED either way - slashes are structure and are never encoded.
+// -------------------------------------------------------------------
+function safeDecode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
 // Graph sends ISO 8601. An unparseable one becomes NULL rather than an
 // Invalid Date, which would reach Postgres and fail the whole page.
 function asDate(value: unknown): Date | null {
@@ -134,7 +159,7 @@ export function parseFolderPath(rawPath: unknown): { path: string | null; depth:
   if (marker < 0) return { path: null, depth: null };
 
   // Everything after "root:", with any leading slash removed.
-  const folder = decodeURIComponent(text.slice(marker + "root:".length)).replace(/^\/+/, "");
+  const folder = safeDecode(text.slice(marker + "root:".length)).replace(/^\/+/, "");
 
   if (folder === "") return { path: "/", depth: 0 };
 

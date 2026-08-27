@@ -112,6 +112,11 @@ export interface SharepointCrawlDTO {
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
+  // WHEN ANYTHING LAST TOUCHED THIS ROW, which is the single most useful
+  // fact when a crawl looks stuck. A status on its own cannot distinguish
+  // "queued a moment ago" from "queued yesterday and nothing has come for
+  // it", and those need completely different actions.
+  updatedAt: string;
 }
 
 // -------------------------------------------------------------------
@@ -132,4 +137,9 @@ export interface SharepointDriveDTO {
   deletedItems: number;
   totalBytes: number;
   latestCrawl: SharepointCrawlDTO | null;
+  // The recent runs, newest first, INCLUDING the latest. Already fetched to
+  // work out the latest one, and thrown away until now - which meant the
+  // screen could show a crawl sitting at "Queued" with no way to see whether
+  // that had happened before, or whether anything had ever run at all.
+  recentCrawls: SharepointCrawlDTO[];
 }
