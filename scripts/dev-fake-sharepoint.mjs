@@ -77,7 +77,10 @@ const DEPARTMENTS = [
   "Templates",
 ];
 
-const YEARS = ["2023", "2024", "2025"];
+// One of these is deliberately awful. A bare percent sign is not valid
+// percent-encoding, and a real library containing one killed a real crawl
+// after 11,465 items - so the fake carries the shape that broke it.
+const YEARS = ["2023", "2024 100% complete", "2025"];
 
 const EXTENSIONS = ["docx", "xlsx", "pdf", "pptx", "msg", "csv"];
 

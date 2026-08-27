@@ -238,7 +238,22 @@ async function walkClaimedCrawl(crawl: SharepointCrawl): Promise<CrawlSliceResul
       // not what we understand, which is emphatically not the same as the
       // library being empty, and the crawl must stop rather than record a
       // clean result it never observed.
-      if (error instanceof GraphContractError) throw error;
+      //
+      // BUT IT TRAVELS WITH WHERE IT HAPPENED. A real crawl died here after
+      // 11,465 items and its recorded error was the bare string "URI
+      // malformed" - true, and useless. Which page, and how far in, is the
+      // difference between "look at page 51 of that library" and reading
+      // the whole thing.
+      const where =
+        `page ${pagesDone + 1} of this crawl (${itemsSeen} items in so far)`;
+
+      if (error instanceof GraphContractError) {
+        throw new GraphContractError(`${error.message} - failed on ${where}`);
+      }
+
+      if (error instanceof Error) {
+        error.message = `${error.message} - failed on ${where}`;
+      }
 
       throw error;
     }
@@ -262,6 +277,11 @@ async function walkClaimedCrawl(crawl: SharepointCrawl): Promise<CrawlSliceResul
     if (deltaPage.deltaLink) {
       // The end. Only now is it true that we have seen the whole library,
       // so only now may the cursor for next time be stored.
+      console.info(
+        `[sharepoint-crawl] crawl=${crawl.id} COMPLETED - ${itemsSeen} items over ${pagesDone} pages, ` +
+          `${itemsDeleted} tombstoned`,
+      );
+
       await setSharepointDriveDeltaLinkRepo(drive.driveId, deltaPage.deltaLink);
 
       await updateSharepointCrawlRepo(crawl.id, {
@@ -291,6 +311,15 @@ async function walkClaimedCrawl(crawl: SharepointCrawl): Promise<CrawlSliceResul
 
   // Out of pages, not out of library. Back to the queue with the cursor
   // saved, so the next sweep picks up exactly here.
+  //
+  // Logged because "queued" on its own is ambiguous: it is also what a crawl
+  // that has never started looks like. Saying it yielded mid-library is the
+  // difference between "working, come back" and "nothing is running this".
+  console.info(
+    `[sharepoint-crawl] crawl=${crawl.id} yielded after ${MAX_PAGES_PER_SLICE} pages ` +
+      `(${itemsSeen} items so far) - requeued to continue`,
+  );
+
   await updateSharepointCrawlRepo(crawl.id, {
     status: SHAREPOINT_CRAWL_STATUSES.QUEUED,
     nextLink: url,
@@ -319,6 +348,11 @@ async function parkForThrottle(
   progress: { pagesDone: number; itemsSeen: number; itemsDeleted: number },
 ): Promise<CrawlSliceResult> {
   const seconds = error.retryAfterSeconds ?? 60;
+
+  console.info(
+    `[sharepoint-crawl] crawl=${crawl.id} PARKED - SharePoint asked for ${seconds}s ` +
+      `(${progress.itemsSeen} items over ${progress.pagesDone} pages so far)`,
+  );
 
   applyThrottle(seconds);
 
@@ -353,6 +387,10 @@ async function parkForThrottle(
 // the failure was before the first page.
 // -------------------------------------------------------------------
 async function parkForReauth(crawl: SharepointCrawl, message: string): Promise<CrawlSliceResult> {
+  // Terminal and needs a person, so it is the one park worth a louder level:
+  // nothing will retry it and nobody is watching the row.
+  console.warn(`[sharepoint-crawl] crawl=${crawl.id} NEEDS RE-AUTH - ${message}`);
+
   await updateSharepointCrawlRepo(crawl.id, {
     status: SHAREPOINT_CRAWL_STATUSES.NEEDS_REAUTH,
     error: message.slice(0, 1000),
@@ -394,11 +432,35 @@ export async function sweepSharepointCrawlsService(): Promise<CrawlSweepResult> 
 
     const slices: CrawlSliceResult[] = [];
 
+    // -----------------------------------------------------------------
+    // LOG EVERY INVOCATION, including the ones that find nothing.
+    //
+    // "Is anything calling this at all" is the first question when a crawl
+    // sits at Queued, and a job that only logs when it does work cannot
+    // answer it - silence means both "not scheduled" and "nothing due".
+    //
+    // Counts and ids only. No site names, no library names, no file paths:
+    // a scheduler's log must not become a second, unguarded copy of the
+    // disclosive half of the inventory.
+    // -----------------------------------------------------------------
+    console.info(
+      `[sharepoint-sweep] start reclaimed=${reclaimed} due=${due.length}` +
+        (due.length > 0 ? ` crawls=${due.map((crawl) => crawl.id).join(",")}` : ""),
+    );
+
     // SEQUENTIAL, not concurrent. The throttle budget is per application
     // per tenant, so running libraries in parallel does not go faster - it
     // just reaches the limit sooner, and every crawl pays for it.
     for (const crawl of due) {
-      slices.push(await runCrawlSliceService(crawl.id));
+      const startedAt = Date.now();
+      const slice = await runCrawlSliceService(crawl.id);
+      slices.push(slice);
+
+      console.info(
+        `[sharepoint-sweep] crawl=${slice.crawlId} status=${slice.status} ` +
+          `pages=${slice.pagesDone} items=${slice.itemsSeen} deleted=${slice.itemsDeleted} ` +
+          `tookMs=${Date.now() - startedAt}`,
+      );
     }
 
     return { reclaimed, examined: due.length, slices };

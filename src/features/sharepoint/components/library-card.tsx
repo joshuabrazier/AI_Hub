@@ -169,6 +169,19 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
             {crawl.itemsSeen.toLocaleString()} items seen over {crawl.pagesDone.toLocaleString()} pages
           </span>
 
+          {/* WHEN, not just what. A status with no time attached cannot tell
+              "queued a moment ago" from "queued yesterday and nothing has
+              come for it", and those need opposite responses. */}
+          <span className="text-muted-foreground">
+            queued {formatDateTime(crawl.createdAt)}
+          </span>
+
+          {/* Only worth showing once it differs from the queue time, which is
+              exactly when something has actually touched the row. */}
+          {crawl.updatedAt !== crawl.createdAt ? (
+            <span className="text-muted-foreground">last activity {formatDateTime(crawl.updatedAt)}</span>
+          ) : null}
+
           {crawl.status === SHAREPOINT_CRAWL_STATUSES.PAUSED_THROTTLED && crawl.throttledUntil ? (
             <span className="text-muted-foreground">resumes after {formatDateTime(crawl.throttledUntil)}</span>
           ) : null}
@@ -195,6 +208,39 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
           No crawl has been run on this library yet.
         </p>
       )}
+
+      {/* Recent runs.
+          Already fetched to work out the latest one and previously thrown
+          away, which left no way to answer the first question anybody asks
+          of a stuck crawl: has this ever worked? An empty history and a
+          history of failures look nothing alike, and both look like
+          "Queued" on its own. */}
+      {drive.recentCrawls.length > 1 ? (
+        <details className="mt-4 border-t border-border pt-3">
+          <summary className="cursor-pointer text-sm text-muted-foreground">
+            Recent runs ({drive.recentCrawls.length})
+          </summary>
+
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {drive.recentCrawls.map((run) => (
+              <li key={run.id} className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
+                <Badge
+                  variant={run.isFailure ? "destructive" : run.isFinished ? "success" : "secondary"}
+                  className="text-[11px]"
+                >
+                  {run.statusLabel}
+                </Badge>
+                <span>{formatDateTime(run.createdAt)}</span>
+                <span>
+                  {run.itemsSeen.toLocaleString()} items, {run.pagesDone.toLocaleString()} pages
+                </span>
+                {run.finishedAt ? <span>finished {formatDateTime(run.finishedAt)}</span> : null}
+                {run.error ? <span className="w-full text-destructive">{run.error}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
 
       {drive.nominatedByName ? (
         <p className="mt-3 text-xs text-muted-foreground">Added by {drive.nominatedByName}</p>

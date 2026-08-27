@@ -330,6 +330,7 @@ export async function listSharepointDrivesService(): Promise<SharepointDriveDTO[
           deletedItems: totals.deletedItems,
           totalBytes: totals.totalBytes,
           latestCrawl: crawls[0] ? toCrawlDTO(crawls[0]) : null,
+          recentCrawls: crawls.map(toCrawlDTO),
         } satisfies SharepointDriveDTO;
       }),
     );
@@ -379,5 +380,6 @@ function toCrawlDTO(crawl: SharepointCrawl): SharepointCrawlDTO {
     startedAt: crawl.startedAt?.toISOString() ?? null,
     finishedAt: crawl.finishedAt?.toISOString() ?? null,
     createdAt: crawl.createdAt.toISOString(),
+    updatedAt: crawl.updatedAt.toISOString(),
   };
 }
