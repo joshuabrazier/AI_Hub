@@ -111,6 +111,26 @@ export function NominateLibraryForm() {
         <div className="mt-5 border-t border-border pt-4">
           <p className="text-sm font-medium text-foreground">{lookup.siteName}</p>
 
+          {/* The tenant root resolves, so without saying this a person who
+              pasted a "Copy link" URL sees a real site name and an empty
+              list, and concludes the feature is broken rather than that we
+              read their address wrongly. */}
+          {lookup.isTenantRoot ? (
+            <div
+              role="status"
+              className="mt-3 rounded-lg border border-data-caution/40 bg-data-caution-surface p-3 text-sm text-data-caution-text"
+            >
+              <p className="font-semibold">This is your tenant root site, not the one in that address.</p>
+              <p className="mt-0.5">
+                No site name could be read from what you pasted, so the root site was used instead. Open the
+                library in SharePoint and copy the address from the browser bar - it should contain
+                <span className="font-mono"> /sites/ </span>
+                or
+                <span className="font-mono"> /teams/</span>.
+              </p>
+            </div>
+          ) : null}
+
           {lookup.libraries.length === 0 ? (
             <p className="mt-1 text-sm text-muted-foreground">
               No document libraries on this site. If you were expecting one, check that you can open it in

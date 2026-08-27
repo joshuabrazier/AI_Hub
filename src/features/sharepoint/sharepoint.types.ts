@@ -72,6 +72,14 @@ export interface SharepointSiteLookup {
   siteName: string;
   siteWebUrl: string | null;
   libraries: SharepointLibraryOption[];
+  // We could not read a site out of the pasted address and fell back to the
+  // tenant root.
+  //
+  // THE SCREEN MUST SAY SO. The root site RESOLVES, so without this the
+  // person sees a real site name and an empty library list and concludes
+  // the feature is broken - when what actually happened is that we answered
+  // a question they did not ask.
+  isTenantRoot: boolean;
 }
 
 // -------------------------------------------------------------------
@@ -88,6 +96,15 @@ export interface SharepointCrawlDTO {
   statusLabel: string;
   isFailure: boolean;
   isFinished: boolean;
+  // Unfinished, and nothing has touched it for a long time.
+  //
+  // A crawl only advances when something POSTs the sweep endpoint. With no
+  // timer wired up a crawl sits at "queued, 0 pages" forever, and the screen
+  // has no way to tell that apart from "about to start" - so it says nothing
+  // and the feature looks broken. Computed server-side from the row's own
+  // updatedAt, because doing it in the component would need the current time
+  // during render and mismatch on hydration.
+  looksStalled: boolean;
   itemsSeen: number;
   pagesDone: number;
   error: string | null;

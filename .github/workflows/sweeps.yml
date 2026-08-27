@@ -1,0 +1,166 @@
+name: Background sweeps
+
+# -------------------------------------------------------------------
+# TEMPLATE - inert until you configure it.
+#
+# Two features in this app queue work and rely on something calling an
+# endpoint to carry it forward. Nothing in the app does that by itself:
+#
+#   /api/jobs/sharepoint-crawl-sweep   a queued crawl only ever walks when
+#                                      this is called. Without it the admin
+#                                      screen sits at "Queued, 0 pages"
+#                                      forever.
+#   /api/jobs/transcription-sweep      without it a transcription only
+#                                      advances while somebody has the page
+#                                      open, so a locked phone never gets a
+#                                      "ready" notification.
+#
+# To turn this on:
+#   1. Set the repo Secrets SHAREPOINT_SWEEP_SECRET and/or
+#      TRANSCRIPTION_SWEEP_SECRET to the same values as the App Service
+#      settings of those names.
+#
+# The target comes from the NEXT_PUBLIC_APP_URL repo Variable that deploy.yml
+# already uses, so there is no second copy of the hostname to drift.
+#
+# THAT VARIABLE HOLDS A BARE HOSTNAME, no scheme - deploy.yml prepends
+# https:// for the same reason (see the note above its Build step, and keep
+# the Variable itself scheme-less). Every URL below therefore adds the
+# scheme. Passing the bare host to curl would let it guess, which means
+# http, which means a redirect that drops the POST body and the auth header
+# and reports a cheerful 200 having done nothing.
+#
+# Each endpoint is SKIPPED when its secret is not set, so you can enable
+# one without the other, and the workflow does nothing at all until
+# NEXT_PUBLIC_APP_URL exists.
+#
+# ===================================================================
+# READ THIS BEFORE RELYING ON IT
+# ===================================================================
+# GitHub's scheduler is best-effort. The minimum interval is 5 minutes and
+# runs are routinely delayed, sometimes by 15 minutes or more, and can be
+# dropped entirely when the platform is busy. Scheduled workflows are also
+# disabled automatically after 60 days with no repository activity.
+#
+# That is fine for SharePoint crawls - a crawl resumes exactly where it
+# stopped, so a late sweep costs nothing but time. It is mediocre for
+# transcription notifications, where the delay is felt by a person waiting.
+#
+# FOR PRODUCTION, PREFER AN AZURE LOGIC APP or a timer-triggered Function.
+# A Logic App with a 2 minute recurrence and one HTTP action costs very
+# little and actually keeps to its schedule. See docs/deployment.md.
+# This workflow exists so the feature is not dead in the water while that
+# is being set up, and as a zero-infrastructure option for small
+# deployments.
+# -------------------------------------------------------------------
+on:
+  schedule:
+    # Every 5 minutes, the finest granularity GitHub allows.
+    - cron: "*/5 * * * *"
+  # So you can prove it works without waiting for the schedule.
+  workflow_dispatch:
+
+concurrency:
+  # Never two sweeps at once. The crawl service claims each row so a second
+  # caller is refused rather than double-walking a library, but there is no
+  # reason to spend the request finding that out.
+  group: sweeps-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      # Every enable/skip decision is made HERE and exposed as an output.
+      #
+      # Deliberately not `if: env.SECRET != ''` on each step: a step's own
+      # `env:` block is not dependably readable from that step's own `if`,
+      # and the failure mode is silent - the step is skipped, the sweep never
+      # runs, and the workflow still reports green.
+      - name: Check what is configured
+        id: config
+        env:
+          # The RAW variable, not the prefixed URL. Checking "https://$HOST"
+          # for emptiness would always pass, because the scheme alone is not
+          # an empty string - and the workflow would then curl "https:///..."
+          # on every schedule and fail rather than skip.
+          HOST: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          SP: ${{ secrets.SHAREPOINT_SWEEP_SECRET }}
+          TR: ${{ secrets.TRANSCRIPTION_SWEEP_SECRET }}
+        run: |
+          if [ -n "$HOST" ]; then echo "base=true" >> "$GITHUB_OUTPUT"; else
+            echo "NEXT_PUBLIC_APP_URL is not set - this workflow ships as an unconfigured template."
+            echo "base=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$SP" ]; then echo "sharepoint=true" >> "$GITHUB_OUTPUT"; else
+            echo "SHAREPOINT_SWEEP_SECRET is not set - skipping the crawl sweep."
+            echo "sharepoint=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$TR" ]; then echo "transcription=true" >> "$GITHUB_OUTPUT"; else
+            echo "TRANSCRIPTION_SWEEP_SECRET is not set - skipping the transcription sweep."
+            echo "transcription=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # -------------------------------------------------------------
+      # The SharePoint crawl sweep.
+      #
+      # Called repeatedly rather than once: one call walks a bounded number
+      # of pages and then puts the crawl back in the queue, so a large
+      # library needs several. Looping here finishes a library in one run
+      # instead of one slice every five minutes, which for a 30-page library
+      # is the difference between minutes and half an hour.
+      #
+      # It stops as soon as there is nothing due, so an idle tenant costs
+      # one request.
+      # -------------------------------------------------------------
+      - name: SharePoint crawl sweep
+        if: steps.config.outputs.base == 'true' && steps.config.outputs.sharepoint == 'true'
+        env:
+          SECRET: ${{ secrets.SHAREPOINT_SWEEP_SECRET }}
+          BASE: https://${{ vars.NEXT_PUBLIC_APP_URL }}
+        run: |
+          for i in $(seq 1 10); do
+            body=$(curl -sS -X POST \
+              -H "Authorization: Bearer $SECRET" \
+              -w '\n%{http_code}' \
+              "$BASE/api/jobs/sharepoint-crawl-sweep") || exit 1
+
+            code=$(printf '%s' "$body" | tail -n1)
+            json=$(printf '%s' "$body" | sed '$d')
+
+            echo "call $i -> HTTP $code $json"
+
+            if [ "$code" = "503" ]; then
+              echo "The endpoint is not configured on the server (SHAREPOINT_SWEEP_SECRET unset there)."
+              exit 1
+            fi
+            if [ "$code" != "200" ]; then
+              echo "Sweep failed with HTTP $code"
+              exit 1
+            fi
+
+            # Nothing was due, so there is nothing left to carry forward.
+            echo "$json" | grep -q '"examined":0' && break
+          done
+
+      - name: Transcription sweep
+        if: steps.config.outputs.base == 'true' && steps.config.outputs.transcription == 'true'
+        env:
+          SECRET: ${{ secrets.TRANSCRIPTION_SWEEP_SECRET }}
+          BASE: https://${{ vars.NEXT_PUBLIC_APP_URL }}
+        run: |
+          body=$(curl -sS -X POST \
+            -H "Authorization: Bearer $SECRET" \
+            -w '\n%{http_code}' \
+            "$BASE/api/jobs/transcription-sweep") || exit 1
+
+          code=$(printf '%s' "$body" | tail -n1)
+          json=$(printf '%s' "$body" | sed '$d')
+
+          echo "HTTP $code $json"
+
+          if [ "$code" = "503" ]; then
+            echo "The endpoint is not configured on the server (TRANSCRIPTION_SWEEP_SECRET unset there)."
+            exit 1
+          fi
+          [ "$code" = "200" ] || exit 1

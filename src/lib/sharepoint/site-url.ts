@@ -28,6 +28,35 @@
 // is treated as content inside the tenant root site.
 const MANAGED_PATHS = ["sites", "teams"];
 
+// -------------------------------------------------------------------
+// SHARING LINKS, which is what the "Copy link" button actually produces
+// and therefore what people actually paste.
+//
+// They do not look like an address bar URL at all. The first segment is a
+// type marker - :f: for a folder, :w: for Word, :x: for Excel, :b: for a
+// PDF and so on - and the SITE is encoded in what follows:
+//
+//   /:f:/s/Finance/EqX7abc?e=...        s = sites,  so /sites/Finance
+//   /:f:/t/Marketing/EqX7abc?e=...      t = teams,  so /teams/Marketing
+//   /:w:/r/sites/Finance/a/b.docx       r = the real server-relative path
+//   /:x:/g/personal/someone_example/... g = somebody's OneDrive, not a site
+//
+// This mattered more than it looks. Without it the marker segment failed
+// the managed-path check and the whole address fell through to "tenant
+// root" - which RESOLVES, to a different and usually empty site. The
+// person sees a real site name and an empty library and concludes the
+// feature is broken, when what actually happened is that we answered a
+// question they did not ask.
+// -------------------------------------------------------------------
+const SHARING_MARKER = /^:[a-z]:$/i;
+
+const SHARING_SCOPES: Record<string, string> = { s: "sites", t: "teams" };
+
+// OneDrive for Business, reached through the same host. A personal drive is
+// not a site and has no document libraries to nominate, so it is refused by
+// name rather than resolved into something misleading.
+const PERSONAL_SCOPES = new Set(["g", "p", "u"]);
+
 export interface SharepointSiteAddress {
   // The tenant host, eg "contoso.sharepoint.com".
   hostname: string;
@@ -35,6 +64,14 @@ export interface SharepointSiteAddress {
   // the tenant root site, which is a real address and not a failure - see
   // fetchSite for how the two are spelled differently to Graph.
   sitePath: string;
+  // Whether we fell back to the tenant root rather than reading a site out
+  // of the address.
+  //
+  // THE CALLER MUST SURFACE THIS. The root site resolves, so a person who
+  // pasted an address we could not read gets a real site name and an empty
+  // library, and reasonably concludes the feature is broken. Reporting it
+  // is what turns a silent wrong answer into a visible one.
+  isTenantRoot: boolean;
 }
 
 export class SharepointUrlError extends Error {
@@ -80,14 +117,53 @@ export function parseSharepointSiteUrl(rawUrl: string): SharepointSiteAddress {
     throw new SharepointUrlError("The address has no site in it");
   }
 
-  const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  let segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+
+  // Unwrap a sharing link before anything else, so the rest of this
+  // function only ever sees an ordinary server-relative path.
+  if (segments.length > 0 && SHARING_MARKER.test(segments[0])) {
+    const scope = (segments[1] ?? "").toLowerCase();
+
+    if (PERSONAL_SCOPES.has(scope)) {
+      throw new SharepointUrlError(
+        "That is a link to somebody's personal OneDrive, not a SharePoint site. Open the site in SharePoint and use its address instead.",
+      );
+    }
+
+    if (SHARING_SCOPES[scope] && segments[2]) {
+      // /:f:/s/Finance/... - the scope letter stands in for the managed path.
+      return {
+        hostname: url.hostname,
+        sitePath: `/${SHARING_SCOPES[scope]}/${segments[2]}`,
+        isTenantRoot: false,
+      };
+    }
+
+    if (scope === "r") {
+      // /:w:/r/sites/Finance/... - what follows is the real path, so carry
+      // on with it and let the ordinary rules below apply.
+      segments = segments.slice(2);
+    } else {
+      // A marker we do not recognise. Refusing is right: the alternative is
+      // the tenant-root fallback below, which resolves to a REAL but
+      // different site and reads as "the library is empty".
+      throw new SharepointUrlError(
+        "That link could not be read as a SharePoint site address. Open the library in SharePoint and copy the address from the browser bar instead.",
+      );
+    }
+  }
 
   // The tenant root site. A legitimate address, and the caller has to be
   // able to tell it apart from a failure, which is why this returns an
   // empty path rather than throwing or guessing a default.
+  //
+  // IT IS ALSO THE DANGEROUS ANSWER, because it resolves. Anything that
+  // reaches here without a managed path gets the root site, so the caller
+  // is told this happened - see isTenantRoot on the result - and the screen
+  // says which site it actually resolved.
   if (segments.length < 2 || !MANAGED_PATHS.includes(segments[0].toLowerCase())) {
-    return { hostname: url.hostname, sitePath: "" };
+    return { hostname: url.hostname, sitePath: "", isTenantRoot: true };
   }
 
-  return { hostname: url.hostname, sitePath: `/${segments[0]}/${segments[1]}` };
+  return { hostname: url.hostname, sitePath: `/${segments[0]}/${segments[1]}`, isTenantRoot: false };
 }
