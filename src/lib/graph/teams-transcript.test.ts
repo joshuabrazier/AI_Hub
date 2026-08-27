@@ -141,6 +141,130 @@ describe("parseTeamsVtt", () => {
   });
 });
 
+// -------------------------------------------------------------------
+// Shapes Microsoft's own documentation shows and an obvious parser does not
+// survive. Every one of these failed silently before it was handled: the cue
+// was dropped, and because consecutive same-speaker cues merge afterwards,
+// the result read as a perfectly ordinary transcript that was simply missing
+// something. That is the failure mode worth the most tests.
+// -------------------------------------------------------------------
+describe("parseTeamsVtt, shapes that used to be dropped silently", () => {
+  it("keeps a cue whose offset is NEGATIVE, clamped to the start", () => {
+    // Microsoft: "Negative offsets indicate that the transcription began
+    // while the conversation was ongoing." In other words, every meeting
+    // where somebody pressed transcribe a minute late. Dropping these loses
+    // the opening of the meeting and nothing says so.
+    const late = [
+      "WEBVTT",
+      "",
+      "-00:00:05.223 --> 00:00:02.100",
+      "<v Joshua Brazier>We were already talking about the migration.</v>",
+      "",
+      "00:00:02.200 --> 00:00:04.000",
+      "<v Louis Dodo>Right, and it is applied.</v>",
+    ].join("\n");
+
+    const segments = parseTeamsVtt(late);
+
+    expect(segments).toHaveLength(2);
+    expect(segments[0].text).toBe("We were already talking about the migration.");
+    // Clamped rather than negated: an offset into a recording has no meaning
+    // below zero, and a negative value would sort before the meeting began.
+    expect(segments[0].startMs).toBe(0);
+    expect(segments[0].endMs).toBe(2_100);
+  });
+
+  it("reads the first turn when WEBVTT is glued to it with no blank line", () => {
+    // Microsoft's own examples do exactly this. Testing lines[0] for a header
+    // before looking for a timing line would throw away the whole block - the
+    // first speaker turn of every meeting.
+    const glued = ["WEBVTT", "00:00:01.000 --> 00:00:03.000", "<v Sam>The very first thing said.</v>"].join(
+      "\n",
+    );
+
+    const segments = parseTeamsVtt(glued);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0].text).toBe("The very first thing said.");
+    expect(segments[0].speakerName).toBe("Sam");
+  });
+
+  it("splits a cue carrying two voice spans instead of merging two people", () => {
+    // The worst failure this feature can have: one turn containing two
+    // people's words, attributed entirely to whoever spoke first. A
+    // transcript confidently wrong about who said something is worse than one
+    // that says nothing.
+    const shared = [
+      "WEBVTT",
+      "",
+      "00:00:01.000 --> 00:00:04.000",
+      "<v Joshua Brazier>Are we agreed?</v><v Louis Dodo>Agreed.</v>",
+    ].join("\n");
+
+    const segments = parseTeamsVtt(shared);
+
+    expect(segments).toHaveLength(2);
+    expect(segments.map((segment) => segment.speakerName)).toEqual(["Joshua Brazier", "Louis Dodo"]);
+    expect(segments[1].text).toBe("Agreed.");
+  });
+
+  it("keeps the name on a classed voice tag", () => {
+    // <v.loud Sam> is legal WebVTT. Without tolerating the class the turn
+    // survives but loses its name, which is the one thing this whole feature
+    // exists for.
+    const classed = ["WEBVTT", "", "00:00:01.000 --> 00:00:02.000", "<v.loud Sam>Over here.</v>"].join("\n");
+
+    expect(parseTeamsVtt(classed)[0].speakerName).toBe("Sam");
+  });
+
+  it("parses a single-digit seconds field", () => {
+    const terse = ["WEBVTT", "", "00:00:1.5 --> 00:00:2.0", "<v Sam>Brief.</v>"].join("\n");
+
+    expect(parseTeamsVtt(terse)[0].startMs).toBe(1_500);
+  });
+
+  it("still skips NOTE and STYLE blocks now that headers are not matched first", () => {
+    // The header check moved AFTER the timing search, so this guards the
+    // thing that change could have broken.
+    const noisy = [
+      "WEBVTT",
+      "",
+      "NOTE 00:00:01.000 --> 00:00:02.000 looks like a cue but is a note",
+      "",
+      "STYLE",
+      "::cue { color: white }",
+      "",
+      "00:00:05.000 --> 00:00:06.000",
+      "<v Sam>Only this is a cue.</v>",
+    ].join("\n");
+
+    const segments = parseTeamsVtt(noisy);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0].text).toBe("Only this is a cue.");
+  });
+
+  it("does not merge two people who each speak twice in a row", () => {
+    // Guards the merge rule against the multi-span change: merging is by
+    // speaker name, and the split must not let a second span join a previous
+    // turn from a different person.
+    const alternating = [
+      "WEBVTT",
+      "",
+      "00:00:01.000 --> 00:00:02.000",
+      "<v A>One.</v><v B>Two.</v>",
+      "",
+      "00:00:02.000 --> 00:00:03.000",
+      "<v B>Three.</v>",
+    ].join("\n");
+
+    const segments = parseTeamsVtt(alternating);
+
+    expect(segments.map((segment) => segment.speakerName)).toEqual(["A", "B"]);
+    expect(segments[1].text).toBe("Two. Three.");
+  });
+});
+
 describe("teamsSegmentsToText", () => {
   it("labels each turn with the person's name", () => {
     const text = teamsSegmentsToText(parseTeamsVtt(TEAMS_VTT));

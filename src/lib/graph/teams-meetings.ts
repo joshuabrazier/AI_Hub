@@ -6,6 +6,7 @@ import {
   GraphRequestError,
   graphRequest,
   graphStatusOf,
+  readGraphInnerErrorCode,
 } from "@/lib/sharepoint/graph-client";
 
 // -------------------------------------------------------------------
@@ -34,6 +35,39 @@ import {
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
+// -------------------------------------------------------------------
+// Ask Outlook for ids that do not change.
+//
+// AN ORDINARY EVENT ID IS NOT STABLE. Microsoft documents that it changes
+// when the item moves between containers - a different calendar, a different
+// folder - and this app uses that id as half of `source_ref`, the key that
+// makes importing idempotent. Without this header, somebody moving a meeting
+// between calendars gets a second row and a second paid summary of a meeting
+// they already have: precisely the outcome the unique index exists to stop.
+//
+// IT MUST BE SENT ON EVERY CALL THAT RETURNS AN ID WE COMPARE. The header
+// applies only to the request it travels with, so an id listed with it will
+// not match the same event fetched without it. Both calls below carry it, and
+// a third one added later must too.
+// -------------------------------------------------------------------
+const IMMUTABLE_ID_HEADERS = { Prefer: 'IdType="ImmutableId"' } as const;
+
+// -------------------------------------------------------------------
+// The two 403s that are NOT about the signed-in person.
+//
+// Both are tenant-wide Teams settings that default to OFF, and neither can be
+// fixed by the person meeting the error - no amount of signing in again
+// helps. They are named here so the message can name the setting instead.
+// -------------------------------------------------------------------
+export const TEAMS_TRANSCRIPT_ERRORS = {
+  // Graph access to meeting transcripts is switched off for the whole tenant.
+  // Microsoft: "There is no request-side workaround."
+  GRAPH_ACCESS_DISABLED: "GraphAccessToTranscriptsDisabled",
+  // Transcripts are readable, but not the attributed form that carries who
+  // said what - which is the entire reason this app prefers Teams.
+  ATTRIBUTION_DISABLED: "SpeakerAttributionNotAllowed",
+} as const;
+
 // How far back the meeting list looks. Teams keeps transcripts far longer,
 // but a list is something somebody scans - a fortnight is enough to find
 // the meeting you just left without becoming a wall of history.
@@ -44,7 +78,11 @@ export const MEETING_LOOKBACK_DAYS = 14;
 const MAX_EVENTS = 100;
 
 export type TeamsMeetingSummary = {
-  /** The calendar event id - stable, and what the import request carries. */
+  /**
+   * The calendar event's IMMUTABLE id - see IMMUTABLE_ID_HEADERS. An ordinary
+   * event id changes when the event moves between calendars, and this one is
+   * half of the key that makes importing idempotent.
+   */
   eventId: string;
   subject: string;
   joinUrl: string;
@@ -100,7 +138,7 @@ function toInstant(value: string | undefined): Date | null {
 export async function listRecentTeamsMeetings(
   userId: string,
   options: { now?: Date } = {},
-): Promise<TeamsMeetingSummary[]> {
+): Promise<{ meetings: TeamsMeetingSummary[]; truncated: boolean }> {
   const token = await getDelegatedGraphToken(userId);
 
   const now = options.now ?? new Date();
@@ -117,17 +155,30 @@ export async function listRecentTeamsMeetings(
     `&$orderby=start/dateTime desc` +
     `&$top=${MAX_EVENTS}`;
 
-  const payload = (await graphRequest(url, token)) as { value?: GraphEvent[] };
+  const payload = (await graphRequest(url, token, { headers: IMMUTABLE_ID_HEADERS })) as {
+    value?: GraphEvent[];
+    "@odata.nextLink"?: string;
+  };
 
-  return (payload.value ?? [])
+  const meetings = (payload.value ?? [])
     .map(toMeetingSummary)
     .filter((meeting): meeting is TeamsMeetingSummary => meeting !== null)
-    // Sorted here as well as in the query. calendarView's own default is
-    // ASCENDING, so if the $orderby were ever dropped or refused, $top would
-    // silently keep the OLDEST hundred events of the fortnight and throw
-    // away the meeting somebody just left - which is the only one they are
-    // ever likely to want. Sorting twice is free; that failure is not.
+    // Sorted again here, and it is worth being precise about what this does
+    // and does not protect against. It guarantees the ORDER of what came
+    // back. It does NOT undo truncation: $top is applied server-side before
+    // the response is built, so if Graph ever ignored the $orderby - and
+    // Microsoft documents that unsupported query parameters can fail
+    // silently - the hundred events kept would be the OLDEST of the
+    // fortnight and no amount of re-sorting brings back the meeting somebody
+    // just left. `truncated` below is what actually covers that.
     .sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime());
+
+  // Graph only sends a nextLink when there was more to send, so its presence
+  // is proof the window was cut short. Reported rather than swallowed: a list
+  // that is quietly missing the meeting somebody is looking for reads as "the
+  // import is broken", which is a much worse place to leave them than "there
+  // were more than we could show".
+  return { meetings, truncated: typeof payload["@odata.nextLink"] === "string" };
 }
 
 // -------------------------------------------------------------------
@@ -151,7 +202,11 @@ export async function getTeamsMeeting(userId: string, eventId: string): Promise<
     `?$select=id,subject,isOnlineMeeting,onlineMeeting,start,end,organizer`;
 
   try {
-    return toMeetingSummary((await graphRequest(url, token)) as GraphEvent);
+    // The SAME header as the list, and that is not optional: an id listed as
+    // an immutable id will not resolve here without it.
+    return toMeetingSummary(
+      (await graphRequest(url, token, { headers: IMMUTABLE_ID_HEADERS })) as GraphEvent,
+    );
   } catch (error) {
     // graphStatusOf rather than instanceof - see the note on it. Getting
     // this wrong would report a deleted meeting as a Graph fault.
@@ -194,7 +249,18 @@ function toMeetingSummary(event: GraphEvent): TeamsMeetingSummary | null {
 // encoded anyway rather than trusted.
 //
 // Returns null when Graph knows nothing about it, which happens for a
-// meeting hosted by another tenant.
+// meeting hosted by another tenant - the commonest reason an import cannot
+// go ahead, and the one the screen has a real sentence prepared for.
+//
+// GRAPH ANSWERS "NOT FOUND" TWO WAYS AND BOTH MEAN THE SAME THING HERE: an
+// empty `value` array, or a 404. Which one you get is not something the
+// reference commits to, so both are treated as null rather than betting on
+// one. Getting that wrong is not a crash - it is worse. The 404 would
+// propagate as an unclassified GraphRequestError, fall through to the
+// generic branch of teamsGraphFailure, and tell somebody "Microsoft could
+// not be reached" for the single case this feature exists to explain
+// clearly. A wrong sentence sends people looking for a network problem that
+// is not there.
 // -------------------------------------------------------------------
 export async function findOnlineMeetingId(userId: string, joinUrl: string): Promise<string | null> {
   const token = await getDelegatedGraphToken(userId);
@@ -202,7 +268,17 @@ export async function findOnlineMeetingId(userId: string, joinUrl: string): Prom
   const filter = encodeURIComponent(`JoinWebUrl eq '${joinUrl.replace(/'/g, "''")}'`);
   const url = `${GRAPH_BASE}/me/onlineMeetings?$filter=${filter}`;
 
-  const payload = (await graphRequest(url, token)) as { value?: { id?: string }[] };
+  let payload: { value?: { id?: string }[] };
+
+  try {
+    payload = (await graphRequest(url, token)) as { value?: { id?: string }[] };
+  } catch (error) {
+    // graphStatusOf rather than instanceof - class identity is per bundle
+    // chunk in a production build. Same treatment as getTeamsMeeting above.
+    if (graphStatusOf(error) === 404) return null;
+
+    throw error;
+  }
 
   return payload.value?.[0]?.id ?? null;
 }
@@ -250,8 +326,14 @@ export async function listMeetingTranscripts(
 // module raises - a caller should not have to care which helper made the
 // request.
 //
-// `$format=text/vtt` is required. Without it Graph answers with its own
-// JSON shape, which is not what the parser expects.
+// `$format=text/vtt` is not strictly required - it is the documented default
+// for /content - but it is pinned along with the Accept header so a future
+// change of default cannot silently hand the parser something else.
+//
+// A 403 HERE IS USUALLY NOT ABOUT THE TOKEN, and that is why the body is
+// read. Two tenant-wide Teams settings both refuse this call, both default to
+// off, and neither is fixable by the person who met the error. Telling them
+// to sign in again would be advice that can never work.
 // -------------------------------------------------------------------
 export async function fetchTranscriptVtt(
   userId: string,
@@ -270,13 +352,18 @@ export async function fetchTranscriptVtt(
   });
 
   if (!response.ok) {
-    // 401 and 403 mean the grant is wrong or expired, which no retry fixes -
-    // somebody has to sign in again or an admin has to consent. Reported
-    // distinctly so the screen can say which.
+    // Read BEFORE the body is needed for anything else, and only on the
+    // failure path - a successful response's body is the transcript.
+    const innerErrorCode = await readGraphInnerErrorCode(response);
+
+    // 401 and 403 mean no retry will help: either the grant is wrong, or a
+    // tenant setting forbids this outright. Which of those it is lives in
+    // innerErrorCode, and the caller reads it there.
     throw new GraphRequestError(`Could not download the transcript (${response.status})`, {
       status: response.status,
       outcome:
         response.status === 401 || response.status === 403 ? GRAPH_OUTCOMES.NEEDS_REAUTH : null,
+      innerErrorCode,
     });
   }
 

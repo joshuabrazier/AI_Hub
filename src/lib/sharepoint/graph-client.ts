@@ -193,16 +193,51 @@ export class GraphRequestError extends Error {
   readonly outcome: GraphOutcome | null;
   readonly status: number | null;
   readonly retryAfterSeconds: number | null;
+  // The `code` from the error's innerError, when Graph sent one.
+  //
+  // THIS IS WHERE THE ACTIONABLE PART OF A 403 LIVES. Two 403s needing
+  // completely different remedies - one a lapsed consent, one a tenant
+  // setting an administrator has to turn on - are distinguished by nothing
+  // else. Microsoft's own guidance is to branch on this and never on the
+  // message, because the messages are documented as subject to change.
+  readonly innerErrorCode: string | null;
 
   constructor(
     message: string,
-    options: { outcome?: GraphOutcome | null; status?: number | null; retryAfterSeconds?: number | null } = {},
+    options: {
+      outcome?: GraphOutcome | null;
+      status?: number | null;
+      retryAfterSeconds?: number | null;
+      innerErrorCode?: string | null;
+    } = {},
   ) {
     super(message);
     this.name = "GraphRequestError";
     this.outcome = options.outcome ?? null;
     this.status = options.status ?? null;
     this.retryAfterSeconds = options.retryAfterSeconds ?? null;
+    this.innerErrorCode = options.innerErrorCode ?? null;
+  }
+}
+
+// -------------------------------------------------------------------
+// Pull the innerError code out of a Graph error body.
+//
+// Best-effort by design: a body that is not JSON, or is not Graph's error
+// shape, gives null and the caller falls back to the status alone. A failure
+// to parse an error must never become a second, more confusing failure.
+//
+// The body is consumed here, so callers must not read it again.
+// -------------------------------------------------------------------
+export async function readGraphInnerErrorCode(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.json()) as { error?: { innerError?: { code?: unknown } } };
+
+    const code = body?.error?.innerError?.code;
+
+    return typeof code === "string" && code.length > 0 ? code : null;
+  } catch {
+    return null;
   }
 }
 
@@ -239,6 +274,14 @@ export function graphStatusOf(error: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
+export function graphInnerErrorOf(error: unknown): string | null {
+  if (error instanceof GraphRequestError) return error.innerErrorCode;
+
+  const code = (error as { innerErrorCode?: unknown } | null | undefined)?.innerErrorCode;
+
+  return typeof code === "string" && code.length > 0 ? code : null;
+}
+
 // Retry-After is documented as seconds. A date form is legal in HTTP
 // generally, so a value that is not a positive number falls back to the
 // backoff rather than becoming NaN and waiting zero.
@@ -259,11 +302,21 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 //
 // `fetchImpl` is injectable so the retry logic can be tested without a
 // network. Nothing else passes it.
+//
+// `headers` are merged over the two this sets. It exists for `Prefer`, which
+// Graph uses to change what a response CONTAINS rather than how it is
+// authorised - immutable ids being the case here. Note that a Prefer header
+// applies only to the request it is sent with, so a caller wanting it on two
+// related calls has to pass it to both.
 // -------------------------------------------------------------------
 export async function graphRequest(
   url: string,
   accessToken: string,
-  options: { fetchImpl?: typeof fetch; now?: () => number } = {},
+  options: {
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<unknown> {
   const doFetch = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => Date.now());
@@ -287,7 +340,11 @@ export async function graphRequest(
 
     try {
       const response = await doFetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+          ...options.headers,
+        },
         signal: controller.signal,
       });
 
@@ -295,11 +352,20 @@ export async function graphRequest(
         return await response.json();
       }
 
-      // A token that no longer works. Terminal by design.
+      // A token that no longer works, OR a tenant setting that forbids this
+      // regardless of the token. Both arrive as 403 and only innerError.code
+      // tells them apart, so it is read here and carried on the error - the
+      // caller decides what it means, because the codes are specific to the
+      // endpoint rather than to Graph as a whole.
+      //
+      // Terminal either way: no retry fixes a consent problem or a tenant
+      // switch.
       if (response.status === 401 || response.status === 403) {
+        const innerErrorCode = await readGraphInnerErrorCode(response);
+
         throw new GraphRequestError(
           "Graph refused the delegated token, so somebody has to sign in again to renew consent",
-          { outcome: GRAPH_OUTCOMES.NEEDS_REAUTH, status: response.status },
+          { outcome: GRAPH_OUTCOMES.NEEDS_REAUTH, status: response.status, innerErrorCode },
         );
       }
 

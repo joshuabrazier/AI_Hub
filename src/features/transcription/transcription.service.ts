@@ -46,6 +46,7 @@ import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
 import {
   MEETING_LOOKBACK_DAYS,
+  TEAMS_TRANSCRIPT_ERRORS,
   fetchTranscriptVtt,
   findOnlineMeetingId,
   getTeamsMeeting,
@@ -60,7 +61,7 @@ import {
 } from "@/lib/graph/teams-transcript";
 import { isPushConfigured, sendPushToUser } from "@/lib/push/push-notifications";
 import { ROUTES, transcriptionHomeForRole } from "@/lib/routes";
-import { GRAPH_OUTCOMES, graphOutcomeOf } from "@/lib/sharepoint/graph-client";
+import { GRAPH_OUTCOMES, graphInnerErrorOf, graphOutcomeOf } from "@/lib/sharepoint/graph-client";
 import { isFakeSharepointEnabled } from "@/lib/sharepoint/dev-fake";
 import {
   createUploadUrl,
@@ -926,6 +927,35 @@ function isTeamsImportConfigured(): boolean {
 // this ships, to everybody who signed in before the new scopes existed.
 // -------------------------------------------------------------------
 function teamsGraphFailure(error: unknown): DisplayErrorMessage {
+  // -----------------------------------------------------------------
+  // THE INNER ERROR IS CHECKED FIRST, AND THAT ORDER IS THE WHOLE POINT.
+  //
+  // Both of these arrive as a 403, which the generic client classifies as
+  // NEEDS_REAUTH because that is what a 403 usually means. Neither is. They
+  // are tenant-wide Teams settings, both OFF by default in every tenant, and
+  // neither can be fixed by the person who met the error - so "sign out and
+  // sign in again" is advice that can never work, offered forever, on the two
+  // failures a new deployment is most likely to hit first.
+  //
+  // Branching on the code rather than the message is Microsoft's own
+  // instruction: the messages are documented as subject to change.
+  // -----------------------------------------------------------------
+  switch (graphInnerErrorOf(error)) {
+    case TEAMS_TRANSCRIPT_ERRORS.GRAPH_ACCESS_DISABLED:
+      return new DisplayErrorMessage(
+        "This organisation has not allowed apps to read Teams meeting transcripts. An administrator has to turn on Teams admin centre, Meetings, Meeting settings, Transcript API access, Microsoft Graph access. Signing in again will not help.",
+      );
+
+    case TEAMS_TRANSCRIPT_ERRORS.ATTRIBUTION_DISABLED:
+      // Deliberately NOT retried without attribution. The unattributed format
+      // is a different shape this parser cannot read, so a silent fallback
+      // would turn a visible refusal into an empty transcript - and the names
+      // are the entire reason to import from Teams rather than record.
+      return new DisplayErrorMessage(
+        "This organisation has speaker names turned off for transcripts read by apps, and a transcript without them is not worth importing. An administrator has to turn on Include speaker attribution alongside Transcript API access.",
+      );
+  }
+
   // graphOutcomeOf, not instanceof - class identity is per bundle chunk in a
   // production build, and the re-auth message is the one that must survive.
   switch (graphOutcomeOf(error)) {
@@ -961,13 +991,13 @@ export async function listTeamsMeetingsService(): Promise<TeamsMeetingsDTO> {
     const user = await requireUser();
 
     if (!isTeamsImportConfigured()) {
-      return { isConfigured: false, lookbackDays: MEETING_LOOKBACK_DAYS, meetings: [] };
+      return { isConfigured: false, lookbackDays: MEETING_LOOKBACK_DAYS, meetings: [], truncated: false };
     }
 
-    let meetings;
+    let listed;
 
     try {
-      meetings = await listRecentTeamsMeetings(user.id);
+      listed = await listRecentTeamsMeetings(user.id);
     } catch (error) {
       throw teamsGraphFailure(error);
     }
@@ -982,7 +1012,8 @@ export async function listTeamsMeetingsService(): Promise<TeamsMeetingsDTO> {
     return {
       isConfigured: true,
       lookbackDays: MEETING_LOOKBACK_DAYS,
-      meetings: meetings.map(
+      truncated: listed.truncated,
+      meetings: listed.meetings.map(
         (meeting): TeamsMeetingDTO => ({
           eventId: meeting.eventId,
           subject: meeting.subject,

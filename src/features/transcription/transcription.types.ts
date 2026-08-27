@@ -260,6 +260,12 @@ export type TeamsMeetingsDTO = {
   isConfigured: boolean;
   lookbackDays: number;
   meetings: TeamsMeetingDTO[];
+  // True when Microsoft had more meetings than the one page asked for, so the
+  // list on screen is not all of them. Said out loud rather than swallowed: a
+  // list quietly missing the meeting somebody is looking for reads as "the
+  // import is broken", which is a far worse place to leave them than "there
+  // were more than fit".
+  truncated: boolean;
 };
 
 // The import carries ONLY an opaque calendar id. Everything else about the

@@ -25,25 +25,81 @@ import type { TranscriptionSegment } from "@/lib/data/kysely-database-types";
 //     names come from. This is the whole reason Teams transcripts are worth
 //     having over our own.
 //   - Timestamps are HH:MM:SS.mmm, but the hours field is sometimes absent
-//     on short meetings, so MM:SS.mmm has to parse too.
+//     on short meetings, so MM:SS.mmm has to parse too - and an offset can be
+//     NEGATIVE when transcription was started after people began talking.
+//   - A block is identified as a cue by CONTAINING a timing line, never by
+//     what its first line looks like. Microsoft's examples show the WEBVTT
+//     header run together with the first cue.
 // -------------------------------------------------------------------
 
-// A cue's timing line. Hours are optional - Teams omits them under an hour.
-const TIMING = /^(\d{1,3}:)?(\d{1,2}):(\d{2})[.,](\d{1,3})\s*-->\s*(\d{1,3}:)?(\d{1,2}):(\d{2})[.,](\d{1,3})/;
+// -------------------------------------------------------------------
+// A cue's timing line.
+//
+// Three tolerances, each for a shape Microsoft actually emits:
+//
+//   HOURS ARE OPTIONAL      Teams omits them under an hour.
+//   OFFSETS CAN BE NEGATIVE Microsoft's own response examples say so, in
+//                           these words: "Negative offsets indicate that the
+//                           transcription began while the conversation was
+//                           ongoing." That is not exotic - it is what every
+//                           meeting where somebody pressed transcribe a
+//                           minute late looks like. A parser that rejects
+//                           them drops those cues silently, and because
+//                           same-speaker cues merge afterwards the loss is
+//                           invisible: the transcript simply starts late.
+//   SECONDS MAY BE 1 DIGIT  published by Microsoft in at least one changelog
+//                           example. Costs nothing to accept.
+//
+// The sign is captured rather than merely allowed, because a negative start
+// has to be clamped - see toMs. TranscriptionSegment.startMs is an offset
+// into a recording and has no meaning below zero.
+// -------------------------------------------------------------------
+const TIMING =
+  /^(-?)(\d{1,3}:)?(\d{1,2}):(\d{1,2})[.,](\d{1,3})\s*-->\s*(-?)(\d{1,3}:)?(\d{1,2}):(\d{1,2})[.,](\d{1,3})/;
 
-// <v Speaker Name>text</v>. The closing tag is optional in the spec, and
-// Teams does include it, but a parser that requires it would drop the last
-// cue of a truncated file.
-const VOICE = /^<v\s+([^>]*)>([\s\S]*?)(?:<\/v>)?$/;
+// <v Speaker Name>text</v>, optionally classed as <v.loud Speaker Name>.
+//
+// The classes are part of the WebVTT spec and cost one group to tolerate;
+// without it a classed tag falls through and the turn loses its name, which
+// is the one thing this whole feature exists for.
+//
+// The closing tag is optional here. The spec allows omitting it and Teams
+// does include it, but requiring it would drop the last cue of a truncated
+// file - and a truncated file is exactly when you most want what there is.
+const VOICE = /^<v(?:\.[^\s>]+)*\s+([^>]*)>([\s\S]*?)(?:<\/v>)?$/;
 
-function toMs(hours: string | undefined, minutes: string, seconds: string, fraction: string): number {
+// Splits a cue body that carries MORE THAN ONE voice span.
+//
+// Nothing has been observed emitting this and the spec does not encourage it,
+// but the failure if it ever happens is the worst this feature has: two
+// people's words merged into one turn, attributed entirely to whoever spoke
+// first. A transcript that is confidently wrong about who said something is
+// worse than one that says nothing. Splitting is a few lines; that is not.
+//
+// The lookahead keeps the delimiter, so each piece is a whole span the VOICE
+// pattern can then read.
+const VOICE_SPLIT = /(?=<v(?:\.[^\s>]+)*\s)/;
+
+function toMs(
+  sign: string,
+  hours: string | undefined,
+  minutes: string,
+  seconds: string,
+  fraction: string,
+): number {
   const h = hours ? Number(hours.slice(0, -1)) : 0;
   // "5" means 500ms, not 5ms - a fraction, not a count. Padding rather than
   // parsing directly is what keeps a two-digit fraction from being read as
   // milliseconds and putting every cue in the wrong place.
   const ms = Number(fraction.padEnd(3, "0"));
 
-  return h * 3_600_000 + Number(minutes) * 60_000 + Number(seconds) * 1_000 + ms;
+  const total = h * 3_600_000 + Number(minutes) * 60_000 + Number(seconds) * 1_000 + ms;
+
+  // CLAMPED, NOT NEGATED. A negative offset means the words were spoken
+  // before transcription started, so the true answer is "at or before the
+  // beginning" - zero. Keeping the sign would put the turn at a timestamp
+  // that formatTimestamp cannot render and that sorts before the meeting.
+  return sign === "-" ? 0 : total;
 }
 
 // Strips the tags VTT allows inside cue text - <i>, <b>, <c.classname> and
@@ -79,47 +135,57 @@ export function parseTeamsVtt(vtt: string): TranscriptionSegment[] {
 
     if (lines.length === 0) continue;
 
-    // WEBVTT header, NOTE comments and STYLE blocks are not cues.
-    if (/^(WEBVTT|NOTE|STYLE|REGION)\b/.test(lines[0])) continue;
-
     const timingIndex = lines.findIndex((line) => TIMING.test(line));
 
-    // No timing line means this is not a cue - a stray identifier, or a
-    // block shape we do not recognise. Skipped rather than guessed at.
+    // No timing line means this is not a cue - the WEBVTT header, a NOTE, a
+    // STYLE or REGION block, or a stray identifier. Skipped rather than
+    // guessed at.
+    //
+    // THE ORDER MATTERS: this is checked BEFORE the header patterns, not
+    // after. Microsoft's own examples show `WEBVTT` glued to the first cue
+    // with no blank line between them, which makes the header and the first
+    // real turn one block - and testing lines[0] first would throw away the
+    // opening of the meeting rather than a header.
     if (timingIndex === -1) continue;
 
     const timing = TIMING.exec(lines[timingIndex]);
     if (!timing) continue;
 
-    const startMs = toMs(timing[1], timing[2], timing[3], timing[4]);
-    const endMs = toMs(timing[5], timing[6], timing[7], timing[8]);
+    const startMs = toMs(timing[1], timing[2], timing[3], timing[4], timing[5]);
+    const endMs = toMs(timing[6], timing[7], timing[8], timing[9], timing[10]);
 
     const body = lines.slice(timingIndex + 1).join(" ").trim();
 
     if (body.length === 0) continue;
 
-    const voice = VOICE.exec(body);
+    // Usually exactly one piece. See VOICE_SPLIT for why more than one is
+    // handled at all.
+    const pieces = body.split(VOICE_SPLIT).filter((piece) => piece.trim().length > 0);
 
-    // A name of "" is treated as no name. An empty <v> span carries no more
-    // information than an absent one, and a blank label on screen reads as
-    // a bug.
-    const speakerName = voice?.[1]?.trim() || null;
-    const text = stripCueTags(voice ? voice[2] : body);
+    for (const piece of pieces) {
+      const voice = VOICE.exec(piece.trim());
 
-    if (text.length === 0) continue;
+      // A name of "" is treated as no name. An empty <v> span carries no more
+      // information than an absent one, and a blank label on screen reads as
+      // a bug.
+      const speakerName = voice?.[1]?.trim() || null;
+      const text = stripCueTags(voice ? voice[2] : piece);
 
-    const previous = segments[segments.length - 1];
+      if (text.length === 0) continue;
 
-    // Same person still talking - extend rather than start a new turn.
-    // Compared on the name, including the null case, so a run of unattributed
-    // cues merges too rather than becoming one turn per cue.
-    if (previous && (previous.speakerName ?? null) === speakerName) {
-      previous.text = `${previous.text} ${text}`;
-      previous.endMs = endMs;
-      continue;
+      const previous = segments[segments.length - 1];
+
+      // Same person still talking - extend rather than start a new turn.
+      // Compared on the name, including the null case, so a run of
+      // unattributed cues merges too rather than becoming one turn per cue.
+      if (previous && (previous.speakerName ?? null) === speakerName) {
+        previous.text = `${previous.text} ${text}`;
+        previous.endMs = endMs;
+        continue;
+      }
+
+      segments.push({ speaker: null, speakerName, startMs, endMs, text });
     }
-
-    segments.push({ speaker: null, speakerName, startMs, endMs, text });
   }
 
   return segments;

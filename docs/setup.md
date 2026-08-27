@@ -321,6 +321,31 @@ transcripts, so that is the only door there is. What bounds it is that the calls
 are delegated: Graph will not return a transcript for a meeting the signed-in
 person was not part of.
 
+**And two tenant-wide Teams switches, both OFF by default.** Entra consent is
+not sufficient on its own, and this is the step most likely to be missed:
+
+```powershell
+Set-CsTeamsMeetingConfiguration -Identity Global `
+  -EnableGraphTranscriptAccess $true `
+  -EnableAttributedTranscripts $true
+```
+
+Or in the Teams admin center: **Meetings > Meeting settings > Transcript API
+access > Microsoft Graph access = On**, then **Configure > Include speaker
+attribution = On**.
+
+Both matter, and they fail differently:
+
+- Without `EnableGraphTranscriptAccess`, every import returns 403 and Microsoft
+  states plainly that there is no request-side workaround.
+- Without `EnableAttributedTranscripts`, the transcript comes back with no
+  speaker names. The app refuses that rather than importing it, because names
+  are the whole reason to use Teams here instead of recording - an anonymous
+  Teams transcript is strictly worse than what the recorder already produces.
+
+The app names the missing setting in both cases rather than saying "sign in
+again", which is why it reads Graph's `innerError.code` instead of the status.
+
 **It only works for meetings this tenant hosts, and only if transcription was
 started during the meeting.** Neither is something the app can fix. A meeting a
 client ran on their own tenant belongs to their tenant, and the recorder is the

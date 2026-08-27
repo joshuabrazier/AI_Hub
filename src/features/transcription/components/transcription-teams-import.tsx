@@ -206,6 +206,18 @@ export function TranscriptionTeamsImport({ onImported }: { onImported: (transcri
         </Button>
       </div>
 
+      {/* Only when Microsoft actually had more to send. A person with a very
+          full fortnight would otherwise scan the list, not find the meeting
+          they want, and conclude the import is broken. */}
+      {page.truncated ? (
+        <p
+          role="status"
+          className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
+        >
+          You have more meetings in this period than fit in one list, so the oldest are not shown.
+        </p>
+      ) : null}
+
       <ul className="divide-y divide-border rounded-lg border border-border">
         {page.meetings.map((meeting) => (
           <TeamsMeetingRow
