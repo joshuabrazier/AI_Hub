@@ -143,3 +143,17 @@ export interface SharepointDriveDTO {
   // that had happened before, or whether anything had ever run at all.
   recentCrawls: SharepointCrawlDTO[];
 }
+
+// -------------------------------------------------------------------
+// What pressing "Crawl now" actually achieved.
+//
+// Returned so the button can report real numbers instead of "queued".
+// `finished` is rarely true for a real library - the inline slice is
+// small - so the message has to distinguish "done" from "started and
+// still going", or it just moves the confusion somewhere else.
+// -------------------------------------------------------------------
+export interface StartCrawlResultDTO {
+  itemsSeen: number;
+  pagesDone: number;
+  finished: boolean;
+}
