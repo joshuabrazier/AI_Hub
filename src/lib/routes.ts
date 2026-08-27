@@ -55,6 +55,9 @@ export const ROUTES = {
   ADMIN_ACTIVITY: "/admin/activity",
   ADMIN_AI_CHAT_LOG: "/admin/ai-chat-log",
   ADMIN_DATA_RETENTION: "/admin/data-retention",
+  // SharePoint inventory. Read-only: which document libraries are being
+  // catalogued, and whether the last crawl of each one finished.
+  ADMIN_SHAREPOINT: "/admin/sharepoint",
   // Time and billing. Four views over one aggregation: the entries, the book
   // of work, the people, and the data-quality findings kept out of the way of
   // all three.
