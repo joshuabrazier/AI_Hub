@@ -17,6 +17,28 @@ import {
 import { GraphContractError } from "./graph-types";
 
 // -------------------------------------------------------------------
+// The local-development door is PINNED here rather than left to whatever
+// the developer happens to have in .env.
+//
+// This is not tidiness. Every URL assertion below is a statement about
+// where a real request goes, and the fake redirects exactly that. Leaving
+// it to the environment meant these tests passed on one machine and failed
+// on another the moment somebody set DEV_FAKE_SHAREPOINT_URL - and worse,
+// would have passed while asserting the wrong thing.
+//
+// Mutable rather than a fixed null so the redirect itself can be tested,
+// which is the other half of the same behaviour. graphBaseUrl() resolves
+// per call, so flipping this needs no module reloading.
+// -------------------------------------------------------------------
+let fakeBaseUrl: string | null = null;
+
+vi.mock("./dev-fake", () => ({
+  fakeSharepointBaseUrl: () => fakeBaseUrl,
+  isFakeSharepointEnabled: () => fakeBaseUrl !== null,
+  FAKE_GRAPH_TOKEN: "dev-fake-sharepoint-not-a-real-token",
+}));
+
+// -------------------------------------------------------------------
 // The retry and the throttle gate.
 //
 // The gate is the reason this file is not just a copy of the Jira client.
@@ -46,6 +68,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   resetThrottleForTests();
+  // Back to the real Graph, so one test opening the door cannot silently
+  // redirect every test after it.
+  fakeBaseUrl = null;
 });
 
 // A helper that runs a promise while letting fake timers drain, so a
@@ -327,5 +352,26 @@ describe("fetchDrivesForSite", () => {
     await expect(runWithTimers(fetchDrivesForSite("site-1", "t", { fetchImpl }))).rejects.toMatchObject({
       outcome: GRAPH_OUTCOMES.NEEDS_REAUTH,
     });
+  });
+});
+
+describe("the local-development redirect", () => {
+  it("sends every endpoint to the fake when the door is open", async () => {
+    fakeBaseUrl = "http://localhost:4400";
+
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: "site-1", value: [] }));
+
+    await runWithTimers(fetchSite("contoso.sharepoint.com", "/sites/Finance", "t", { fetchImpl }));
+    await runWithTimers(fetchDrivesForSite("site-1", "t", { fetchImpl }));
+
+    expect(fetchImpl.mock.calls[0][0]).toBe("http://localhost:4400/sites/contoso.sharepoint.com:/sites/Finance");
+    expect(fetchImpl.mock.calls[1][0]).toBe("http://localhost:4400/sites/site-1/drives");
+    expect(deltaStartUrl("b!abc")).toContain("http://localhost:4400/drives/b!abc/root/delta");
+  });
+
+  it("goes to the real Graph the moment the door is shut again", () => {
+    // Resolved per call, not captured at import. A door opened by one
+    // request must not outlive it.
+    expect(deltaStartUrl("b!abc")).toContain("https://graph.microsoft.com/v1.0/");
   });
 });
