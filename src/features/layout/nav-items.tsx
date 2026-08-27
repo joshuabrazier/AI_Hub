@@ -79,6 +79,12 @@ const ADMIN_NAV: NavGroup[] = [
         icon: AudioLines,
         tooltip: "Transcribe and summarise a meeting",
       },
+      {
+        label: "Summaries",
+        href: ROUTES.ADMIN_SUMMARIES,
+        icon: ScrollText,
+        tooltip: "Summarise pasted text",
+      },
     ],
   },
   {
@@ -187,6 +193,12 @@ const MANAGER_NAV: NavGroup[] = [
         icon: AudioLines,
         tooltip: "Transcribe and summarise a meeting",
       },
+      {
+        label: "Summaries",
+        href: ROUTES.MANAGE_SUMMARIES,
+        icon: ScrollText,
+        tooltip: "Summarise pasted text",
+      },
     ],
   },
   {
@@ -211,6 +223,12 @@ const MEMBER_NAV: NavGroup[] = [
         href: ROUTES.PORTAL_TRANSCRIPTION,
         icon: AudioLines,
         tooltip: "Transcribe and summarise a meeting",
+      },
+      {
+        label: "Summaries",
+        href: ROUTES.PORTAL_SUMMARIES,
+        icon: ScrollText,
+        tooltip: "Summarise pasted text",
       },
       { label: "Account", href: ROUTES.PORTAL_ACCOUNT, icon: UserCircle, tooltip: "Your details" },
     ],

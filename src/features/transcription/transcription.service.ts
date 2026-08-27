@@ -10,6 +10,7 @@ import {
   getBedrockClient,
   isBedrockConfigured,
 } from "@/lib/ai/bedrock-client";
+import { buildHouseVoiceBlock } from "@/lib/ai/house-voice";
 import { requireUser } from "@/lib/auth/session-auth-server";
 import { getUserByUserIdRepo } from "@/lib/data/repositories/users.repository";
 import {
@@ -284,7 +285,15 @@ async function summariseTranscript(
       ? `${transcript.slice(0, MAX_SUMMARY_INPUT_CHARS)}\n\n[The transcript was longer than could be summarised in one pass and is cut off here.]`
       : transcript;
 
+  // A meeting summary is read by people here and often pasted onward, so it
+  // gets the house voice like any other writing the app produces. Appended
+  // as its own block, after the instructions about the task: what to
+  // summarise matters more than how it reads.
   const system: SystemContentBlock[] = [{ text: SUMMARY_SYSTEM_PROMPT }];
+
+  const houseVoice = buildHouseVoiceBlock();
+
+  if (houseVoice) system.push({ text: houseVoice });
 
   const messages: Message[] = [
     {

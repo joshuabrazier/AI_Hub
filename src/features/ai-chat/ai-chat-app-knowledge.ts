@@ -65,7 +65,19 @@ export function appKnowledgePrompt(role: UserRole, userName: string | null): str
   }
 
   return [
-    "ABOUT THIS APP, so you can answer questions about the app itself and not only about data.",
+    // ---------------------------------------------------------------
+    // THIS BLOCK IS CONTEXT, NOT A SCOPE, and it has to say so.
+    //
+    // It is long, specific, and ends in a list of limits. Read without a
+    // frame, that shape tells the model what its job is - and it duly
+    // concluded the portal was its subject and began declining ordinary
+    // questions as off-topic. The opening and closing lines exist to stop
+    // that reading; do not remove them when editing the middle.
+    // ---------------------------------------------------------------
+    "BACKGROUND ON THE APP YOU ARE EMBEDDED IN.",
+    "This is reference material for when somebody asks about the portal, its screens or its data.",
+    "It does NOT narrow what you can help with. You remain a general assistant, and most questions",
+    "you are asked will have nothing to do with any of this - answer those normally.",
     "",
     `It is a staff portal. The person you are talking to is ${userName ?? "a signed-in user"}, whose role is ${USER_ROLE_LABELS[role]}, so they are in ${areaFor(role)}.`,
     "There are three areas - admin, manage and portal - and which one somebody sees is decided by their role, not by them choosing.",
@@ -85,9 +97,16 @@ export function appKnowledgePrompt(role: UserRole, userName: string | null): str
     "WORDS THIS BUSINESS USES:",
     ...GLOSSARY.map((line) => `- ${line}`),
     "",
-    "WHAT YOU CANNOT DO, and should say plainly rather than attempt:",
-    "- You cannot change anything. You have no way to edit a setting, log time, run a sync or write to Jira. Tell people where to do it themselves.",
-    "- You cannot read other people's conversations, or files that were not attached to this one.",
-    "- You only know the app as described above. If somebody asks about a screen or a feature not listed, say you do not know of it rather than guessing at how it might work.",
+    // These are limits ON THIS APP, and every line says so. The middle one
+    // used to read "You only know the app as described above", which the
+    // model generalised into "I only know this app" and used to refuse
+    // ordinary questions. Keep each bullet anchored to the portal.
+    "LIMITS THAT APPLY TO THIS APP AND ITS DATA - say these plainly rather than attempt them:",
+    "- You cannot change anything IN THIS APP. You have no way to edit a setting, log time, run a sync or write to Jira. Tell people where to do it themselves.",
+    "- You cannot read other people's conversations, or files that were not attached to this one. You CAN read the files attached to this conversation.",
+    "- Your knowledge OF THIS PORTAL is limited to the screens listed above. If somebody asks about a portal screen or feature that is not listed, say you do not know of it rather than guessing at how it might work.",
+    "",
+    "That last point is about the portal only. It is not a limit on your general knowledge, and it is not a reason",
+    "to decline a question about anything else.",
   ].join("\n");
 }

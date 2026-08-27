@@ -120,6 +120,11 @@ export const AI_CHAT_REQUEST_KINDS = {
   // Turning a typed question into dashboard filters. Small and frequent, where
   // a report is large and rare - telling them apart in the log is the point.
   TIMESHEET_QUERY: "timesheet_query",
+  // Summarising text somebody pasted in, in a chosen style. Distinct from
+  // the two below because the input is a document rather than a
+  // conversation or a recording, and because it is the one kind where the
+  // person chose how long the answer should be.
+  TEXT_SUMMARY: "text_summary",
   // Summarising a meeting transcript. Not a chat call, but a call to the
   // same model on the organisation's account, so it belongs in the same
   // record rather than in a second log nobody remembers to read.
@@ -134,6 +139,7 @@ export const AI_CHAT_REQUEST_KIND_LABELS: Record<AiChatRequestKind, string> = {
   [AI_CHAT_REQUEST_KINDS.TIMESHEET_SUMMARY]: "Timesheet summary",
   [AI_CHAT_REQUEST_KINDS.TIMESHEET_REPORT]: "Timesheet report",
   [AI_CHAT_REQUEST_KINDS.TIMESHEET_QUERY]: "Timesheet question",
+  [AI_CHAT_REQUEST_KINDS.TEXT_SUMMARY]: "Text summary",
   [AI_CHAT_REQUEST_KINDS.TRANSCRIPTION]: "Meeting summary",
 };
 
