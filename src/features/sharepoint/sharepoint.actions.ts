@@ -21,6 +21,7 @@ import {
   NominateLibrarySchema,
   type SharepointDriveDTO,
   type SharepointSiteLookup,
+  type StartCrawlResultDTO,
 } from "./sharepoint.types";
 
 // -------------------------------------------------------------------
@@ -73,22 +74,25 @@ export async function nominateSharepointLibraryAction(input: unknown): Promise<S
 }
 
 // -------------------------------------------------------------------
-// Queue a crawl of a tracked library.
+// Start a crawl of a tracked library, and do some of it.
 //
-// Queues it. The work happens in the sweep, so this returns as soon as the
-// row exists rather than holding the request open for a walk that can take
-// minutes.
+// The service walks a small first slice before returning, so the button
+// reports real numbers rather than "queued". A whole library still needs
+// the sweep to finish it - the counts come back so the message can say
+// which of those two happened.
 // -------------------------------------------------------------------
-export async function startSharepointCrawlAction(input: unknown): Promise<ServerApiResponse<null>> {
+export async function startSharepointCrawlAction(
+  input: unknown,
+): Promise<ServerApiResponse<StartCrawlResultDTO>> {
   try {
     await requireUserRole([USER_ROLES.ADMIN]);
 
     const parsed = DriveIdSchema.parse(input);
-    await startSharepointCrawlService(parsed);
+    const data = await startSharepointCrawlService(parsed);
 
     revalidatePath(ROUTES.ADMIN_SHAREPOINT);
 
-    return { success: true, data: null } satisfies ServerApiResponse<null>;
+    return { success: true, data } satisfies ServerApiResponse<StartCrawlResultDTO>;
   } catch (error) {
     return handleServerApiError("startSharepointCrawlAction", error);
   }

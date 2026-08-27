@@ -23,6 +23,7 @@ import {
   upsertSharepointDriveRepo,
 } from "@/lib/data/repositories/sharepoint-drive.repository";
 import { getSharepointDriveTotalsRepo } from "@/lib/data/repositories/sharepoint-item.repository";
+import { runCrawlSliceService } from "@/features/sharepoint-sync/sharepoint-crawl.service";
 import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
 import { fetchDrivesForSite, fetchSite, GRAPH_OUTCOMES, GraphRequestError } from "@/lib/sharepoint/graph-client";
@@ -36,6 +37,7 @@ import {
   type SharepointCrawlDTO,
   type SharepointDriveDTO,
   type SharepointSiteLookup,
+  type StartCrawlResultDTO,
 } from "./sharepoint.types";
 
 // -------------------------------------------------------------------
@@ -61,6 +63,17 @@ const DOCUMENT_LIBRARY_DRIVE_TYPE = "documentLibrary";
 // How many past runs the screen shows per library. Enough to see a pattern,
 // not enough to turn the page into a log viewer.
 const CRAWL_HISTORY_LIMIT = 5;
+
+// An unfinished crawl untouched for this long is not "about to start", it is
+// waiting for a sweep that is never coming. Generous against a sweep meant to
+// run every minute or two, so this cannot fire on a merely slow one.
+const STALLED_AFTER_MINUTES = 10;
+
+// How much of the crawl the BUTTON does before handing over to the sweep.
+// Small on purpose: this runs inside somebody's click, so the job is to
+// prove it is working and show real numbers, not to finish the library.
+const INLINE_CRAWL_MAX_PAGES = 5;
+const INLINE_CRAWL_BUDGET_MS = 8_000;
 
 // -------------------------------------------------------------------
 // Turn a Graph failure into something an admin can act on.
@@ -115,7 +128,7 @@ export async function findSharepointLibrariesService(
   try {
     const user = await requireUserRole([USER_ROLES.ADMIN]);
 
-    const { hostname, sitePath } = parseSharepointSiteUrl(requestDTO.siteUrl);
+    const { hostname, sitePath, isTenantRoot } = parseSharepointSiteUrl(requestDTO.siteUrl);
 
     const accessToken = await getDelegatedGraphToken(user.id);
 
@@ -127,6 +140,7 @@ export async function findSharepointLibrariesService(
     return {
       siteName: site.displayName,
       siteWebUrl: site.webUrl,
+      isTenantRoot,
       libraries: drives
         .filter((drive) => drive.driveType === DOCUMENT_LIBRARY_DRIVE_TYPE)
         .map((drive) => ({
@@ -216,7 +230,9 @@ export async function nominateSharepointLibraryService(requestDTO: NominateLibra
 // double every write and spend the tenant throttle budget twice for the
 // same answer.
 // -------------------------------------------------------------------
-export async function startSharepointCrawlService(requestDTO: DriveIdDTO): Promise<void> {
+export async function startSharepointCrawlService(
+  requestDTO: DriveIdDTO,
+): Promise<StartCrawlResultDTO> {
   try {
     const user = await requireUserRole([USER_ROLES.ADMIN]);
 
@@ -232,7 +248,7 @@ export async function startSharepointCrawlService(requestDTO: DriveIdDTO): Promi
       throw new DisplayErrorMessage("This library is already being crawled. Wait for that run to finish.");
     }
 
-    await addSharepointCrawlRepo({
+    const crawl = await addSharepointCrawlRepo({
       id: generateId(),
       driveId: drive.driveId,
       status: SHAREPOINT_CRAWL_STATUSES.QUEUED,
@@ -253,6 +269,47 @@ export async function startSharepointCrawlService(requestDTO: DriveIdDTO): Promi
       // preserve, and an actor is not the same field as a subject.
       subjectUserId: user.id,
     });
+
+    // -----------------------------------------------------------------
+    // DO SOME OF THE WORK NOW, rather than only queueing it.
+    //
+    // Queueing alone was correct and felt broken. A crawl of a real library
+    // is dozens of pages and cannot finish inside a request, so the button
+    // wrote a row and returned, and the screen said "Queued, 0 items" until
+    // a scheduler happened to come along. With no scheduler configured that
+    // is indistinguishable from the feature not working, and that is
+    // exactly how it was read.
+    //
+    // So the button now walks a small first slice itself. The library still
+    // needs the sweep to FINISH, but pressing it produces real numbers
+    // immediately, and a small library can be finished by pressing again.
+    //
+    // Bounded by time as well as pages: whoever is watching gets an answer
+    // in a few seconds, and the request never approaches App Service's 230
+    // second front-end timeout.
+    //
+    // FAILURES ARE SWALLOWED HERE ON PURPOSE. The row exists and the audit
+    // entry is written, so the crawl is genuinely started whatever happens
+    // next; the slice either advanced it or recorded its own failure on the
+    // row, and either way the card shows the truth. Throwing would report
+    // "could not start" about a crawl that did start.
+    // -----------------------------------------------------------------
+    try {
+      const slice = await runCrawlSliceService(crawl.id, {
+        maxPages: INLINE_CRAWL_MAX_PAGES,
+        budgetMs: INLINE_CRAWL_BUDGET_MS,
+      });
+
+      return {
+        itemsSeen: slice.itemsSeen,
+        pagesDone: slice.pagesDone,
+        finished: slice.status === SHAREPOINT_CRAWL_STATUSES.COMPLETED,
+      };
+    } catch (error) {
+      handleError("startSharepointCrawlService.inlineSlice", error);
+
+      return { itemsSeen: 0, pagesDone: 0, finished: false };
+    }
   } catch (error) {
     throw handleError("startSharepointCrawlService", error);
   }
@@ -324,6 +381,7 @@ export async function listSharepointDrivesService(): Promise<SharepointDriveDTO[
           deletedItems: totals.deletedItems,
           totalBytes: totals.totalBytes,
           latestCrawl: crawls[0] ? toCrawlDTO(crawls[0]) : null,
+          recentCrawls: crawls.map(toCrawlDTO),
         } satisfies SharepointDriveDTO;
       }),
     );
@@ -343,15 +401,29 @@ export async function listSharepointDrivesService(): Promise<SharepointDriveDTO[
 // is working.
 // -------------------------------------------------------------------
 function toCrawlDTO(crawl: SharepointCrawl): SharepointCrawlDTO {
+  const isFinished =
+    crawl.status === SHAREPOINT_CRAWL_STATUSES.COMPLETED ||
+    crawl.status === SHAREPOINT_CRAWL_STATUSES.FAILED ||
+    crawl.status === SHAREPOINT_CRAWL_STATUSES.NEEDS_REAUTH;
+
+  // Parked behind a throttle is not stalled - it is waiting on purpose, and
+  // throttledUntil says until when.
+  const waitingOnThrottle =
+    crawl.status === SHAREPOINT_CRAWL_STATUSES.PAUSED_THROTTLED &&
+    crawl.throttledUntil !== null &&
+    crawl.throttledUntil.getTime() > Date.now();
+
+  const idleMinutes = (Date.now() - crawl.updatedAt.getTime()) / 60_000;
+
   return {
     id: crawl.id,
     status: crawl.status,
     statusLabel: SHAREPOINT_CRAWL_STATUS_LABELS[crawl.status],
     isFailure: crawl.status === SHAREPOINT_CRAWL_STATUSES.FAILED,
-    isFinished:
-      crawl.status === SHAREPOINT_CRAWL_STATUSES.COMPLETED ||
-      crawl.status === SHAREPOINT_CRAWL_STATUSES.FAILED ||
-      crawl.status === SHAREPOINT_CRAWL_STATUSES.NEEDS_REAUTH,
+    isFinished,
+    // The sweep is meant to run every minute or two, so untouched for this
+    // long means nothing is calling it at all.
+    looksStalled: !isFinished && !waitingOnThrottle && idleMinutes > STALLED_AFTER_MINUTES,
     itemsSeen: crawl.itemsSeen,
     pagesDone: crawl.pagesDone,
     error: crawl.error,
@@ -359,5 +431,6 @@ function toCrawlDTO(crawl: SharepointCrawl): SharepointCrawlDTO {
     startedAt: crawl.startedAt?.toISOString() ?? null,
     finishedAt: crawl.finishedAt?.toISOString() ?? null,
     createdAt: crawl.createdAt.toISOString(),
+    updatedAt: crawl.updatedAt.toISOString(),
   };
 }

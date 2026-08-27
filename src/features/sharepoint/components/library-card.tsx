@@ -47,7 +47,12 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
   const [isRemoving, startRemove] = useTransition();
 
   const crawl = drive.latestCrawl;
-  const isRunning = Boolean(crawl && !crawl.isFinished);
+  // "In flight" is not the same as "running". A QUEUED crawl is waiting for
+  // the sweep to pick it up and nothing is happening yet, so calling it
+  // "Crawling" told people work was under way when none was.
+  const inFlight = Boolean(crawl && !crawl.isFinished);
+  const isRunning = crawl?.status === SHAREPOINT_CRAWL_STATUSES.RUNNING;
+  const isQueued = crawl?.status === SHAREPOINT_CRAWL_STATUSES.QUEUED;
 
   function onCrawl() {
     startCrawl(async () => {
@@ -59,9 +64,22 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
           return;
         }
 
-        // Queued, not done. Saying "crawl finished" here would be a lie
-        // for anything but a tiny library - the walk happens in the sweep.
-        toast.success("Queued. The crawl runs in the background.");
+        // Report what the inline slice ACTUALLY did. "Queued" was true and
+        // read as "nothing happened", which is how this button spent a week
+        // looking broken while working correctly.
+        const { itemsSeen, finished } = response.data;
+
+        if (finished) {
+          toast.success(`Done. ${itemsSeen.toLocaleString()} files and folders catalogued.`);
+        } else if (itemsSeen > 0) {
+          toast.success(
+            `Started. ${itemsSeen.toLocaleString()} items so far - the rest continues in the background.`,
+          );
+        } else {
+          // No progress in the inline slice. Not necessarily wrong, but not
+          // worth dressing up as success either.
+          toast.info("Crawl queued. It will continue in the background.");
+        }
       } catch (error) {
         handleFrontendErrorWithToast(error);
       }
@@ -104,13 +122,13 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
             </Button>
           ) : null}
 
-          <Button type="button" size="sm" onClick={onCrawl} disabled={isStarting || isRunning}>
+          <Button type="button" size="sm" onClick={onCrawl} disabled={isStarting || inFlight}>
             {isStarting ? (
               <Loader2 size={15} aria-hidden="true" className="animate-spin" />
             ) : (
               <Play size={15} aria-hidden="true" />
             )}
-            {isRunning ? "Crawling" : "Crawl now"}
+            {isRunning ? "Crawling" : isQueued ? "Queued" : inFlight ? "Waiting" : "Crawl now"}
           </Button>
 
           <Button
@@ -164,17 +182,78 @@ export function LibraryCard({ drive }: { drive: SharepointDriveDTO }) {
             {crawl.itemsSeen.toLocaleString()} items seen over {crawl.pagesDone.toLocaleString()} pages
           </span>
 
+          {/* WHEN, not just what. A status with no time attached cannot tell
+              "queued a moment ago" from "queued yesterday and nothing has
+              come for it", and those need opposite responses. */}
+          <span className="text-muted-foreground">
+            queued {formatDateTime(crawl.createdAt)}
+          </span>
+
+          {/* Only worth showing once it differs from the queue time, which is
+              exactly when something has actually touched the row. */}
+          {crawl.updatedAt !== crawl.createdAt ? (
+            <span className="text-muted-foreground">last activity {formatDateTime(crawl.updatedAt)}</span>
+          ) : null}
+
           {crawl.status === SHAREPOINT_CRAWL_STATUSES.PAUSED_THROTTLED && crawl.throttledUntil ? (
             <span className="text-muted-foreground">resumes after {formatDateTime(crawl.throttledUntil)}</span>
           ) : null}
 
           {crawl.error ? <span className="w-full text-muted-foreground">{crawl.error}</span> : null}
+
+          {/* A crawl only moves when something POSTs the sweep endpoint.
+              Without that it sits here forever, and "Queued, 0 pages" looks
+              identical to "about to start" - so say which it is. */}
+          {crawl.looksStalled ? (
+            <div className="w-full rounded-lg border border-data-caution/40 bg-data-caution-surface p-3 text-data-caution-text">
+              <p className="font-semibold">Nothing has picked this crawl up.</p>
+              <p className="mt-0.5">
+                A crawl only advances when something calls
+                <span className="font-mono"> /api/jobs/sharepoint-crawl-sweep </span>
+                on a timer. Queueing one here does not run it. Check that a scheduler is pointed at that
+                endpoint with the right bearer secret.
+              </p>
+            </div>
+          ) : null}
         </div>
       ) : (
         <p className="mt-4 border-t border-border pt-3 text-sm text-muted-foreground">
           No crawl has been run on this library yet.
         </p>
       )}
+
+      {/* Recent runs.
+          Already fetched to work out the latest one and previously thrown
+          away, which left no way to answer the first question anybody asks
+          of a stuck crawl: has this ever worked? An empty history and a
+          history of failures look nothing alike, and both look like
+          "Queued" on its own. */}
+      {drive.recentCrawls.length > 1 ? (
+        <details className="mt-4 border-t border-border pt-3">
+          <summary className="cursor-pointer text-sm text-muted-foreground">
+            Recent runs ({drive.recentCrawls.length})
+          </summary>
+
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {drive.recentCrawls.map((run) => (
+              <li key={run.id} className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
+                <Badge
+                  variant={run.isFailure ? "destructive" : run.isFinished ? "success" : "secondary"}
+                  className="text-[11px]"
+                >
+                  {run.statusLabel}
+                </Badge>
+                <span>{formatDateTime(run.createdAt)}</span>
+                <span>
+                  {run.itemsSeen.toLocaleString()} items, {run.pagesDone.toLocaleString()} pages
+                </span>
+                {run.finishedAt ? <span>finished {formatDateTime(run.finishedAt)}</span> : null}
+                {run.error ? <span className="w-full text-destructive">{run.error}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
 
       {drive.nominatedByName ? (
         <p className="mt-3 text-xs text-muted-foreground">Added by {drive.nominatedByName}</p>
