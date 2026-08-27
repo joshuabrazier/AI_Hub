@@ -290,3 +290,38 @@ In a real environment the app hands over a plain blob URL with no token on it,
 and the Speech resource reads it with its **own managed identity**. Grant that
 identity `Storage Blob Data Reader` on the storage account or every job fails
 with an access error. See `docs/deployment.md`.
+
+### Importing from Teams
+
+The third tab needs **neither of the two above**. It fetches a transcript Teams
+already made, through Microsoft Graph, so there is no upload and no Speech job -
+an environment with Microsoft sign-in and no Speech key still has a working
+Teams tab, and the composer says why the other two are missing.
+
+What it does need:
+
+1. **Microsoft sign-in configured** (`MICROSOFT_CLIENT_ID`,
+   `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT_ID`). Every Graph call is
+   delegated, so with no Entra provider there is no token and no way in. There
+   is deliberately no local shortcut: `DEV_FAKE_SHAREPOINT_URL` is excluded, and
+   the tab reports itself unavailable rather than sending a fake token to real
+   Graph.
+2. **Tenant admin consent for three added scopes** - `Calendars.Read`,
+   `OnlineMeetings.Read` and `OnlineMeetingTranscript.Read.All`, listed with
+   their reasons in `src/lib/sharepoint/graph-client.ts`. `.All` cannot be
+   consented to by an ordinary user; without approval every import fails with a
+   403 that reads as a bug rather than a permission.
+3. **Everyone signs in again, once.** A refresh token already issued carries the
+   scopes it was granted with, so adding these does not upgrade an existing one.
+   Until somebody signs in again the tab reports that Microsoft would not grant
+   access, and tells them to.
+
+Microsoft publishes no delegated scope narrower than `.All` for meeting
+transcripts, so that is the only door there is. What bounds it is that the calls
+are delegated: Graph will not return a transcript for a meeting the signed-in
+person was not part of.
+
+**It only works for meetings this tenant hosts, and only if transcription was
+started during the meeting.** Neither is something the app can fix. A meeting a
+client ran on their own tenant belongs to their tenant, and the recorder is the
+answer for those.

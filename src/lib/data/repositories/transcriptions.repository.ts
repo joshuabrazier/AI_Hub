@@ -6,6 +6,7 @@ import {
   TRANSCRIPTION_IN_FLIGHT_STATUSES,
   type NewTranscription,
   type Transcription,
+  type TranscriptionSource,
   type TranscriptionStatus,
   type UpdateTranscription,
 } from "../kysely-database-types";
@@ -60,6 +61,7 @@ export async function getTranscriptionsForUserRepo(
         "status",
         "storageKey",
         "mediaType",
+        "sourceRef",
         "byteSize",
         "durationSeconds",
         "speechJobId",
@@ -217,15 +219,80 @@ export async function getInFlightTranscriptionsForUserRepo(
 }
 
 // -------------------------------------------------------------------
+// The one this user already imported from a given source record, if any.
+//
+// Both the check before an import and the recovery after one: the unique
+// index means two simultaneous clicks race, and the loser reads the winner's
+// row back through here rather than reporting a constraint violation to
+// somebody who only pressed a button twice.
+// -------------------------------------------------------------------
+export async function getTranscriptionBySourceRefRepo(
+  userId: string,
+  source: TranscriptionSource,
+  sourceRef: string,
+  db: DBClient = database,
+): Promise<Transcription | undefined> {
+  try {
+    return await db
+      .selectFrom("transcriptions")
+      .selectAll()
+      .where("userId", "=", userId)
+      .where("source", "=", source)
+      .where("sourceRef", "=", sourceRef)
+      .executeTakeFirst();
+  } catch (error) {
+    throw handleError("getTranscriptionBySourceRefRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// What this user has already imported, keyed by where it came from.
+//
+// Read whole rather than asked one id at a time: the meetings list shows a
+// fortnight at once, and a query per row would be a dozen round trips to
+// answer a question the whole set answers in one.
+//
+// Scoped to the user like everything else here, which is also what makes
+// the answer correct: two people in the same meeting each import their own
+// copy, so "already imported" is only ever a statement about the person
+// asking.
+// -------------------------------------------------------------------
+export async function getTranscriptionSourceRefsForUserRepo(
+  userId: string,
+  source: TranscriptionSource,
+  db: DBClient = database,
+): Promise<{ id: string; sourceRef: string }[]> {
+  try {
+    const rows = await db
+      .selectFrom("transcriptions")
+      .select(["id", "sourceRef"])
+      .where("userId", "=", userId)
+      .where("source", "=", source)
+      .where("sourceRef", "is not", null)
+      .execute();
+
+    // The predicate above already excludes them; this is what convinces the
+    // compiler, and it costs nothing.
+    return rows.filter((row): row is { id: string; sourceRef: string } => row.sourceRef !== null);
+  } catch (error) {
+    throw handleError("getTranscriptionSourceRefsForUserRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
 // Retention: the storage keys of transcriptions older than the cutoff.
 //
 // Read BEFORE the delete, because once the rows are gone nothing knows
 // which blobs to remove.
+//
+// A key can be NULL - a Teams import has no media - and the null is
+// returned rather than filtered out here, so the caller counts the rows it
+// actually deleted a file for instead of the rows it looked at.
 // -------------------------------------------------------------------
 export async function getExpiredTranscriptionKeysRepo(
   cutoff: Date,
   db: DBClient = database,
-): Promise<{ id: string; storageKey: string }[]> {
+): Promise<{ id: string; storageKey: string | null }[]> {
   try {
     return await db
       .selectFrom("transcriptions")
@@ -277,7 +344,11 @@ export async function getAllTranscriptionStorageKeysRepo(db: DBClient = database
   try {
     const rows = await db.selectFrom("transcriptions").select("storageKey").execute();
 
-    return rows.map((row) => row.storageKey);
+    // Rows with no key claim no blob. Letting a null through would put it
+    // in the "still claimed" set, where it matches nothing and means
+    // nothing - and would quietly weaken the one check that catches an
+    // orphaned recording.
+    return rows.map((row) => row.storageKey).filter((key): key is string => key !== null);
   } catch (error) {
     throw handleError("getAllTranscriptionStorageKeysRepo", error);
   }

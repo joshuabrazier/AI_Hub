@@ -207,7 +207,9 @@ export const auth = betterAuth({
             // avatar this app does not display.
             disableProfilePhoto: true,
             // -------------------------------------------------------------
-            // Graph scopes for the SharePoint inventory.
+            // Graph scopes - the SharePoint inventory, and the Teams
+            // transcript import. The list and the reasoning for each entry
+            // live in graph-client.ts.
             //
             // APPENDED to Better Auth's defaults for this provider, which
             // already include openid, profile, email, User.Read and
@@ -215,10 +217,10 @@ export const auth = betterAuth({
             // already being issued, and this only widens what it is good
             // for.
             //
-            // BOTH ARE READ-ONLY, and nothing in the app writes to
-            // SharePoint. A write scope would belong in the change that
-            // needed it, not sitting here unused where a mistake could
-            // reach it.
+            // ALL READ-ONLY, and nothing in the app writes to SharePoint, a
+            // calendar or a meeting. A write scope would belong in the
+            // change that needed it, not sitting here unused where a
+            // mistake could reach it.
             //
             // TWO OPERATIONAL CONSEQUENCES, both real:
             //
@@ -230,7 +232,8 @@ export const auth = betterAuth({
             //      issued carries the scopes it was granted with, so
             //      adding these does not upgrade an existing one. Anybody
             //      who signed in before this change keeps working for
-            //      everything except SharePoint until they do.
+            //      everything except SharePoint and the Teams import until
+            //      they do.
             // -------------------------------------------------------------
             scope: [...GRAPH_SCOPES],
             mapProfileToUser: (profile) => {

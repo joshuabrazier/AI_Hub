@@ -57,13 +57,28 @@ function graphBaseUrl(): string {
 }
 
 // -------------------------------------------------------------------
-// The scopes a crawl needs, and why each one.
+// Every Graph scope this app asks for, and why each one.
 //
+// THE SHAREPOINT INVENTORY:
 //   Sites.Read.All   read site metadata and enumerate document libraries
 //   Files.Read.All   read driveItem metadata through the delta endpoint
 //
-// BOTH READ-ONLY. Phase 1 writes nothing to SharePoint and no scope here
-// permits it to.
+// THE TEAMS TRANSCRIPT IMPORT (src/lib/graph/teams-meetings.ts):
+//   Calendars.Read                    find the person's recent meetings
+//   OnlineMeetings.Read               resolve a join URL to its meeting
+//   OnlineMeetingTranscript.Read.All  read the transcript Teams produced
+//
+// ALL READ-ONLY. Nothing in this app writes to SharePoint, to a calendar or
+// to a meeting, and no scope here permits it to. A write scope belongs in
+// the change that needs it, not sitting here unused.
+//
+// OnlineMeetingTranscript.Read.All IS THE ONE TO UNDERSTAND. Microsoft
+// publishes no delegated scope narrower than `.All` for meeting
+// transcripts, so this is not a case of asking for more than is needed - it
+// is the only door there is. What actually bounds it is that the calls are
+// DELEGATED: every request runs as the signed-in person, and Graph will not
+// return a transcript for a meeting they were not part of. The tenant-wide
+// name describes the consent, not the reach.
 //
 // DEFINED HERE rather than beside the token code because auth.ts has to
 // request them and graph-token.ts imports auth.ts - putting them there
@@ -75,7 +90,13 @@ function graphBaseUrl(): string {
 // this list: `.All` needs tenant admin consent, and adding a scope does not
 // upgrade a refresh token that has already been issued.
 // -------------------------------------------------------------------
-export const GRAPH_SCOPES = ["Sites.Read.All", "Files.Read.All"] as const;
+export const GRAPH_SCOPES = [
+  "Sites.Read.All",
+  "Files.Read.All",
+  "Calendars.Read",
+  "OnlineMeetings.Read",
+  "OnlineMeetingTranscript.Read.All",
+] as const;
 
 const REQUEST_TIMEOUT_MS = 30000;
 const MAX_RETRIES = 3;
@@ -183,6 +204,39 @@ export class GraphRequestError extends Error {
     this.status = options.status ?? null;
     this.retryAfterSeconds = options.retryAfterSeconds ?? null;
   }
+}
+
+// -------------------------------------------------------------------
+// Read a Graph failure's classification WITHOUT relying on instanceof.
+//
+// Class identity is PER BUNDLE CHUNK in a production build, so an error
+// thrown in one chunk and caught in another fails `instanceof` even though
+// it is the same class. That has already cost this app a day once, which is
+// why DisplayErrorMessage carries a boolean marker and isDisplayError exists
+// - and the same reasoning applies here.
+//
+// Identity is tried first, because it is the precise answer when it works,
+// and the fields are read structurally when it does not. The cost of getting
+// this wrong is not an exception: it is the "sign in again to renew access"
+// instruction quietly becoming a generic failure, on the one error that will
+// happen to everybody the day new scopes ship.
+// -------------------------------------------------------------------
+export function graphOutcomeOf(error: unknown): GraphOutcome | null {
+  if (error instanceof GraphRequestError) return error.outcome;
+
+  const outcome = (error as { outcome?: unknown } | null | undefined)?.outcome;
+
+  return outcome === GRAPH_OUTCOMES.NEEDS_REAUTH || outcome === GRAPH_OUTCOMES.THROTTLED
+    ? outcome
+    : null;
+}
+
+export function graphStatusOf(error: unknown): number | null {
+  if (error instanceof GraphRequestError) return error.status;
+
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+
+  return typeof status === "number" ? status : null;
 }
 
 // Retry-After is documented as seconds. A date form is legal in HTTP

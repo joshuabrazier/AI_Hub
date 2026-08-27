@@ -18,6 +18,10 @@ import { getTranscriptionPageService } from "./transcription.service";
 // The service also advances any of this person's unfinished jobs as part of
 // building the page, which is what makes a transcription survive somebody
 // closing the tab on it.
+//
+// A meeting imported from Teams says so plainly in the description, because
+// "the recording is kept" is not true of one - Teams transcribed it and no
+// audio ever reached this app.
 // -------------------------------------------------------------------
 export default async function TranscriptionPage({
   eyebrow,
@@ -36,7 +40,7 @@ export default async function TranscriptionPage({
       // question somebody is entitled to an answer to before they record a
       // room full of people - and because "private from other users" is a
       // promise the app has to keep rather than a nicety.
-      description="Record a meeting or upload one, and get a transcript and a summary. Your transcriptions are private from other users, and the recording is kept so you can download it."
+      description="Record a meeting, upload one, or import one Teams has already transcribed, and get a transcript and a summary. Your transcriptions are private from other users, and any recording is kept so you can download it."
     >
       <TranscriptionWorkspace page={page} />
     </PortalPage>

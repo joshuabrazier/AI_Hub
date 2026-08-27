@@ -9,6 +9,8 @@ import {
   createTranscriptionService,
   deleteTranscriptionService,
   getTranscriptTextService,
+  importTeamsMeetingService,
+  listTeamsMeetingsService,
   renameTranscriptionService,
   retryTranscriptionSummaryService,
   startTranscriptionService,
@@ -16,8 +18,11 @@ import {
 import {
   CreateTranscriptionRequestDTO,
   CreateTranscriptionSchema,
+  ImportTeamsMeetingRequestDTO,
+  ImportTeamsMeetingSchema,
   RenameTranscriptionRequestDTO,
   RenameTranscriptionSchema,
+  TeamsMeetingsDTO,
   TranscriptionDetailDTO,
   TranscriptionIdRequestDTO,
   TranscriptionIdSchema,
@@ -87,6 +92,53 @@ export async function startTranscriptionAction(
     return { success: true, data: transcription } satisfies ServerApiResponse<TranscriptionDetailDTO>;
   } catch (error) {
     return handleServerApiError("startTranscriptionAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The person's recent Teams meetings.
+//
+// An action rather than part of the page, because rendering the screen
+// reads the database and nothing else - see the service. This runs when
+// somebody opens the Teams tab, which is the first moment anybody wants an
+// answer from Microsoft.
+//
+// Takes nothing. Whose meetings these are comes from the session; there is
+// no id to pass and nothing a caller could put in its place.
+// -------------------------------------------------------------------
+export async function listTeamsMeetingsAction(): Promise<ServerApiResponse<TeamsMeetingsDTO>> {
+  try {
+    await requireUser();
+
+    const meetings = await listTeamsMeetingsService();
+
+    return { success: true, data: meetings } satisfies ServerApiResponse<TeamsMeetingsDTO>;
+  } catch (error) {
+    return handleServerApiError("listTeamsMeetingsAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Import one meeting's Teams transcript.
+//
+// An action despite being slow-ish, unlike the sweep, because it stops as
+// soon as the transcript is stored - the summary is left to the sweep. See
+// the service for the whole of that argument.
+// -------------------------------------------------------------------
+export async function importTeamsMeetingAction(
+  requestDTO: ImportTeamsMeetingRequestDTO,
+): Promise<ServerApiResponse<TranscriptionDetailDTO>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(ImportTeamsMeetingSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const transcription = await importTeamsMeetingService(validatedRequest.data);
+
+    return { success: true, data: transcription } satisfies ServerApiResponse<TranscriptionDetailDTO>;
+  } catch (error) {
+    return handleServerApiError("importTeamsMeetingAction", error);
   }
 }
 

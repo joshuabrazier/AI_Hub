@@ -8,7 +8,7 @@ import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 
 import { createTranscriptionAction, startTranscriptionAction } from "../transcription.actions";
-import type { TranscriptionSource } from "@/lib/data/kysely-database-types";
+import type { CreateTranscriptionRequestDTO } from "../transcription.types";
 
 // -------------------------------------------------------------------
 // useTranscriptionUpload
@@ -42,7 +42,11 @@ export type TranscriptionUploadRequest = {
   /** Used to derive the media type server-side, so it must carry a real extension. */
   fileName: string;
   title: string;
-  source: TranscriptionSource;
+  // Deliberately narrower than TranscriptionSource. A 'teams' transcription
+  // arrives through Graph already complete - there is no media to upload -
+  // so this path cannot produce one, and the type says so rather than
+  // relying on nobody trying.
+  source: CreateTranscriptionRequestDTO["source"];
 };
 
 export function useTranscriptionUpload() {

@@ -228,9 +228,53 @@ export type TranscriptionDetailDTO = TranscriptionSummaryDTO & {
 };
 
 // -------------------------------------------------------------------
+// One Teams meeting somebody could import.
+//
+// Built from a calendar event, so it says nothing about whether a
+// transcript actually EXISTS - Graph has no endpoint that answers that
+// without resolving the meeting first, which is a call per row. `importedAs`
+// is the one thing known for certain here: the id of the transcription this
+// person already made from it, so the screen offers to open that instead of
+// importing a second copy.
+//
+// `joinUrl` is deliberately absent. The import takes an event id and reads
+// the URL back from Graph itself - see getTeamsMeeting.
+// -------------------------------------------------------------------
+export type TeamsMeetingDTO = {
+  eventId: string;
+  subject: string;
+  startsAt: Date;
+  endsAt: Date;
+  organiser: string | null;
+  importedAs: string | null;
+};
+
+// -------------------------------------------------------------------
+// The Teams panel, in one answer.
+//
+// `isConfigured` false means this deployment has no Microsoft sign-in at
+// all, which is the local-development case. Reported rather than throwing,
+// because "not available here" is a sentence and an error is not.
+// -------------------------------------------------------------------
+export type TeamsMeetingsDTO = {
+  isConfigured: boolean;
+  lookbackDays: number;
+  meetings: TeamsMeetingDTO[];
+};
+
+// The import carries ONLY an opaque calendar id. Everything else about the
+// meeting - its join URL, its title - is read back from Graph, so nothing
+// the browser sends can name a row or reach a meeting.
+export const ImportTeamsMeetingSchema = z.object({
+  eventId: z.string().trim().min(1).max(512),
+});
+
+export type ImportTeamsMeetingRequestDTO = z.infer<typeof ImportTeamsMeetingSchema>;
+
+// -------------------------------------------------------------------
 // Everything the screen renders in one pass.
 //
-// THREE flags, because there are three different ways this can be not-ready
+// FOUR flags, because there are four different ways this can be not-ready
 // and each needs a different sentence. Storage can be configured without
 // Speech, in which case media uploads and nothing transcribes it. Both can
 // be configured and still not work, if the storage is the local emulator -
@@ -246,9 +290,64 @@ export type TranscriptionPageDTO = {
   // False against Azurite or a private-network storage account. Everything
   // up to creating the job still works; the job itself cannot.
   isStorageReachableByAzure: boolean;
+  // A FOURTH, and independent of the other three. Importing from Teams
+  // uploads nothing, stores nothing and never asks the Speech service - it
+  // needs Microsoft sign-in and nothing else. So a deployment can have this
+  // and not the other two, or the other two and not this.
+  isTeamsImportConfigured: boolean;
   transcriptions: TranscriptionSummaryDTO[];
   active: TranscriptionDetailDTO | null;
 };
+
+// -------------------------------------------------------------------
+// Whether the person can record or upload here, and if not, why not.
+//
+// THREE WAYS TO BE NOT-READY, THREE DIFFERENT SENTENCES. Reducing them to
+// one "not configured" would send somebody looking in the wrong place - and
+// the third especially, because everything about that setup LOOKS right:
+// the key is set, the storage is set, the recorder works, the upload
+// succeeds. Only the job fails, minutes later, with a message from Azure
+// about a URI.
+//
+// Derived HERE rather than in a component because two screens need the same
+// answer: the panel shown when nothing works at all, and the note above the
+// Teams tab when importing works but recording does not. Two copies of this
+// reasoning would drift, and the failure mode is a wrong diagnosis.
+//
+// Null when recording and uploading are both fine.
+// -------------------------------------------------------------------
+export function recordingUnavailableReason(
+  page: Pick<
+    TranscriptionPageDTO,
+    "isStorageConfigured" | "isSpeechConfigured" | "isStorageReachableByAzure"
+  >,
+): { title: string; detail: string } | null {
+  if (!page.isStorageConfigured) {
+    return {
+      title: "Recording and uploading are not configured",
+      detail:
+        "There is nowhere to put a recording on this environment. Set AZURE_STORAGE_CONNECTION_STRING and restart.",
+    };
+  }
+
+  if (!page.isSpeechConfigured) {
+    return {
+      title: "Recording and uploading are not configured",
+      detail:
+        "Recordings can be stored but nothing can transcribe them. Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION and restart.",
+    };
+  }
+
+  if (!page.isStorageReachableByAzure) {
+    return {
+      title: "Transcription cannot run against local storage",
+      detail:
+        "Azure downloads the recording itself and cannot reach the storage emulator on this machine. Everything else works locally - to transcribe, point AZURE_STORAGE_CONNECTION_STRING at a real storage account.",
+    };
+  }
+
+  return null;
+}
 
 // What the browser needs to upload the media itself: where to put it, and
 // which row to start once it has.
@@ -323,10 +422,20 @@ export function formatTimestamp(ms: number): string {
 // -------------------------------------------------------------------
 // A speaker's display name.
 //
-// The Speech service separates voices but has no idea who they are, so a
-// speaker is a number. Null means it could not tell them apart at all,
-// which happens on a single-microphone recording of a room.
+// TWO DIFFERENT KINDS OF CERTAINTY, in priority order. A Teams import
+// carries a real name, because Teams transcribes each participant's own
+// microphone against their signed-in identity - it is not clustering
+// voices, it knows who is talking. Everything recorded or uploaded here
+// gets a number instead: the Speech service separates voices but has no
+// idea who they are, and null means it could not separate them at all,
+// which is what a single microphone in a room usually produces.
+//
+// Taking the segment rather than the number is what keeps that order in one
+// place. A caller reaching for `segment.speaker` on its own would silently
+// print "Speaker 1" over a transcript that knows the person's name.
 // -------------------------------------------------------------------
-export function speakerLabel(speaker: number | null): string {
-  return speaker === null ? "Speaker" : `Speaker ${speaker}`;
+export function speakerLabel(segment: Pick<TranscriptionSegment, "speaker" | "speakerName">): string {
+  if (segment.speakerName) return segment.speakerName;
+
+  return segment.speaker === null ? "Speaker" : `Speaker ${segment.speaker}`;
 }

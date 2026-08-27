@@ -85,12 +85,17 @@ all rendering one feature page.
 whose work outlives its request:
 
 ```text
-transcriptions   one recording, owned by one user (+ its transcript,
-                 speaker segments and model-written summary)
+transcriptions   one recording OR one imported Teams meeting, owned by one
+                 user (+ its transcript, speaker segments and model-written
+                 summary)
 ```
 
 Same boundary as chat - per-person, `requireUser`, a `userId` predicate on
 every query - mounted at `/{admin,manage,portal}/transcription`.
+
+Three ways in - upload, record, and **import from Teams**. The third has no
+media at all, so `storage_key` and `media_type` are nullable and `source_ref`
+records where it came from.
 
 **Summaries** is the one AI feature with NO data of its own:
 
@@ -209,6 +214,12 @@ serving bytes, so the actions rule never applied to it.)
 - **Summaries store NOTHING, and that is a decision rather than a gap.** The input is whatever somebody pasted - a contract, a medical letter - so keeping a copy of it plus the model's reading of it would make it the most sensitive table in the app for no benefit anybody asked for. The page says so, because a refresh loses the summary. The one place it does persist is `ai_chat_request_logs`, on that log's own shorter retention window, and the screen says admins can review it.
 - **The three summary styles are three different PROMPTS, not one prompt with a length.** "The same but shorter" gets a truncated answer that stops mid-thought; asking a different question gets a different answer. Each has its own `SUMMARY_MAX_TOKENS`, ordered detailed > summary > executive, and a test asserts that ordering - an executive summary allowed to run as long as a detailed one has missed the point of being asked for.
 - **Pasted text is fenced in `<source_text>` and named as material, never instructions.** It was written by somebody else and can contain anything aimed at the model. The fence lowers the chance; the system prompt saying so and `ModelMarkdown` emitting React elements limit the damage. All three are needed - none is sufficient.
+- **A `teams` transcription is imported, not produced, and it is the one row with NO media.** Teams recorded and transcribed the meeting; `importTeamsMeetingService` fetches the result through Graph. So `storage_key` and `media_type` are NULL on it, there is no Speech job, there is no recording to download, and the row lands directly in `summarising` for the existing sweep to finish. That last part is deliberate: it makes the import a server action rather than a route handler, and it inherits the poll, the push notification and the retry for free.
+- **The Teams import is worth having because Teams knows WHO was talking.** It transcribes each participant's own microphone against their signed-in identity, so `TranscriptionSegment.speakerName` carries a real name where Azure could only offer `speaker: 0`. The two fields are different kinds of certainty and must not be collapsed - `speakerLabel(segment)` takes the whole segment so the ordering lives in one place.
+- **It only works for meetings THIS tenant hosted AND transcribed.** Neither is fixable in code: a client's own tenant holds their transcript, and nothing turns on transcription retrospectively. The recorder stays for exactly those meetings, and the screen says so rather than letting somebody find out by failing.
+- **Every Graph call is delegated**, so Graph itself enforces that the person was in the meeting. Nothing in this app decides who may read a transcript. The import carries ONLY an event id; the join URL and the title are read back from Graph, so nothing the browser sends names a row or reaches a meeting.
+- **`source_ref` is the event id and the transcript id joined**, unique per person, and it is what makes importing idempotent - a second click opens the copy that exists instead of paying for a second summary. Both ids are needed: the event id is what the meetings list has in hand, the transcript id tells two transcripts of one meeting apart.
+- **Adding a Graph scope costs a tenant admin consent AND one sign-in from everybody.** `GRAPH_SCOPES` now carries `Calendars.Read`, `OnlineMeetings.Read` and `OnlineMeetingTranscript.Read.All` alongside the SharePoint pair. A refresh token already issued keeps the scopes it was granted with, so until somebody signs in again the Teams tab tells them Microsoft would not grant access.
 - **Model output renders through `ModelMarkdown`** (`src/components/model-markdown.tsx`), shared by chat replies and meeting summaries. Its three controls - no `rehype-raw`, a `safeUrl` protocol allowlist, images as links - are asserted against rendered output in `model-markdown.test.ts`. A transcript is untrusted text like a chat message and renders as text nodes.
 - **`FIELD_ENCRYPTION_KEY` has no callers in the base** (`src/lib/crypto/field-encryption.ts` is kept as domain-neutral, tested infrastructure - its only user was signable documents, removed). It is unrelated to 2FA. The moment a project encrypts its first value with it, it becomes permanent: rotating it makes that value unreadable.
 

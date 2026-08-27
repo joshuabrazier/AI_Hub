@@ -16,6 +16,7 @@ import {
   TRANSCRIPTION_STATUSES,
   TRANSCRIPTION_STATUS_LABELS,
   TRANSCRIPTION_SOURCES,
+  TRANSCRIPTION_SOURCE_LABELS,
 } from "@/lib/data/kysely-database-types";
 import { formatDateTime } from "@/lib/format";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
@@ -135,6 +136,13 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
   const isCompleted = current.status === TRANSCRIPTION_STATUSES.COMPLETED;
   const isFailed = current.status === TRANSCRIPTION_STATUSES.FAILED;
 
+  // A Teams import has no recording and never did - Teams transcribed the
+  // meeting and only the text was fetched. Offering the button anyway would
+  // hand somebody a download that 404s, which reads as a lost recording
+  // rather than as one that never existed.
+  const hasRecording =
+    current.source !== TRANSCRIPTION_SOURCES.TEAMS && (current.transcript !== null || isFailed);
+
   // Still awaiting media on a screen somebody is LOOKING at means the upload
   // did not finish - during a real upload the composer is what is on screen,
   // and the row is already queued by the time this opens. So it is offered
@@ -150,8 +158,7 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold text-foreground">{current.title}</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            {current.source === TRANSCRIPTION_SOURCES.RECORDING ? "Recorded" : "Uploaded"}{" "}
-            {formatDateTime(current.createdAt)}
+            {TRANSCRIPTION_SOURCE_LABELS[current.source]} {formatDateTime(current.createdAt)}
             {current.durationSeconds !== null ? ` - ${formatDuration(current.durationSeconds)}` : ""}
           </p>
         </div>
@@ -175,7 +182,7 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
               The route re-checks the session and the owner, so nothing is
               granted by this being an ordinary href. It 404s if the
               recording has aged out of the retention window. */}
-          {current.transcript !== null || isFailed ? (
+          {hasRecording ? (
             <Button asChild type="button" variant="outline" size="sm">
               <a href={`/api/transcription/${current.id}/media`} download>
                 <AudioLines size={14} aria-hidden="true" />
@@ -192,11 +199,11 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
             ------------------------------------------------------------ */}
         {isInFlight ? (
           <div className="flex flex-col items-center py-14 text-center">
-            <TranscriptionProgress status={current.status} />
+            <TranscriptionProgress status={current.status} source={current.source} />
 
             <p className="mt-6 max-w-sm text-xs text-muted-foreground">
-              You can close this page. The transcription carries on at the service either way, and it will be
-              collected the next time you open this screen.
+              You can close this page. The work carries on without you, and it will be collected the next time
+              you open this screen.
             </p>
           </div>
         ) : null}
@@ -307,7 +314,12 @@ function TranscriptBody({ detail }: { detail: TranscriptionDetailDTO }) {
     return <p className="py-10 text-center text-sm text-muted-foreground">There is no transcript.</p>;
   }
 
-  const hasSpeakers = detail.segments.some((segment) => segment.speaker !== null);
+  // EITHER kind of speaker counts. A Teams import has real names and a null
+  // in the numeric field, so testing only the number would render a
+  // perfectly attributed transcript as one anonymous block of text.
+  const hasSpeakers = detail.segments.some(
+    (segment) => segment.speaker !== null || Boolean(segment.speakerName),
+  );
 
   if (!hasSpeakers || detail.segments.length === 0) {
     return (
@@ -328,22 +340,33 @@ function TranscriptBody({ detail }: { detail: TranscriptionDetailDTO }) {
           <li key={index} className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)]">
             <p className="text-xs font-medium text-muted-foreground">
               <span className="tabular-nums">{formatTimestamp(segment.startMs)}</span>{" "}
-              {speakerLabel(segment.speaker)}
+              {speakerLabel(segment)}
             </p>
             <p className="text-sm leading-relaxed text-foreground">{segment.text}</p>
           </li>
         ))}
       </ol>
-      <TranscriptFootnote />
+      <TranscriptFootnote isNamed={detail.source === TRANSCRIPTION_SOURCES.TEAMS} />
     </>
   );
 }
 
-function TranscriptFootnote() {
+// -------------------------------------------------------------------
+// What the reader needs to know about how this transcript was made.
+//
+// Two different sentences, because the two kinds of transcript carry
+// genuinely different certainty about who said what. A Teams transcript has
+// real names on it, taken from each participant's signed-in identity; every
+// other one has voices this app told apart and numbered without knowing who
+// anybody is. Printing the numbered caveat over a named transcript would
+// undersell it, and the reverse would be a claim that is not true.
+// -------------------------------------------------------------------
+function TranscriptFootnote({ isNamed = false }: { isNamed?: boolean }) {
   return (
     <p className="mt-6 border-t border-border pt-3 text-xs text-muted-foreground">
-      Transcribed automatically, so it will contain mistakes. Speakers are separated by voice and numbered - the
-      service does not know who anybody is.
+      {isNamed
+        ? "Transcribed automatically by Microsoft Teams, so it will contain mistakes. Speakers are named from who was signed in to the meeting."
+        : "Transcribed automatically, so it will contain mistakes. Speakers are separated by voice and numbered - the service does not know who anybody is."}
     </p>
   );
 }

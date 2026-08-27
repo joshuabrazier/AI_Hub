@@ -154,6 +154,58 @@ Note also that all of this is **server actions**, including the one that hands
 out the upload URL. Neither exception above applies: nothing streams, and the
 media never passes through the app, so nothing here is near the body limit.
 
+### A third way in - importing from Teams
+
+A `teams` row is the one exception to all of the above: it does not move
+through the state machine at all, because it arrives with the transcript
+already in hand. Teams recorded and transcribed the meeting itself, and
+`importTeamsMeetingService` fetches the result through Microsoft Graph.
+
+Why it is worth having: Teams transcribes **each participant's own microphone
+against their signed-in identity**, so the transcript comes back with real
+names on it. Azure Speech can tell voices apart and calls them "Speaker 0".
+For a meeting the organisation hosts, that is a better transcript than
+anything a single microphone in a room can produce - which is why
+`TranscriptionSegment` carries both `speaker` (a number) and `speakerName` (a
+name), and `speakerLabel` prefers the name.
+
+Two things it cannot do, and the screen says both rather than letting somebody
+discover them by failing:
+
+- **It cannot make a meeting have a transcript.** Transcription has to have
+  been started while the meeting was running. There is no retrospective fix.
+- **It cannot reach a meeting another organisation hosted.** Their tenant holds
+  that transcript. The recorder is still the answer for those, which is why it
+  stays.
+
+The lookup is a chain, and Graph offers no shortcut: calendar events -> the
+event's `joinUrl` -> the `onlineMeeting` -> its transcripts -> the content, as
+WebVTT. Four calls to import one meeting, so the list is fetched once and the
+content only for the meeting somebody picks. **Every call is delegated** - made
+as the signed-in person - so Graph enforces that they were in the meeting.
+Nothing in this app decides who may read a transcript.
+
+Three consequences worth knowing before changing any of it:
+
+- **The row lands in `summarising`, not `completed`.** Its transcript is
+  already stored, and the existing sweep writes the summary. So the import is a
+  server action rather than a route handler - it stops as soon as the transcript
+  is in - and it gets the poll, the push notification, the retry and the
+  background sweep for free.
+- **It has no media at all.** `storage_key` and `media_type` are NULL, which is
+  why migration 014 makes them nullable rather than inventing a key that points
+  at nothing. There is no recording to download, and the detail screen does not
+  offer one.
+- **Importing is idempotent.** `source_ref` holds the event id and the Graph
+  transcript id joined together, unique per person, so a second click opens the
+  copy that exists rather than paying for a second summary. Both ids are needed:
+  the event id is what the meetings list has in hand, and the transcript id is
+  what tells two transcripts of the same meeting apart.
+
+The parser is `src/lib/graph/teams-transcript.ts`, deliberately pure and
+exported so it can be tested without a tenant, a meeting or a live token -
+which every other part of this needs all three of.
+
 ## Authentication and authorization
 
 Configured in `src/lib/auth/auth.ts`.

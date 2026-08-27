@@ -30,6 +30,9 @@ import { deleteMedia, isMediaStorageConfigured, listAllMediaKeys } from "@/lib/s
 // belongs to the jobs that FAILED - which keep their file on purpose, so
 // they can be retried - and to jobs abandoned before they ever started.
 // Both are exactly the kind of thing nothing else would ever collect.
+//
+// A TEAMS IMPORT NEVER HAD ONE AT ALL. Its row expires on the same window
+// as everything else; it simply has no blob behind it.
 // -------------------------------------------------------------------
 export type TranscriptionPurgeResult = {
   // The window applied, in days. 0 means purging is off.
@@ -75,6 +78,11 @@ export async function purgeExpiredTranscriptionsService(): Promise<Transcription
       const expiring = await getExpiredTranscriptionKeysRepo(cutoff);
 
       for (const row of expiring) {
+        // A Teams import never had media - Teams transcribed the meeting
+        // and only the text was fetched - so there is no blob to remove and
+        // nothing to count. The row itself still expires with the rest.
+        if (!row.storageKey) continue;
+
         await deleteMedia(row.storageKey);
         purgedMedia += 1;
       }

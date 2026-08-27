@@ -11,11 +11,13 @@ import {
   isBedrockConfigured,
 } from "@/lib/ai/bedrock-client";
 import { buildHouseVoiceBlock } from "@/lib/ai/house-voice";
+import { isMicrosoftSignInConfigured } from "@/lib/auth/account-creation-policy";
 import { requireUser } from "@/lib/auth/session-auth-server";
 import { getUserByUserIdRepo } from "@/lib/data/repositories/users.repository";
 import {
   AI_CHAT_REQUEST_KINDS,
   TRANSCRIPTION_SOURCES,
+  TRANSCRIPTION_SOURCE_DESCRIPTIONS,
   TRANSCRIPTION_STATUSES,
   USER_ROLES,
   type Transcription,
@@ -31,17 +33,35 @@ import {
   deleteTranscriptionForUserRepo,
   getAllInFlightTranscriptionsRepo,
   getInFlightTranscriptionsForUserRepo,
+  getTranscriptionBySourceRefRepo,
   getTranscriptionForUserRepo,
+  getTranscriptionSourceRefsForUserRepo,
   getTranscriptionsForUserRepo,
   updateTranscriptionForUserRepo,
 } from "@/lib/data/repositories/transcriptions.repository";
 import { envServer } from "@/lib/env-server";
-import { DisplayErrorMessage } from "@/lib/errors";
+import { DisplayErrorMessage, isDisplayError } from "@/lib/errors";
 import { safeDownloadName } from "@/lib/download-blob";
 import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
+import {
+  MEETING_LOOKBACK_DAYS,
+  fetchTranscriptVtt,
+  findOnlineMeetingId,
+  getTeamsMeeting,
+  listMeetingTranscripts,
+  listRecentTeamsMeetings,
+} from "@/lib/graph/teams-meetings";
+import {
+  eventIdFromSourceRef,
+  parseTeamsVtt,
+  teamsSegmentsToText,
+  teamsSourceRef,
+} from "@/lib/graph/teams-transcript";
 import { isPushConfigured, sendPushToUser } from "@/lib/push/push-notifications";
 import { ROUTES, transcriptionHomeForRole } from "@/lib/routes";
+import { GRAPH_OUTCOMES, graphOutcomeOf } from "@/lib/sharepoint/graph-client";
+import { isFakeSharepointEnabled } from "@/lib/sharepoint/dev-fake";
 import {
   createUploadUrl,
   deleteMedia,
@@ -64,13 +84,17 @@ import {
 import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from "./transcription.mappers";
 import {
   MAX_MEDIA_BYTES,
+  TITLE_MAX_CHARS,
   TRANSCRIPTION_TIMEOUT_HOURS,
   extensionForMediaType,
   formatTimestamp,
   mediaTypeForFileName,
   speakerLabel,
   type CreateTranscriptionRequestDTO,
+  type ImportTeamsMeetingRequestDTO,
   type RenameTranscriptionRequestDTO,
+  type TeamsMeetingDTO,
+  type TeamsMeetingsDTO,
   type TranscriptionDetailDTO,
   type TranscriptionIdRequestDTO,
   type TranscriptionPageDTO,
@@ -718,6 +742,12 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
       isStorageConfigured: isMediaStorageConfigured(),
       isSpeechConfigured: isSpeechConfigured(),
       isStorageReachableByAzure: isMediaReachableByAzureServices(),
+      // Independent of all three above: importing from Teams uploads
+      // nothing, stores nothing and never asks the Speech service. An
+      // environment with Microsoft sign-in and no Azure Speech key can still
+      // do this, and saying so is the difference between a usable screen and
+      // one that reports itself as broken.
+      isTeamsImportConfigured: isTeamsImportConfigured(),
       transcriptions,
       active: activeRow ? mapDBTranscriptionToDetailDTO(activeRow) : null,
     };
@@ -747,7 +777,12 @@ export async function sweepTranscriptionsService(): Promise<{ changed: boolean }
   try {
     const user = await requireUser();
 
-    if (!isSpeechConfigured()) return { changed: false };
+    // Not an early return for the whole sweep, and that distinction matters
+    // now that a row can arrive without ever going near Speech. A Teams
+    // import lands in `summarising` with its transcript already stored, and
+    // only needs the model - so an environment with Graph but no Speech key
+    // must still finish those rather than leaving them in flight forever.
+    const speechConfigured = isSpeechConfigured();
 
     const inFlight = await getInFlightTranscriptionsForUserRepo(user.id);
 
@@ -759,6 +794,10 @@ export async function sweepTranscriptionsService(): Promise<{ changed: boolean }
     // burst against the Speech API and, when they all finish together, a
     // burst of model calls too.
     for (const row of inFlight) {
+      // Everything before `summarising` is waiting on a Speech job. Without
+      // the service there is nothing to ask and nothing to move.
+      if (!speechConfigured && row.status !== TRANSCRIPTION_STATUSES.SUMMARISING) continue;
+
       try {
         const advanced = await advanceTranscription(row, user.id, { allowSummarise: true });
 
@@ -801,7 +840,9 @@ export async function sweepAllTranscriptionsService(): Promise<{
   advanced: number;
 }> {
   try {
-    if (!isSpeechConfigured()) return { examined: 0, advanced: 0 };
+    // Per row rather than for the whole batch - see the note in
+    // sweepTranscriptionsService. A Teams import needs no Speech service.
+    const speechConfigured = isSpeechConfigured();
 
     const inFlight = await getAllInFlightTranscriptionsRepo(SWEEP_BATCH_SIZE);
 
@@ -811,6 +852,8 @@ export async function sweepAllTranscriptionsService(): Promise<{
     // several finish together each also becomes a model call - fanning that
     // out would turn one scheduled run into a burst against both services.
     for (const row of inFlight) {
+      if (!speechConfigured && row.status !== TRANSCRIPTION_STATUSES.SUMMARISING) continue;
+
       try {
         const result = await advanceTranscription(row, row.userId, { allowSummarise: true });
 
@@ -826,6 +869,300 @@ export async function sweepAllTranscriptionsService(): Promise<{
     return { examined: inFlight.length, advanced };
   } catch (error) {
     throw handleError("sweepAllTranscriptionsService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
+// IMPORTING FROM TEAMS
+// ===================================================================
+//
+// The third way a transcription can arrive, and the only one where this app
+// does no transcribing at all. Teams records and transcribes the meeting
+// itself, and this fetches the result through Microsoft Graph.
+//
+// WHAT THAT BUYS, and it is the whole reason the feature exists: Teams
+// transcribes each participant's OWN microphone against their signed-in
+// identity, so the transcript comes back with REAL NAMES on it. Azure Speech
+// can tell voices apart and calls them "Speaker 0"; Teams knows it was
+// Louis. For a meeting the organisation hosts, that is a better transcript
+// than anything this app can produce from one microphone in a room.
+//
+// WHAT IT COSTS, stated plainly because it decides whether somebody can use
+// it at all:
+//
+//   - THE MEETING MUST ALREADY HAVE BEEN TRANSCRIBED BY TEAMS. Nothing here
+//     can turn that on retrospectively. If nobody started transcription,
+//     there is nothing to fetch and no code can change that.
+//   - IT MUST BE A MEETING THIS TENANT HOSTS. A client running the meeting
+//     on their own tenant owns the transcript, and a delegated call finds
+//     nothing for it. The recorder is still the answer for those, which is
+//     why it stays.
+//
+// EVERY CALL IS DELEGATED - made as the signed-in person, so Graph itself
+// enforces that they were in the meeting. Nothing here decides who may read
+// a transcript, which is worth more than any check this code could make.
+// -------------------------------------------------------------------
+
+// Whether the Teams import can work on this deployment at all.
+//
+// It needs a real Microsoft sign-in, because the whole thing runs on a
+// delegated token. The fake-SharePoint door is excluded deliberately: it
+// hands out a token that is deliberately not a credential, and a request
+// carrying it to real Graph would fail as an authentication problem - a
+// confusing way to learn that a local shortcut does not extend this far.
+function isTeamsImportConfigured(): boolean {
+  return isMicrosoftSignInConfigured() && !isFakeSharepointEnabled();
+}
+
+// -------------------------------------------------------------------
+// Turn a Graph failure into something worth reading.
+//
+// The three outcomes have three different remedies and only one of them is
+// "try again": a lapsed grant needs a person to sign in, a throttle needs
+// time, and anything else is genuinely unexpected. Collapsing them into one
+// message would send somebody looking in the wrong place - and the re-auth
+// case especially, because it is the one that will actually happen the day
+// this ships, to everybody who signed in before the new scopes existed.
+// -------------------------------------------------------------------
+function teamsGraphFailure(error: unknown): DisplayErrorMessage {
+  // graphOutcomeOf, not instanceof - class identity is per bundle chunk in a
+  // production build, and the re-auth message is the one that must survive.
+  switch (graphOutcomeOf(error)) {
+    case GRAPH_OUTCOMES.NEEDS_REAUTH:
+      return new DisplayErrorMessage(
+        "Microsoft would not grant access to your meetings. Sign out and sign in again to renew it - if that does not help, an administrator has to approve this app's access to Teams transcripts.",
+      );
+
+    case GRAPH_OUTCOMES.THROTTLED:
+      return new DisplayErrorMessage("Microsoft is rate-limiting this app. Try again in a few minutes.");
+
+    default:
+      return new DisplayErrorMessage(`Microsoft could not be reached: ${boundError(error)}`);
+  }
+}
+
+// -------------------------------------------------------------------
+// This person's recent Teams meetings, and which they have already imported.
+//
+// FETCHED ON DEMAND, NOT WITH THE PAGE. Rendering the transcription screen
+// reads the database and nothing else, and that restriction is what makes it
+// reliable - see getTranscriptionPageService. A Graph call in the render
+// path would put the whole screen behind Microsoft answering.
+//
+// It says nothing about whether a given meeting HAS a transcript. Graph has
+// no endpoint that answers that for a list; finding out means resolving the
+// meeting and asking, which is two calls per row. A fortnight of meetings
+// would be dozens of calls to grey out some rows, so the question is asked
+// once, for the meeting somebody actually picks.
+// -------------------------------------------------------------------
+export async function listTeamsMeetingsService(): Promise<TeamsMeetingsDTO> {
+  try {
+    const user = await requireUser();
+
+    if (!isTeamsImportConfigured()) {
+      return { isConfigured: false, lookbackDays: MEETING_LOOKBACK_DAYS, meetings: [] };
+    }
+
+    let meetings;
+
+    try {
+      meetings = await listRecentTeamsMeetings(user.id);
+    } catch (error) {
+      throw teamsGraphFailure(error);
+    }
+
+    // One query for the whole list rather than one per row.
+    const imported = await getTranscriptionSourceRefsForUserRepo(user.id, TRANSCRIPTION_SOURCES.TEAMS);
+
+    // Keyed by the EVENT id, because that is what the list has in hand. See
+    // teamsSourceRef for why a row stores both ids.
+    const byEvent = new Map(imported.map((row) => [eventIdFromSourceRef(row.sourceRef), row.id]));
+
+    return {
+      isConfigured: true,
+      lookbackDays: MEETING_LOOKBACK_DAYS,
+      meetings: meetings.map(
+        (meeting): TeamsMeetingDTO => ({
+          eventId: meeting.eventId,
+          subject: meeting.subject,
+          startsAt: meeting.startsAt,
+          endsAt: meeting.endsAt,
+          organiser: meeting.organiser,
+          importedAs: byEvent.get(meeting.eventId) ?? null,
+        }),
+      ),
+    };
+  } catch (error) {
+    throw handleError("listTeamsMeetingsService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Import one meeting's transcript.
+//
+// A SERVER ACTION RATHER THAN A ROUTE HANDLER, unlike the sweep, and the
+// reason is how long it runs. This makes three Graph calls and a write, and
+// then STOPS: the row lands in `summarising` with its transcript already
+// stored, and the existing sweep writes the summary. So the slow part - a
+// model call measured in tens of seconds - stays where every other slow part
+// of this feature lives, and an import holds nothing behind it for more than
+// a moment.
+//
+// It also means an import gets the rest of the machine for free: the poll
+// finishes it, the push notification fires, a failed summary can be retried
+// by hand, and a browser closed halfway is picked up by the background
+// sweep.
+//
+// The request carries ONLY an event id. The join URL and the title are read
+// back from Graph, so nothing the browser sends names a row or reaches a
+// meeting - and every call is delegated, so an id belonging to somebody
+// else's meeting resolves to nothing rather than to their transcript.
+// -------------------------------------------------------------------
+export async function importTeamsMeetingService(
+  requestDTO: ImportTeamsMeetingRequestDTO,
+): Promise<TranscriptionDetailDTO> {
+  try {
+    const user = await requireUser();
+
+    if (!isTeamsImportConfigured()) {
+      throw new DisplayErrorMessage(
+        "Importing from Teams needs Microsoft sign-in, which is not configured on this environment.",
+      );
+    }
+
+    let meeting;
+    let onlineMeetingId: string | null;
+    let transcripts;
+
+    try {
+      meeting = await getTeamsMeeting(user.id, requestDTO.eventId);
+
+      if (!meeting) {
+        throw new DisplayErrorMessage("That meeting is no longer in your calendar.");
+      }
+
+      onlineMeetingId = await findOnlineMeetingId(user.id, meeting.joinUrl);
+
+      if (!onlineMeetingId) {
+        // The signature of a meeting somebody else's organisation hosted.
+        // Named as such rather than reported as a failure, because it is not
+        // one - and because the answer is the recorder, which is on the next
+        // tab along.
+        throw new DisplayErrorMessage(
+          "Microsoft has no record of that meeting. It was most likely hosted on another organisation's Teams, in which case they hold the transcript - record it here instead.",
+        );
+      }
+
+      transcripts = await listMeetingTranscripts(user.id, onlineMeetingId);
+    } catch (error) {
+      // A DisplayErrorMessage above is already the sentence to show. Only a
+      // Graph fault needs translating. isDisplayError rather than instanceof,
+      // for the reason given in errors.ts.
+      if (isDisplayError(error)) throw error;
+
+      throw teamsGraphFailure(error);
+    }
+
+    if (transcripts.length === 0) {
+      throw new DisplayErrorMessage(
+        "Teams has no transcript for that meeting. Transcription has to be started while the meeting is running, and a transcript can take a few minutes to appear after it ends.",
+      );
+    }
+
+    // The newest, when there is more than one - a meeting stopped and
+    // restarted produces a second, and the later one is the fuller record.
+    // A missing createdDateTime sorts last rather than upsetting the order.
+    const transcript = [...transcripts].sort(
+      (a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0),
+    )[0];
+
+    const sourceRef = teamsSourceRef(meeting.eventId, transcript.id);
+
+    // Already imported. Answered with the row that exists rather than
+    // refused: somebody who clicks Import on a meeting they did last week
+    // wants to READ it, and opening it is what they meant.
+    const existing = await getTranscriptionBySourceRefRepo(user.id, TRANSCRIPTION_SOURCES.TEAMS, sourceRef);
+
+    if (existing) return mapDBTranscriptionToDetailDTO(existing);
+
+    let vtt: string;
+
+    try {
+      vtt = await fetchTranscriptVtt(user.id, onlineMeetingId, transcript.id);
+    } catch (error) {
+      throw teamsGraphFailure(error);
+    }
+
+    const segments = parseTeamsVtt(vtt);
+    const text = teamsSegmentsToText(segments);
+
+    if (text.trim().length === 0) {
+      // A transcript that exists and says nothing: a meeting where
+      // transcription was started and nobody spoke, or one Teams was still
+      // writing when it was asked for.
+      throw new DisplayErrorMessage(
+        "That meeting's transcript is empty. If the meeting has only just finished, Teams may still be writing it - try again in a few minutes.",
+      );
+    }
+
+    // The LAST turn's end, which is when talking stopped rather than when the
+    // meeting was scheduled to. Two people who stay on for five minutes past
+    // the hour are part of the meeting; five minutes of silence are not.
+    const durationSeconds = Math.round((segments[segments.length - 1]?.endMs ?? 0) / 1000);
+
+    const now = new Date();
+
+    let created: Transcription;
+
+    try {
+      created = await addTranscriptionRepo({
+        id: generateId(),
+        userId: user.id,
+        // The meeting's own subject. Renameable like any other title, and it
+        // is what the person will look for in the list.
+        title: meeting.subject.slice(0, TITLE_MAX_CHARS),
+        source: TRANSCRIPTION_SOURCES.TEAMS,
+        // STRAIGHT TO `summarising`, skipping the states that exist only to
+        // describe waiting for Speech. The transcript is already in hand; the
+        // summary is all that is left, and the sweep already writes those.
+        status: TRANSCRIPTION_STATUSES.SUMMARISING,
+        // No media and no media type: nothing was uploaded and there is no
+        // recording. See migration 014 for why these are nullable rather than
+        // holding a key that points at nothing.
+        storageKey: null,
+        mediaType: null,
+        sourceRef,
+        byteSize: null,
+        durationSeconds: durationSeconds > 0 ? durationSeconds : null,
+        speechJobId: null,
+        transcript: text,
+        segments: JSON.stringify(segments),
+        summary: null,
+        error: null,
+        // THE MEETING'S TIME, not now. The list is ordered by this, so an
+        // import of last Tuesday's meeting belongs where last Tuesday is -
+        // not at the top, above one somebody recorded an hour ago.
+        createdAt: meeting.startsAt,
+        updatedAt: now,
+        completedAt: null,
+      });
+    } catch (error) {
+      // Two clicks, or two tabs. The unique index on (user_id, source_ref) is
+      // what stops the second becoming a duplicate; this is what stops it
+      // becoming an error message about a constraint.
+      const raced = await getTranscriptionBySourceRefRepo(user.id, TRANSCRIPTION_SOURCES.TEAMS, sourceRef);
+
+      if (!raced) throw error;
+
+      return mapDBTranscriptionToDetailDTO(raced);
+    }
+
+    revalidateTranscriptionViews();
+
+    return mapDBTranscriptionToDetailDTO(created);
+  } catch (error) {
+    throw handleError("importTeamsMeetingService", error);
   }
 }
 
@@ -939,6 +1276,15 @@ export async function startTranscriptionService(
       // Already running or already done. Not an error worth interrupting
       // anybody over - two tabs racing produce exactly this.
       return mapDBTranscriptionToDetailDTO(transcription);
+    }
+
+    // A Teams import has no media and no Speech job, so there is nothing
+    // here to start or to retry. It cannot reach this in practice - it never
+    // holds a startable status - but the column is nullable now, and a
+    // narrowing check that also states the invariant is better than a
+    // non-null assertion that assumes it.
+    if (!transcription.storageKey) {
+      throw new DisplayErrorMessage("That transcription has no recording to transcribe.");
     }
 
     const media = await getMediaInfo(transcription.storageKey);
@@ -1083,9 +1429,10 @@ export async function deleteTranscriptionService(requestDTO: TranscriptionIdRequ
     // is provably one this caller owns.
     const transcription = await requireOwnedTranscription(requestDTO.transcriptionId, user.id);
 
-    if (isMediaStorageConfigured()) {
-      // Already gone for anything that transcribed successfully, and
-      // deleteIfExists makes that a no-op rather than an error.
+    // A Teams import has no key and never had a recording; everything else
+    // may or may not still hold one, and deleteIfExists makes an absent blob
+    // a no-op rather than an error.
+    if (transcription.storageKey && isMediaStorageConfigured()) {
       await deleteMedia(transcription.storageKey);
     }
 
@@ -1134,18 +1481,27 @@ export async function getTranscriptionMediaService(requestDTO: TranscriptionIdRe
 
     if (!isMediaStorageConfigured()) return null;
 
+    // No key means there was never a recording - a Teams import, where the
+    // meeting was transcribed by Teams and nothing was ever uploaded here.
+    // The same null a recording that has aged out gets, and the route turns
+    // both into a 404: there is no file either way, and the caller does not
+    // need to be told which kind of nothing it is.
+    if (!transcription.storageKey || !transcription.mediaType) return null;
+
     const media = await openMediaStream(transcription.storageKey);
 
     if (!media) return null;
+
+    const mediaType = transcription.mediaType;
 
     return {
       stream: media.stream,
       // The type recorded on the row, which the server derived from the
       // filename at upload - never the one storage reports back, which is
       // whatever the browser set on the blob.
-      mediaType: transcription.mediaType,
+      mediaType,
       byteSize: media.byteSize ?? transcription.byteSize,
-      fileName: `${safeDownloadName(transcription.title, "")}${extensionForMediaType(transcription.mediaType)}`,
+      fileName: `${safeDownloadName(transcription.title, "")}${extensionForMediaType(mediaType)}`,
     };
   } catch (error) {
     throw handleError("getTranscriptionMediaService", error);
@@ -1180,7 +1536,7 @@ export async function getTranscriptTextService(
         ? segments
             .map(
               (segment) =>
-                `[${formatTimestamp(segment.startMs)}] ${speakerLabel(segment.speaker)}: ${segment.text}`,
+                `[${formatTimestamp(segment.startMs)}] ${speakerLabel(segment)}: ${segment.text}`,
             )
             .join("\n\n")
         : transcription.transcript;
@@ -1190,9 +1546,7 @@ export async function getTranscriptTextService(
       // In the app timezone, like every other date this app shows. A raw ISO
       // string would read as the wrong day for anybody who opens the file.
       `Recorded: ${formatDateTime(transcription.createdAt)}`,
-      transcription.source === TRANSCRIPTION_SOURCES.RECORDING
-        ? "Source: recorded in the browser"
-        : "Source: uploaded file",
+      TRANSCRIPTION_SOURCE_DESCRIPTIONS[transcription.source],
       "Transcribed automatically. It will contain mistakes.",
     ].join("\n");
 
