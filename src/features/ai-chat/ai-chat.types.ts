@@ -247,45 +247,58 @@ export type RemoveAiChatAttachmentRequestDTO = z.infer<typeof RemoveAiChatAttach
 
 // -------------------------------------------------------------------
 // ===================================================================
-// HOW LONG ONE REPLY MAY TAKE
+// HOW LONG ONE REPLY MAY GO QUIET FOR
 // ===================================================================
 //
-// A chat turn had NO CEILING AT ALL, and the numbers that produced were not
-// small: two failed replies in the request log ran for 1,081 and 1,441
-// seconds - eighteen and twenty-four minutes - for answers nobody could
-// still be waiting for.
+// A chat turn had no bound of any kind, and the numbers that produced were
+// not small: two failed replies in the request log ran for 1,081 and 1,441
+// seconds. The stored error says exactly what happened - "Stream timed out
+// because of no activity for 120000 ms" - five times over, with the AWS
+// SDK's adaptive backoff sleeping between the attempts.
 //
-// Nothing was broken in isolation. It multiplied:
+// THE QUANTITY TO BOUND IS SILENCE, NOT DURATION, and the difference is
+// worth being exact about because the obvious fix is wrong.
 //
-//   MAX_TOOL_ROUNDS allows 5 passes over the model, each a separate request
-//   x  maxAttempts: 5 on the Bedrock client
-//   x  requestTimeout: 120s per attempt
-//   =  50 minutes before the adaptive retry mode's own backoff is counted
+// Bounding total duration looks right and costs you the good case. A long
+// reply is long because it is saying a lot, and at this model's observed
+// rate a full MAX_OUTPUT_TOKENS answer streams for over eight minutes. A
+// wall-clock deadline truncates precisely the replies worth waiting for,
+// while a stalled request - which sends nothing at all - is caught just as
+// well by a much shorter clock that resets on every chunk.
 //
-// The transcription summariser was given AbortSignal.timeout for exactly
-// this reason. Chat - the interactive path, where somebody is actually
-// watching - was left without one.
-//
-// THE DEADLINE COVERS THE WHOLE TURN, not one pass. A per-pass ceiling
-// would simply multiply by five again, which is the bug rather than the
-// fix.
+// So there is no total ceiling here, deliberately. There is a limit on how
+// long the model may say nothing.
 // -------------------------------------------------------------------
 
-// Azure App Service's load balancer terminates a request at 230 seconds and
-// this is not ours to raise. It matters more than it looks: during a retry
-// storm nothing is written to the stream, so the connection is idle, so the
-// platform cuts it at ~4 minutes - and the server carried on calling
-// Bedrock for another twenty, billing for a reply that could never be
-// delivered.
-export const CHAT_PLATFORM_CEILING_MS = 230_000;
+// -------------------------------------------------------------------
+// Azure App Service's load balancer, and the reason it belongs in this
+// comparison at all: it is an IDLE timeout. A reply that keeps streaming
+// bytes never trips it, however long it runs - so it does not cap a long
+// answer, and treating it as though it did is what produced the wall-clock
+// deadline this replaces.
+//
+// What it does cap is silence, which is the same thing the guard below
+// measures. That makes the two comparable, and the app has to give up
+// first: if the platform wins, the connection is severed mid-stream and the
+// app never learns it happened.
+// -------------------------------------------------------------------
+export const CHAT_PLATFORM_IDLE_CEILING_MS = 230_000;
 
 // -------------------------------------------------------------------
-// The app's own deadline for one reply.
+// How long the model may send nothing before the turn is abandoned.
 //
-// DELIBERATELY BELOW THE PLATFORM'S. Whoever gives up first decides what
-// the reader sees: if the load balancer wins, the connection is severed
-// mid-stream and the app never learns it happened. If this wins, the stream
-// is closed cleanly, the partial answer is kept, and the failure is
-// recorded in the request log like any other.
+// SIZED AGAINST THE SDK'S OWN RETRY LADDER, which is what actually did the
+// damage. One Bedrock attempt gives up after 120 seconds of inactivity and
+// the SDK then tries again, up to five times, sleeping in between. This sits
+// above one attempt and below two, so:
+//
+//   - a request that stalls once and succeeds on the retry still gets
+//     through, because the first chunk resets the clock
+//   - a request that stalls twice is abandoned, instead of stalling five
+//     times over twenty-four minutes
+//
+// It also has to cover the legitimate quiet gaps: the wait before the model
+// starts talking, and the pause while a tool runs between passes. Both are
+// seconds, not minutes.
 // -------------------------------------------------------------------
-export const CHAT_TURN_TIMEOUT_MS = 200_000;
+export const CHAT_STALL_TIMEOUT_MS = 150_000;

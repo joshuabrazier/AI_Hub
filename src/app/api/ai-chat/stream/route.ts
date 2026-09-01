@@ -6,8 +6,10 @@ import { isDisplayError } from "@/lib/errors";
 import { MESSAGES } from "@/lib/constants";
 import { validateRequest } from "@/lib/server-requests";
 
+import { createStallGuard } from "@/lib/stall-guard";
+
 import { streamAiChatReplyService } from "@/features/ai-chat/ai-chat.service";
-import { CHAT_TURN_TIMEOUT_MS, SendAiChatMessageSchema } from "@/features/ai-chat/ai-chat.types";
+import { CHAT_STALL_TIMEOUT_MS, SendAiChatMessageSchema } from "@/features/ai-chat/ai-chat.types";
 
 // The Bedrock client and Kysely both need Node, and a streamed reply must
 // never be cached.
@@ -73,31 +75,32 @@ export async function POST(request: Request): Promise<Response> {
   // authorization failure has to be an HTTP status, not an error delivered
   // mid-stream after the client already saw a 200.
   // -----------------------------------------------------------------
-  // TWO REASONS TO STOP, COMBINED INTO ONE SIGNAL.
+  // TWO REASONS TO STOP, AND NEITHER OF THEM IS "THIS IS TAKING A WHILE".
   //
-  //   the DEADLINE   a turn had no ceiling at all, and the log holds
-  //                  replies that ran for twenty-four minutes. See
-  //                  CHAT_TURN_TIMEOUT_MS.
-  //   the READER     `request.signal` aborts when the browser goes away -
-  //                  a closed tab, a navigation, or the load balancer
-  //                  cutting an idle connection. Without it the server
-  //                  carried on retrying Bedrock long after there was
-  //                  anybody to answer, which is the case that produced
-  //                  those twenty-four minutes.
+  //   SILENCE   the model has sent nothing for CHAT_STALL_TIMEOUT_MS. The
+  //             clock resets on every chunk, so a long reply runs as long as
+  //             it needs and only a dead request is cut. See the note on
+  //             that constant for why bounding total duration instead would
+  //             truncate the answers worth waiting for.
+  //   THE READER  `request.signal` aborts when the browser goes away - a
+  //             closed tab, a navigation, or the load balancer cutting an
+  //             idle connection. Without it the server carried on calling
+  //             Bedrock long after there was anybody to answer, which is
+  //             most of where those twenty-four minutes went.
   //
-  // Either one is a reason to stop, so they are combined rather than
-  // chosen between.
+  // The guard carries both, so whichever happens first stops the work.
   // -----------------------------------------------------------------
-  const deadline = AbortSignal.timeout(CHAT_TURN_TIMEOUT_MS);
-  const replies = streamAiChatReplyService(
-    validatedRequest.data,
-    AbortSignal.any([request.signal, deadline]),
-  );
+  const stall = createStallGuard(CHAT_STALL_TIMEOUT_MS, request.signal);
+
+  const replies = streamAiChatReplyService(validatedRequest.data, stall.signal);
 
   let first: IteratorResult<string, void>;
   try {
     first = await replies.next();
+    // The model has spoken. Everything after this is measured from here.
+    stall.progress();
   } catch (error) {
+    stall.dispose();
     // handleError in the service has already logged this with context.
     const message = isDisplayError(error) ? error.message : MESSAGES.SOMETHING_WENT_WRONG;
     const status = isDisplayError(error) ? 400 : 502;
@@ -115,6 +118,9 @@ export async function POST(request: Request): Promise<Response> {
         }
 
         for await (const chunk of replies) {
+          // Every chunk is a sign of life, and buys the reply another full
+          // window. This is what lets a long answer finish.
+          stall.progress();
           controller.enqueue(encoder.encode(chunk));
         }
 
@@ -125,6 +131,10 @@ export async function POST(request: Request): Promise<Response> {
         // keeps the partial answer, which the service has also persisted.
         console.error("[POST /api/ai-chat/stream] failed mid-stream", error);
         controller.close();
+      } finally {
+        // However this ended. A timer left armed would fire into a finished
+        // request and hold the event loop open for its full window.
+        stall.dispose();
       }
     },
 
