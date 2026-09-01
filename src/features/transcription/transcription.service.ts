@@ -29,6 +29,7 @@ import {
 } from "@/lib/data/repositories/ai-chat-request-logs.repository";
 import {
   addTranscriptionRepo,
+  claimSummaryAttemptRepo,
   claimTranscriptionTransitionRepo,
   deleteTranscriptionForUserRepo,
   getAllInFlightTranscriptionsRepo,
@@ -37,6 +38,7 @@ import {
   getTranscriptionForUserRepo,
   getTranscriptionSourceRefsForUserRepo,
   getTranscriptionsForUserRepo,
+  releaseSummaryLeaseRepo,
   updateTranscriptionForUserRepo,
 } from "@/lib/data/repositories/transcriptions.repository";
 import { envServer } from "@/lib/env-server";
@@ -85,6 +87,11 @@ import {
 import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from "./transcription.mappers";
 import {
   MAX_MEDIA_BYTES,
+  MAX_SUMMARY_ATTEMPTS,
+  MAX_SUMMARY_INPUT_CHARS,
+  SUMMARY_LEASE_MS,
+  SUMMARY_MAX_TOKENS,
+  SUMMARY_TIMEOUT_MS,
   TITLE_MAX_CHARS,
   TRANSCRIPTION_TIMEOUT_HOURS,
   extensionForMediaType,
@@ -179,25 +186,9 @@ async function requireOwnedTranscription(transcriptionId: string, userId: string
 // that a summary that will not generate cannot cost somebody their
 // transcript. Everything below is written to fail softly for that reason.
 // -------------------------------------------------------------------
-const SUMMARY_MAX_TOKENS = 4_000;
-
-// An hour of speech is roughly 60,000 characters, so this takes any real
-// meeting whole. It is a guard against a pathological input - a day-long
-// recording, a stuck microphone - rather than a limit anybody will meet.
-const MAX_SUMMARY_INPUT_CHARS = 400_000;
-
-// How long one attempt at a summary may take before it is abandoned.
-const SUMMARY_TIMEOUT_MS = 120_000;
-
-// How long a transcription may sit in `summarising` before the summary is
-// written off and the row is completed without one.
-//
-// Something has to end this. Every attempt costs a model call, and a row
-// that cannot be summarised - too long, a persistent service problem, a
-// request killed halfway every time - would otherwise be retried by every
-// poll forever, spending money on the same failure. The transcript is
-// already stored by this point, so giving up costs nobody their meeting.
-const SUMMARY_GIVE_UP_MINUTES = 15;
+// The budgets live in transcription.types.ts, where a test can reach them
+// without importing Bedrock. They describe one calculation and are only
+// correct together - see the note there.
 
 const SUMMARY_SYSTEM_PROMPT = [
   "You summarise transcripts of meetings.",
@@ -520,40 +511,77 @@ async function advanceTranscription(
   // it. Nothing can be stuck here anyway - summariseTranscript does not
   // throw, so this branch always resolves the row.
   if (transcription.status === SUMMARISING) {
-    // Long enough in this state that the summary is not coming. The row is
-    // completed WITHOUT one rather than left to be retried forever - the
-    // transcript is already stored, so this loses nothing but the summary,
-    // and the screen offers to try it again by hand.
-    const summarisingMinutes = (Date.now() - transcription.updatedAt.getTime()) / (60 * 1000);
+    // Left where it is for the poll to pick up. Nothing is lost by waiting:
+    // the transcript is stored and the screen already says "Summarising".
+    // Checked BEFORE the claim, so a page-load sweep does not spend one of
+    // this row's attempts on work it is not allowed to do.
+    if (!allowSummarise) return transcription;
 
-    if (summarisingMinutes > SUMMARY_GIVE_UP_MINUTES) {
+    // -----------------------------------------------------------------
+    // THE CLAIM COMES FIRST, and that ordering is the whole point of it.
+    //
+    // It used to come after the model call, which meant it decided who got
+    // to WRITE the summary rather than who got to PAY for one. Every sweep
+    // that found the row began its own - every open tab polls every six
+    // seconds, the page-load sweep runs, the background sweep runs - so one
+    // meeting was summarised three times inside ninety seconds and paid for
+    // all three, with only the last one's work kept.
+    //
+    // One statement leases the row, counts the attempt and enforces the cap
+    // together; see the repository for why it cannot be split.
+    // -----------------------------------------------------------------
+    const claimed = await claimSummaryAttemptRepo(transcription.id, userId, {
+      leaseExpiresBefore: new Date(Date.now() - SUMMARY_LEASE_MS),
+      maxAttempts: MAX_SUMMARY_ATTEMPTS,
+    });
+
+    if (!claimed) {
+      // Refused for one of two reasons, and they need different answers.
+      const current = await getTranscriptionForUserRepo(transcription.id, userId);
+
+      // Somebody else is summarising it right now, or it has already moved
+      // on. Leave it alone - their run will finish it.
+      if (!current || current.status !== SUMMARISING) return current ?? transcription;
+
+      if (current.summaryAttempts < MAX_SUMMARY_ATTEMPTS) return current;
+
+      // Out of attempts. The row is completed WITHOUT a summary rather than
+      // retried forever: the transcript is already stored, so this loses
+      // nothing but the prose, and the screen offers to write it by hand.
       const givenUp = await claimTranscriptionTransitionRepo(transcription.id, userId, [SUMMARISING], {
         status: COMPLETED,
         error: "The summary could not be generated. The transcript is unaffected.",
         completedAt: new Date(),
+        summaryStartedAt: null,
       });
 
-      return givenUp ?? transcription;
+      if (givenUp) await notifyFinished(givenUp, userId);
+
+      return givenUp ?? current;
     }
 
-    // Left where it is for the poll to pick up. Nothing is lost by waiting:
-    // the transcript is stored and the screen already says "Summarising".
-    if (!allowSummarise) return transcription;
+    const { summary, error } = await summariseTranscript(claimed, userId);
 
-    const { summary, error } = await summariseTranscript(transcription, userId);
-
-    const updated = await claimTranscriptionTransitionRepo(transcription.id, userId, [SUMMARISING], {
+    const updated = await claimTranscriptionTransitionRepo(claimed.id, userId, [SUMMARISING], {
       status: COMPLETED,
       summary,
       error,
       completedAt: new Date(),
+      // The lease is done with either way - the row is leaving `summarising`.
+      summaryStartedAt: null,
     });
 
     // Only the run that WON the claim notifies. Two sweeps arriving together
     // would otherwise send the same person the same notification twice.
     if (updated) await notifyFinished(updated, userId);
 
-    return updated ?? (await getTranscriptionForUserRepo(transcription.id, userId)) ?? transcription;
+    // The summary failed but attempts remain. The lease is released so the
+    // next sweep can try again rather than waiting for it to expire - a
+    // failure that took two seconds should not hold the row for four
+    // minutes.
+    if (!updated && !summary) await releaseSummaryLeaseRepo(claimed.id, userId);
+
+    return updated ?? (await getTranscriptionForUserRepo(claimed.id, userId)) ?? claimed;
   }
 
   if (!transcription.speechJobId) {

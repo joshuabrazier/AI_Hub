@@ -195,6 +195,115 @@ export function isGuaranteedFormat(fileName: string): boolean {
 }
 
 // -------------------------------------------------------------------
+// ===================================================================
+// SUMMARY BUDGETS
+// ===================================================================
+//
+// These four numbers describe ONE calculation and they are only correct
+// together. Keeping them apart is what broke: the token cap said a summary
+// could be 4,000 tokens long and the timeout gave it 120 seconds, and at the
+// rate the model actually generates, 4,000 tokens does not fit in 120
+// seconds. So every meeting long enough to need a full-length summary timed
+// out at exactly 120s, three attempts in a row, while short meetings
+// finished in ten seconds and looked fine.
+//
+// Nobody had written the relationship down, so nobody could see it was
+// violated. It is derived here and asserted in the tests, which is what
+// stops the two drifting apart again.
+// -------------------------------------------------------------------
+
+/** The longest a summary may be. */
+export const SUMMARY_MAX_TOKENS = 4_000;
+
+// -------------------------------------------------------------------
+// The slowest generation rate we plan for, in output tokens per second.
+//
+// MEASURED, not guessed: a real logged call produced 293 output tokens in
+// 9,637ms. Taking that whole duration as generation - which is pessimistic,
+// since it includes connecting and prefill - gives 30 tokens per second.
+// The pessimistic reading is the right one for sizing a timeout.
+// -------------------------------------------------------------------
+export const SLOWEST_TOKENS_PER_SECOND = 30;
+
+// -------------------------------------------------------------------
+// Time allowed before the first token arrives.
+//
+// The model reads the whole transcript before it writes anything, and an
+// hour-long meeting is around 15,000 input tokens. This is that reading
+// time, plus connecting. It is the part the old 120 seconds had no room for
+// at all.
+// -------------------------------------------------------------------
+export const SUMMARY_PREFILL_ALLOWANCE_MS = 30_000;
+
+// -------------------------------------------------------------------
+// The hard ceiling, and it is NOT ours to choose.
+//
+// Summarising happens inside the sweep, which is an HTTP request, and Azure
+// App Service's load balancer terminates a request at 230 seconds. A
+// timeout above that would not protect anything - the platform would cut
+// the connection first, and the row would be left mid-flight with no error
+// recorded. 180 leaves room for the rest of the sweep on either side.
+//
+// Wanting a longer summary than this allows is not a matter of raising the
+// number. It needs work that outlives a request, which this feature
+// deliberately does not have.
+// -------------------------------------------------------------------
+export const SUMMARY_CEILING_MS = 180_000;
+
+// -------------------------------------------------------------------
+// How long one attempt at a summary may take before it is abandoned.
+//
+// DERIVED from the three above rather than picked, so that raising the
+// token cap raises the time it is given. Clamped to the platform ceiling -
+// and `summary-budget.test.ts` fails the build if a cap is ever set that
+// the ceiling cannot actually accommodate, which is the exact mistake this
+// replaces.
+// -------------------------------------------------------------------
+export const SUMMARY_TIMEOUT_MS = Math.min(
+  SUMMARY_CEILING_MS,
+  Math.ceil((SUMMARY_MAX_TOKENS / SLOWEST_TOKENS_PER_SECOND) * 1000) + SUMMARY_PREFILL_ALLOWANCE_MS,
+);
+
+// An hour of speech is roughly 60,000 characters, so this takes any real
+// meeting whole. It is a guard against a pathological input - a day-long
+// recording, a stuck microphone - rather than a limit anybody will meet.
+export const MAX_SUMMARY_INPUT_CHARS = 400_000;
+
+// -------------------------------------------------------------------
+// ===================================================================
+// ONE ATTEMPT AT A TIME, AND NOT FOREVER
+// ===================================================================
+//
+// Summarising is the most expensive thing this feature does, and it used to
+// be started by whoever happened to look. Nothing claimed the row before
+// the model call - the claim came after it - so every sweep that found a
+// row in `summarising` began its own summary. Every open tab polls every
+// six seconds, the page-load sweep runs, and the scheduled background sweep
+// runs, so one meeting was summarised three times over inside ninety
+// seconds and paid for all three.
+//
+// THE LEASE is how long one attempt may hold the row before another sweep
+// is allowed to assume it died. Comfortably longer than SUMMARY_TIMEOUT_MS,
+// because an attempt that is still running has not died.
+// -------------------------------------------------------------------
+export const SUMMARY_LEASE_MS = SUMMARY_CEILING_MS + 60_000;
+
+// -------------------------------------------------------------------
+// How many attempts a single transcription gets before the summary is
+// written off and the row completes without one.
+//
+// COUNTED RATHER THAN TIMED, which is the change. The old rule gave up
+// after fifteen minutes in `summarising` - but minutes are not what a
+// failing summary costs. Attempts are. Three concurrent attempts inside one
+// minute spent three times as much as the timer thought it was allowing,
+// and the timer had no way to know.
+//
+// The transcript is already stored by this point, so giving up costs nobody
+// their meeting - the screen offers to write the summary by hand.
+// -------------------------------------------------------------------
+export const MAX_SUMMARY_ATTEMPTS = 3;
+
+// -------------------------------------------------------------------
 // One transcription in the list.
 //
 // Carries no transcript, segments or summary: the list shows names and

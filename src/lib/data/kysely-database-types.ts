@@ -651,6 +651,15 @@ export interface Transcriptions {
   transcript: string | null;
   segments: ColumnType<TranscriptionSegment[] | null, string | null, string | null>;
   summary: string | null;
+  // How many model calls this row's summary has already cost. Counted rather
+  // than timed, because attempts are what a failing summary spends - see
+  // migration 015.
+  summaryAttempts: Generated<number>;
+  // The lease. Non-null while a sweep is summarising this row; a value older
+  // than the lease window means that attempt died without finishing and the
+  // row is free again. Deliberately NOT updatedAt, which the give-up rule
+  // already reads for a different question.
+  summaryStartedAt: Date | null;
   error: string | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
