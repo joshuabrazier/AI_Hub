@@ -189,10 +189,26 @@ describe("formatTimestamp", () => {
 
 describe("speakerLabel", () => {
   it("numbers a separated speaker", () => {
-    expect(speakerLabel(2)).toBe("Speaker 2");
+    expect(speakerLabel({ speaker: 2, speakerName: null })).toBe("Speaker 2");
   });
 
   it("says only 'Speaker' when the service could not tell voices apart", () => {
-    expect(speakerLabel(null)).toBe("Speaker");
+    expect(speakerLabel({ speaker: null, speakerName: null })).toBe("Speaker");
+  });
+
+  it("prefers a real name over a number", () => {
+    // A Teams import carries both: Teams knows who was talking, and the
+    // numeric field is what Azure would have guessed. Printing the number
+    // over a name it actually has is the mistake this ordering prevents.
+    expect(speakerLabel({ speaker: 1, speakerName: "Joshua Brazier" })).toBe("Joshua Brazier");
+  });
+
+  it("falls back to the number when the name is empty rather than absent", () => {
+    expect(speakerLabel({ speaker: 0, speakerName: "" })).toBe("Speaker 0");
+  });
+
+  it("works on a segment that predates the name field", () => {
+    // Rows written before Teams import existed have no speakerName at all.
+    expect(speakerLabel({ speaker: 3 })).toBe("Speaker 3");
   });
 });

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Download, FileAudio, Mic, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { Download, FileAudio, Mic, Trash2, TriangleAlert, Upload, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,8 @@ import {
   formatDuration,
   isGuaranteedFormat,
   mediaTypeForFileName,
+  recordingUnavailableReason,
+  type TranscriptionPageDTO,
 } from "../transcription.types";
 import { convertForTranscription, needsConversion } from "./audio-convert";
 import {
@@ -31,19 +33,33 @@ import {
   type PendingRecording,
 } from "./recording-store";
 import { TranscriptionRecorder, type FinishedRecording } from "./transcription-recorder";
+import { TranscriptionTeamsImport } from "./transcription-teams-import";
 import { useTranscriptionUpload } from "./use-transcription-upload";
 
 // -------------------------------------------------------------------
 // TranscriptionComposer
 //
-// The two ways in, side by side: upload a file that already exists, or
-// record one now. They are tabs rather than two screens because they
-// produce the same thing - a name and some bytes - and everything after
-// that point is identical.
+// The three ways in, side by side: upload a file that already exists,
+// record one now, or import one Teams has already transcribed. Tabs rather
+// than three screens because they all end in the same place - a
+// transcription row - and everything after that point is identical.
 //
-// Neither path sends media through this app. Both hand their bytes to
-// useTranscriptionUpload, which puts them straight into storage. See the
-// note there for why.
+// THE THREE ARE NOT EQUALLY GOOD, and the order says so. Importing from
+// Teams gives a transcript with real names on it, because Teams heard each
+// person's own microphone; the other two give voices told apart by number
+// from whatever a single microphone in the room picked up. Teams is
+// deliberately last in the list anyway: it only applies to meetings this
+// organisation hosted AND transcribed, so it is the better answer when it
+// applies and no answer at all when it does not.
+//
+// THEY ARE INDEPENDENTLY AVAILABLE. Recording needs storage and Azure
+// Speech; importing needs Microsoft sign-in and neither of those. An
+// environment can have one and not the other, so the tabs are rendered from
+// what actually works rather than all-or-nothing.
+//
+// Neither of the first two sends media through this app. Both hand their
+// bytes to useTranscriptionUpload, which puts them straight into storage.
+// See the note there for why. The third moves no media at all.
 //
 // A RECORDING IS NEVER THROWN AWAY. If the upload fails, the file stays on
 // the device and this screen says so, with a button to save it and a button
@@ -62,8 +78,20 @@ function formatSize(bytes: number): string {
   return `${(bytes / MEGABYTE).toFixed(1)} MB`;
 }
 
-export function TranscriptionComposer({ onStarted }: { onStarted: (transcriptionId: string) => void }) {
+export function TranscriptionComposer({
+  page,
+  onStarted,
+}: {
+  page: TranscriptionPageDTO;
+  onStarted: (transcriptionId: string) => void;
+}) {
   const { upload, isUploading, progress } = useTranscriptionUpload();
+
+  // Recording and uploading share a set of requirements; importing has its
+  // own and needs none of theirs.
+  const unavailable = recordingUnavailableReason(page);
+  const canRecord = unavailable === null;
+  const canImport = page.isTeamsImportConfigured;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -317,16 +345,42 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
         />
       ) : null}
 
-      <Tabs defaultValue="upload">
+      {/* Why recording is unavailable, shown ABOVE the tabs when importing
+          still works. Without it the two tabs simply would not be there,
+          which looks like a missing feature rather than a setting nobody
+          has filled in - and the third message especially is the difference
+          between a fixable line and an afternoon. */}
+      {!canRecord && canImport && unavailable ? (
+        <div
+          role="status"
+          className="mb-5 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
+        >
+          <span className="font-medium text-foreground">{unavailable.title}.</span> {unavailable.detail}
+        </div>
+      ) : null}
+
+      {/* Defaults to whichever tab exists. A Tabs with a defaultValue no
+          trigger matches renders with nothing selected and no content. */}
+      <Tabs defaultValue={canRecord ? "upload" : "teams"}>
         <TabsList>
-          <TabsTrigger value="upload">
-            <Upload size={15} aria-hidden="true" />
-            Upload a file
-          </TabsTrigger>
-          <TabsTrigger value="record">
-            <Mic size={15} aria-hidden="true" />
-            Record
-          </TabsTrigger>
+          {canRecord ? (
+            <>
+              <TabsTrigger value="upload">
+                <Upload size={15} aria-hidden="true" />
+                Upload a file
+              </TabsTrigger>
+              <TabsTrigger value="record">
+                <Mic size={15} aria-hidden="true" />
+                Record
+              </TabsTrigger>
+            </>
+          ) : null}
+          {canImport ? (
+            <TabsTrigger value="teams">
+              <Users size={15} aria-hidden="true" />
+              From Teams
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
         {/* ----------------------------------------------------------
@@ -462,6 +516,19 @@ export function TranscriptionComposer({ onStarted }: { onStarted: (transcription
 
           <UploadProgress progress={progress} />
         </TabsContent>
+
+        {/* ----------------------------------------------------------
+            From Teams
+
+            Nothing shared with the two above: no file, no upload, no
+            title field. The meeting already has a name and Teams already
+            has the transcript.
+            ---------------------------------------------------------- */}
+        {canImport ? (
+          <TabsContent value="teams">
+            <TranscriptionTeamsImport onImported={onStarted} />
+          </TabsContent>
+        ) : null}
       </Tabs>
     </div>
   );

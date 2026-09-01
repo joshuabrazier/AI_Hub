@@ -1,4 +1,9 @@
-import { TRANSCRIPTION_STATUSES, type TranscriptionStatus } from "@/lib/data/kysely-database-types";
+import {
+  TRANSCRIPTION_SOURCES,
+  TRANSCRIPTION_STATUSES,
+  type TranscriptionSource,
+  type TranscriptionStatus,
+} from "@/lib/data/kysely-database-types";
 import { cn } from "@/lib/utils";
 
 // -------------------------------------------------------------------
@@ -16,9 +21,15 @@ import { cn } from "@/lib/utils";
 // the bar is lying to them. A bar that stops at 60% and stays there is at
 // least telling them where it actually is.
 //
-// So this shows the three stages the row genuinely moves through. They are
-// real transitions, written to the database, and each one arriving is
-// evidence that the thing is alive.
+// So this shows the stages the row genuinely moves through. They are real
+// transitions, written to the database, and each one arriving is evidence
+// that the thing is alive.
+//
+// A TEAMS IMPORT HAS ONLY ONE OF THEM, and gets its own list for that
+// reason. It arrives with the transcript already stored - Teams did the
+// transcribing - so drawing three steps with the first two filled in would
+// claim credit for work this app never did, and would put the reader at
+// "step 3 of 3" for the entire wait.
 // -------------------------------------------------------------------
 
 type Stage = {
@@ -45,21 +56,38 @@ const STAGES: Stage[] = [
   },
 ];
 
-export function TranscriptionProgress({ status }: { status: TranscriptionStatus }) {
-  const currentIndex = STAGES.findIndex((stage) => stage.status === status);
+// The whole of an import, as far as this app is concerned.
+const TEAMS_STAGES: Stage[] = [
+  {
+    status: TRANSCRIPTION_STATUSES.SUMMARISING,
+    label: "Summarising",
+    detail: "The transcript came across from Teams. Writing the summary now.",
+  },
+];
 
-  // A status that is not one of the three running ones. Nothing to draw -
-  // the caller only renders this while a job is in flight, and guessing at
-  // a stage for anything else would put the bar in a state the row is not
+export function TranscriptionProgress({
+  status,
+  source,
+}: {
+  status: TranscriptionStatus;
+  source: TranscriptionSource;
+}) {
+  const stages = source === TRANSCRIPTION_SOURCES.TEAMS ? TEAMS_STAGES : STAGES;
+
+  const currentIndex = stages.findIndex((stage) => stage.status === status);
+
+  // A status that is not one of the running ones. Nothing to draw - the
+  // caller only renders this while a job is in flight, and guessing at a
+  // stage for anything else would put the bar in a state the row is not
   // actually in.
   if (currentIndex === -1) return null;
 
-  const current = STAGES[currentIndex];
+  const current = stages[currentIndex];
 
   return (
     <div className="w-full max-w-sm">
       <ol className="flex gap-1.5" aria-hidden="true">
-        {STAGES.map((stage, index) => (
+        {stages.map((stage, index) => (
           <li key={stage.status} className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
             <div
               className={cn(
@@ -81,9 +109,13 @@ export function TranscriptionProgress({ status }: { status: TranscriptionStatus 
           interrupt somebody mid-sentence. */}
       <p role="status" aria-live="polite" className="mt-3 text-sm font-medium text-foreground">
         {current.label}
-        <span className="ml-1.5 font-normal text-muted-foreground">
-          step {currentIndex + 1} of {STAGES.length}
-        </span>
+        {/* Omitted when there is only one stage: "step 1 of 1" is not
+            progress, it is noise beside a label that already says it. */}
+        {stages.length > 1 ? (
+          <span className="ml-1.5 font-normal text-muted-foreground">
+            step {currentIndex + 1} of {stages.length}
+          </span>
+        ) : null}
       </p>
 
       <p className="mt-1 text-sm text-muted-foreground">{current.detail}</p>

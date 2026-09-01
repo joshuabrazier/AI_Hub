@@ -1,11 +1,15 @@
 import "server-only";
 
+import { sql } from "kysely";
+
 import { database, DBClient } from "@/lib/data/kysely-database-client";
 import { handleError } from "@/lib/handle-errors";
 import {
   TRANSCRIPTION_IN_FLIGHT_STATUSES,
+  TRANSCRIPTION_STATUSES,
   type NewTranscription,
   type Transcription,
+  type TranscriptionSource,
   type TranscriptionStatus,
   type UpdateTranscription,
 } from "../kysely-database-types";
@@ -60,9 +64,12 @@ export async function getTranscriptionsForUserRepo(
         "status",
         "storageKey",
         "mediaType",
+        "sourceRef",
         "byteSize",
         "durationSeconds",
         "speechJobId",
+        "summaryAttempts",
+        "summaryStartedAt",
         "error",
         "createdAt",
         "updatedAt",
@@ -217,15 +224,159 @@ export async function getInFlightTranscriptionsForUserRepo(
 }
 
 // -------------------------------------------------------------------
+// Take the right to summarise this row, or find that somebody else has it.
+//
+// ONE STATEMENT, and it has to be one: it leases the row, counts the
+// attempt and enforces the cap together. Split into a read and a write, two
+// sweeps arriving at the same moment would both read "free, 1 attempt
+// spent" and both proceed - which is the exact duplicate spending this
+// exists to stop.
+//
+// Returns the claimed row on success and undefined when the claim was
+// refused, which happens for two different reasons the caller has to tell
+// apart: somebody else is working on it right now, or the row has spent its
+// allowance. `getTranscriptionForUserRepo` answers which.
+//
+// The lease predicate reads "nobody holds it, or whoever did has gone
+// quiet for longer than the window" - so an attempt killed halfway, by a
+// deploy or a dropped request, frees the row on its own rather than
+// stranding it.
+// -------------------------------------------------------------------
+export async function claimSummaryAttemptRepo(
+  transcriptionId: string,
+  userId: string,
+  options: { leaseExpiresBefore: Date; maxAttempts: number; now?: Date },
+  db: DBClient = database,
+): Promise<Transcription | undefined> {
+  try {
+    const now = options.now ?? new Date();
+
+    return await db
+      .updateTable("transcriptions")
+      .set({
+        summaryStartedAt: now,
+        summaryAttempts: sql<number>`summary_attempts + 1`,
+        // NOT updatedAt. The give-up rule reads that column to decide how
+        // long a row has been stuck, and bumping it here would reset that
+        // clock on every attempt.
+      })
+      .where("id", "=", transcriptionId)
+      .where("userId", "=", userId)
+      .where("status", "=", TRANSCRIPTION_STATUSES.SUMMARISING)
+      .where("summaryAttempts", "<", options.maxAttempts)
+      .where((eb) =>
+        eb.or([
+          eb("summaryStartedAt", "is", null),
+          eb("summaryStartedAt", "<", options.leaseExpiresBefore),
+        ]),
+      )
+      .returningAll()
+      .executeTakeFirst();
+  } catch (error) {
+    throw handleError("claimSummaryAttemptRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Give the row back without counting a further attempt.
+//
+// For the case where a claim was taken and the work then could not be done
+// at all - the summariser is not configured, there is no transcript. The
+// attempt is already counted by the claim, so this only clears the lease;
+// re-counting or un-counting here would both be wrong.
+// -------------------------------------------------------------------
+export async function releaseSummaryLeaseRepo(
+  transcriptionId: string,
+  userId: string,
+  db: DBClient = database,
+): Promise<void> {
+  try {
+    await db
+      .updateTable("transcriptions")
+      .set({ summaryStartedAt: null })
+      .where("id", "=", transcriptionId)
+      .where("userId", "=", userId)
+      .execute();
+  } catch (error) {
+    throw handleError("releaseSummaryLeaseRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The one this user already imported from a given source record, if any.
+//
+// Both the check before an import and the recovery after one: the unique
+// index means two simultaneous clicks race, and the loser reads the winner's
+// row back through here rather than reporting a constraint violation to
+// somebody who only pressed a button twice.
+// -------------------------------------------------------------------
+export async function getTranscriptionBySourceRefRepo(
+  userId: string,
+  source: TranscriptionSource,
+  sourceRef: string,
+  db: DBClient = database,
+): Promise<Transcription | undefined> {
+  try {
+    return await db
+      .selectFrom("transcriptions")
+      .selectAll()
+      .where("userId", "=", userId)
+      .where("source", "=", source)
+      .where("sourceRef", "=", sourceRef)
+      .executeTakeFirst();
+  } catch (error) {
+    throw handleError("getTranscriptionBySourceRefRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// What this user has already imported, keyed by where it came from.
+//
+// Read whole rather than asked one id at a time: the meetings list shows a
+// fortnight at once, and a query per row would be a dozen round trips to
+// answer a question the whole set answers in one.
+//
+// Scoped to the user like everything else here, which is also what makes
+// the answer correct: two people in the same meeting each import their own
+// copy, so "already imported" is only ever a statement about the person
+// asking.
+// -------------------------------------------------------------------
+export async function getTranscriptionSourceRefsForUserRepo(
+  userId: string,
+  source: TranscriptionSource,
+  db: DBClient = database,
+): Promise<{ id: string; sourceRef: string }[]> {
+  try {
+    const rows = await db
+      .selectFrom("transcriptions")
+      .select(["id", "sourceRef"])
+      .where("userId", "=", userId)
+      .where("source", "=", source)
+      .where("sourceRef", "is not", null)
+      .execute();
+
+    // The predicate above already excludes them; this is what convinces the
+    // compiler, and it costs nothing.
+    return rows.filter((row): row is { id: string; sourceRef: string } => row.sourceRef !== null);
+  } catch (error) {
+    throw handleError("getTranscriptionSourceRefsForUserRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
 // Retention: the storage keys of transcriptions older than the cutoff.
 //
 // Read BEFORE the delete, because once the rows are gone nothing knows
 // which blobs to remove.
+//
+// A key can be NULL - a Teams import has no media - and the null is
+// returned rather than filtered out here, so the caller counts the rows it
+// actually deleted a file for instead of the rows it looked at.
 // -------------------------------------------------------------------
 export async function getExpiredTranscriptionKeysRepo(
   cutoff: Date,
   db: DBClient = database,
-): Promise<{ id: string; storageKey: string }[]> {
+): Promise<{ id: string; storageKey: string | null }[]> {
   try {
     return await db
       .selectFrom("transcriptions")
@@ -277,7 +428,11 @@ export async function getAllTranscriptionStorageKeysRepo(db: DBClient = database
   try {
     const rows = await db.selectFrom("transcriptions").select("storageKey").execute();
 
-    return rows.map((row) => row.storageKey);
+    // Rows with no key claim no blob. Letting a null through would put it
+    // in the "still claimed" set, where it matches nothing and means
+    // nothing - and would quietly weaken the one check that catches an
+    // orphaned recording.
+    return rows.map((row) => row.storageKey).filter((key): key is string => key !== null);
   } catch (error) {
     throw handleError("getAllTranscriptionStorageKeysRepo", error);
   }

@@ -244,3 +244,61 @@ export const RemoveAiChatAttachmentSchema = z.object({
 });
 
 export type RemoveAiChatAttachmentRequestDTO = z.infer<typeof RemoveAiChatAttachmentSchema>;
+
+// -------------------------------------------------------------------
+// ===================================================================
+// HOW LONG ONE REPLY MAY GO QUIET FOR
+// ===================================================================
+//
+// A chat turn had no bound of any kind, and the numbers that produced were
+// not small: two failed replies in the request log ran for 1,081 and 1,441
+// seconds. The stored error says exactly what happened - "Stream timed out
+// because of no activity for 120000 ms" - five times over, with the AWS
+// SDK's adaptive backoff sleeping between the attempts.
+//
+// THE QUANTITY TO BOUND IS SILENCE, NOT DURATION, and the difference is
+// worth being exact about because the obvious fix is wrong.
+//
+// Bounding total duration looks right and costs you the good case. A long
+// reply is long because it is saying a lot, and at this model's observed
+// rate a full MAX_OUTPUT_TOKENS answer streams for over eight minutes. A
+// wall-clock deadline truncates precisely the replies worth waiting for,
+// while a stalled request - which sends nothing at all - is caught just as
+// well by a much shorter clock that resets on every chunk.
+//
+// So there is no total ceiling here, deliberately. There is a limit on how
+// long the model may say nothing.
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+// Azure App Service's load balancer, and the reason it belongs in this
+// comparison at all: it is an IDLE timeout. A reply that keeps streaming
+// bytes never trips it, however long it runs - so it does not cap a long
+// answer, and treating it as though it did is what produced the wall-clock
+// deadline this replaces.
+//
+// What it does cap is silence, which is the same thing the guard below
+// measures. That makes the two comparable, and the app has to give up
+// first: if the platform wins, the connection is severed mid-stream and the
+// app never learns it happened.
+// -------------------------------------------------------------------
+export const CHAT_PLATFORM_IDLE_CEILING_MS = 230_000;
+
+// -------------------------------------------------------------------
+// How long the model may send nothing before the turn is abandoned.
+//
+// SIZED AGAINST THE SDK'S OWN RETRY LADDER, which is what actually did the
+// damage. One Bedrock attempt gives up after 120 seconds of inactivity and
+// the SDK then tries again, up to five times, sleeping in between. This sits
+// above one attempt and below two, so:
+//
+//   - a request that stalls once and succeeds on the retry still gets
+//     through, because the first chunk resets the clock
+//   - a request that stalls twice is abandoned, instead of stalling five
+//     times over twenty-four minutes
+//
+// It also has to cover the legitimate quiet gaps: the wait before the model
+// starts talking, and the pause while a tool runs between passes. Both are
+// seconds, not minutes.
+// -------------------------------------------------------------------
+export const CHAT_STALL_TIMEOUT_MS = 150_000;

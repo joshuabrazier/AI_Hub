@@ -9,6 +9,15 @@ import { Button } from "@/components/ui/button";
 
 import { RECORDING_FORMAT_CANDIDATES, formatDuration } from "../transcription.types";
 import {
+  IDLE_CLOCK,
+  durationSecondsOf,
+  elapsedSeconds as elapsedSecondsOf,
+  pauseClock,
+  resumeClock,
+  startClock,
+  type ElapsedClock,
+} from "./elapsed-clock";
+import {
   appendChunk,
   beginRecording,
   completeRecording,
@@ -32,6 +41,31 @@ import {
 // The rest is the same instinct: warn before an unload, keep the microphone
 // stream in a ref rather than in state where a re-render could drop it, and
 // release the track only once the recorder has handed over its final chunk.
+//
+// A PHONE LEFT ON A TABLE IS THE HARD CASE, and it breaks three different
+// ways at once. All three are handled here:
+//
+//   1. THE SCREEN SLEEPS AND THE PAGE IS SUSPENDED. A backgrounded tab has
+//      its timers throttled and, on iOS, is frozen outright - the recorder
+//      stops receiving audio and the meeting is lost from that point. The
+//      answer is a SCREEN WAKE LOCK, held for as long as a recording is
+//      running. See the effect below for the part everybody gets wrong: the
+//      browser drops the lock every time the page is hidden and does NOT
+//      restore it, so it has to be asked for again on every return.
+//
+//   2. THE CLOCK UNDER-COUNTS. A setInterval in a background tab is
+//      throttled to about once a minute, so a timer that counted its own
+//      ticks reported a fraction of the real length - and that number is
+//      what gets stored as the recording's duration. The elapsed time is
+//      therefore read from the WALL CLOCK, which throttling cannot slow: a
+//      late tick renders late, but it never counts short.
+//
+//   3. THE MICROPHONE IS TAKEN AWAY WITHOUT THE RECORDER FAILING. The OS
+//      hands the input to a phone call or another app and the track simply
+//      ends. Nothing here would have noticed: the timer kept counting and
+//      the screen kept saying "Recording" over a device that had stopped
+//      listening. A track that ends now stops the recording and says so,
+//      keeping everything captured up to that moment.
 // -------------------------------------------------------------------
 
 // How often MediaRecorder is asked to hand over what it has, and therefore
@@ -48,6 +82,11 @@ const subscribeToNothing = () => () => {};
 
 const isRecordingSupported = () =>
   typeof MediaRecorder !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+
+// Whether this browser can keep the screen awake. Chrome, Edge, Android and
+// Safari from 16.4 can; older iOS cannot, and there is that person told to
+// keep the screen on themselves rather than left to find out afterwards.
+const isWakeLockSupported = () => typeof navigator !== "undefined" && "wakeLock" in navigator;
 
 // -------------------------------------------------------------------
 // Why the microphone would not open.
@@ -152,6 +191,9 @@ export function TranscriptionRecorder({
   // browser without it re-renders once straight afterwards. An effect that
   // set state instead would do the same thing a beat later and warn.
   const isSupported = useSyncExternalStore(subscribeToNothing, isRecordingSupported, () => true);
+  // Assumed present on the server for the same reason as isSupported: the
+  // markup React hydrates against has to be the markup the server sent.
+  const canHoldScreenAwake = useSyncExternalStore(subscribeToNothing, isWakeLockSupported, () => true);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -161,10 +203,20 @@ export function TranscriptionRecorder({
   // handlers, which close over the render that created them.
   const recordingIdRef = useRef<string | null>(null);
   const sequenceRef = useRef(0);
-  // Read inside the recorder's own stop handler, which closes over the
-  // render it was created in - a ref is the only thing that reads back the
-  // duration as it stands at the moment of stopping.
-  const elapsedRef = useRef(0);
+  // Elapsed time. A ref rather than state because the recorder's own
+  // handlers close over the render that created them and have to read the
+  // clock as it stands at the moment of stopping, not as it stood then.
+  //
+  // The arithmetic lives in elapsed-clock.ts, pure and tested. See the note
+  // at the top of that file for why this is derived from a clock reading
+  // rather than counted in ticks - it is the difference between an
+  // hour-long meeting recording its real length and recording two minutes.
+  const clockRef = useRef<ElapsedClock>(IDLE_CLOCK);
+
+  // The screen wake lock held while a recording is running. Null whenever
+  // one is not held, including every moment the page is hidden - see the
+  // effect below.
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   const releaseStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -172,16 +224,16 @@ export function TranscriptionRecorder({
   }, []);
 
   // The elapsed clock. Driven by an interval rather than by the recorder,
-  // which reports no timing of its own.
+  // which reports no timing of its own - but the interval only decides how
+  // often the display REFRESHES. What it shows is read from the clock, so a
+  // tab that was throttled in the background catches up on its next tick
+  // instead of having silently lost the time.
   useEffect(() => {
     if (state !== "recording") return;
 
-    const timer = setInterval(() => {
-      setElapsedSeconds((seconds) => {
-        elapsedRef.current = seconds + 1;
-        return seconds + 1;
-      });
-    }, 1000);
+    const tick = () => setElapsedSeconds(elapsedSecondsOf(clockRef.current, performance.now()));
+
+    const timer = setInterval(tick, 1000);
 
     return () => clearInterval(timer);
   }, [state]);
@@ -199,6 +251,76 @@ export function TranscriptionRecorder({
 
     return () => window.removeEventListener("beforeunload", warn);
   }, [state]);
+
+  // -----------------------------------------------------------------
+  // Keep the screen awake for as long as a recording is running.
+  //
+  // THIS IS THE FIX FOR A PHONE LEFT ON A TABLE. Without it the screen
+  // sleeps, the page is backgrounded, and on iOS it is frozen outright -
+  // the recorder stops receiving audio part-way through a meeting that
+  // cannot be held again.
+  //
+  // THE RE-ACQUIRE IS THE PART THAT MATTERS. A wake lock is released by the
+  // browser every time the page becomes hidden and is NOT restored when it
+  // comes back, so asking once on start would protect only until the first
+  // notification shade or app switch. It is asked for again on every
+  // return to visibility.
+  //
+  // It is allowed to fail. Battery saver refuses it, and older iOS has no
+  // wake lock at all - neither is a reason to stop somebody recording, so
+  // the failure is logged and the screen tells them to keep the display on
+  // themselves.
+  //
+  // Held while PAUSED as well as while recording: a paused recording is one
+  // somebody intends to resume, and letting the phone sleep in between puts
+  // them right back in the failure this exists to prevent.
+  // -----------------------------------------------------------------
+  const isActive = state !== "idle";
+
+  useEffect(() => {
+    if (!isActive) return;
+
+    let cancelled = false;
+
+    const acquire = () => {
+      if (cancelled || !isWakeLockSupported()) return;
+
+      navigator.wakeLock
+        .request("screen")
+        .then((sentinel) => {
+          // The recording may have stopped while the request was in flight.
+          if (cancelled) {
+            void sentinel.release().catch(() => {});
+            return;
+          }
+
+          wakeLockRef.current = sentinel;
+        })
+        .catch((error) => {
+          // Battery saver, or a browser that has the API and refuses. Not
+          // fatal - the recording carries on either way.
+          console.warn("[recorder] the screen wake lock was refused", error);
+        });
+    };
+
+    acquire();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") acquire();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+
+      const held = wakeLockRef.current;
+      wakeLockRef.current = null;
+      // Nothing to do if this fails: the lock goes with the page anyway.
+      void held?.release().catch(() => {});
+    };
+  }, [isActive]);
 
   // Unmounting mid-recording must not leave the microphone live. The
   // recording itself is lost either way - there is nothing to hand it to -
@@ -228,7 +350,37 @@ export function TranscriptionRecorder({
 
       streamRef.current = stream;
       chunksRef.current = [];
-      elapsedRef.current = 0;
+
+      clockRef.current = startClock(performance.now());
+
+      // -------------------------------------------------------------
+      // The microphone being taken away WITHOUT the recorder failing.
+      //
+      // A phone call arrives, another app grabs the input, a headset
+      // disconnects, the OS reclaims it - the track ends and MediaRecorder
+      // simply stops producing data. It does not error, so nothing here
+      // would have noticed: the timer kept counting and the screen kept
+      // saying "Recording" over a device that had stopped listening.
+      //
+      // Stopping through the recorder rather than tearing down directly is
+      // deliberate - it flushes the last chunk, marks the device copy
+      // complete and hands over what was captured, all through the path
+      // that already works.
+      // -------------------------------------------------------------
+      for (const track of stream.getAudioTracks()) {
+        track.addEventListener("ended", () => {
+          const recorder = recorderRef.current;
+
+          if (recorder && recorder.state !== "inactive") {
+            recorderRef.current = null;
+            recorder.stop();
+          }
+
+          toast.error(
+            "Recording stopped because the microphone was taken away, usually a phone call or another app using it. Everything captured up to that point has been kept.",
+          );
+        });
+      }
 
       // Held on the device from the first chunk. The id is generated here so
       // every chunk can be filed against it as it arrives, rather than at
@@ -288,7 +440,13 @@ export function TranscriptionRecorder({
         // recorded, so the Blob describes itself correctly even though the
         // server derives its own from the filename.
         const media = new Blob(chunksRef.current, { type: format.mimeType });
-        const durationSeconds = elapsedRef.current;
+
+        // Read BEFORE the clock is cleared, so the figure stored is the real
+        // length of the meeting rather than the number of times a throttled
+        // interval happened to fire.
+        const durationSeconds = durationSecondsOf(clockRef.current, performance.now());
+
+        clockRef.current = IDLE_CLOCK;
 
         chunksRef.current = [];
         releaseStream();
@@ -314,9 +472,13 @@ export function TranscriptionRecorder({
       });
 
       recorder.addEventListener("error", () => {
+        clockRef.current = IDLE_CLOCK;
         releaseStream();
         setState("idle");
-        toast.error("The recording stopped unexpectedly.");
+        // The chunks written so far are still in the device store and are
+        // NOT cleared here, so the recovery panel on the composer offers
+        // them back rather than the meeting being gone.
+        toast.error("The recording stopped unexpectedly. What was captured is still on this device.");
       });
 
       recorderRef.current = recorder;
@@ -325,6 +487,7 @@ export function TranscriptionRecorder({
       setElapsedSeconds(0);
       setState("recording");
     } catch (error) {
+      clockRef.current = IDLE_CLOCK;
       releaseStream();
       toast.error(microphoneFailureMessage(error));
     }
@@ -335,10 +498,14 @@ export function TranscriptionRecorder({
     if (!recorder) return;
 
     if (state === "recording") {
+      clockRef.current = pauseClock(clockRef.current, performance.now());
+
       recorder.pause();
       setState("paused");
       return;
     }
+
+    clockRef.current = resumeClock(clockRef.current, performance.now());
 
     recorder.resume();
     setState("recording");
@@ -397,8 +564,25 @@ export function TranscriptionRecorder({
           ? "Press record, then leave this page open until the meeting ends."
           : state === "paused"
             ? "Paused. Nothing is being recorded."
-            : "Recording, and saving to this device as it goes."}
+            : canHoldScreenAwake
+              ? "Recording, and saving to this device as it goes. The screen stays on."
+              : "Recording, and saving to this device as it goes."}
       </p>
+
+      {/* Only when the browser cannot keep the screen on itself - which is
+          older iOS, and the exact case where a phone left on a table sleeps
+          and stops recording. Said while it still matters rather than
+          discovered afterwards, and only then, because a warning shown to
+          everybody is one nobody reads. */}
+      {isActive && !canHoldScreenAwake ? (
+        <p
+          role="status"
+          className="mt-3 max-w-sm rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+        >
+          This browser cannot keep the screen on by itself. Set your screen timeout to never, or check the
+          phone every few minutes - if it sleeps, recording stops.
+        </p>
+      ) : null}
 
       <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
         {state === "idle" ? (
@@ -423,6 +607,7 @@ export function TranscriptionRecorder({
         <p className="mt-4 max-w-sm text-xs text-muted-foreground">
           The audio is saved on this device as you record, and uploaded when you press stop. If anything goes
           wrong, the recording is still here.
+          {canHoldScreenAwake ? " The screen is kept awake while recording, so the phone will not sleep." : ""}
         </p>
       ) : null}
     </div>

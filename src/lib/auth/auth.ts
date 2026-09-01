@@ -207,7 +207,9 @@ export const auth = betterAuth({
             // avatar this app does not display.
             disableProfilePhoto: true,
             // -------------------------------------------------------------
-            // Graph scopes for the SharePoint inventory.
+            // Graph scopes - the SharePoint inventory, and the Teams
+            // transcript import. The list and the reasoning for each entry
+            // live in graph-client.ts.
             //
             // APPENDED to Better Auth's defaults for this provider, which
             // already include openid, profile, email, User.Read and
@@ -215,22 +217,26 @@ export const auth = betterAuth({
             // already being issued, and this only widens what it is good
             // for.
             //
-            // BOTH ARE READ-ONLY, and nothing in the app writes to
-            // SharePoint. A write scope would belong in the change that
-            // needed it, not sitting here unused where a mistake could
-            // reach it.
+            // ALL READ-ONLY, and nothing in the app writes to SharePoint, a
+            // calendar or a meeting. A write scope would belong in the
+            // change that needed it, not sitting here unused where a
+            // mistake could reach it.
             //
             // TWO OPERATIONAL CONSEQUENCES, both real:
             //
-            //   1. `.All` needs TENANT ADMIN CONSENT. Without it every
-            //      person meets a consent prompt they cannot approve, and
-            //      it surfaces as a 403 from Graph rather than as anything
+            //   1. SEVERAL OF THESE NEED TENANT ADMIN CONSENT. The `.All`
+            //      ones certainly do, and a scope can require it without
+            //      saying so in its name, so read the consent screen rather
+            //      than inferring from the suffix. Without that approval a
+            //      person meets a prompt they cannot complete, and it
+            //      surfaces as a 403 from Graph rather than as anything
             //      self-explanatory.
             //   2. EVERYONE SIGNS IN AGAIN, ONCE. A refresh token already
             //      issued carries the scopes it was granted with, so
             //      adding these does not upgrade an existing one. Anybody
             //      who signed in before this change keeps working for
-            //      everything except SharePoint until they do.
+            //      everything except SharePoint and the Teams import until
+            //      they do.
             // -------------------------------------------------------------
             scope: [...GRAPH_SCOPES],
             mapProfileToUser: (profile) => {

@@ -27,6 +27,7 @@ import { deleteTranscriptionAction, renameTranscriptionAction } from "../transcr
 import {
   TITLE_MAX_CHARS,
   formatDuration,
+  recordingUnavailableReason,
   type TranscriptionPageDTO,
   type TranscriptionSummaryDTO,
 } from "../transcription.types";
@@ -144,7 +145,12 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
     };
   }, [hasUnfinished, router]);
 
-  const isReady = page.isStorageConfigured && page.isSpeechConfigured && page.isStorageReachableByAzure;
+  // Ready enough to START something, by ANY of the three routes in.
+  // Recording and uploading need storage and Azure Speech; importing from
+  // Teams needs Microsoft sign-in and neither of those - so an environment
+  // with only one of the two still has a working screen, and the composer
+  // renders the tabs that apply. See TranscriptionComposer.
+  const isReady = recordingUnavailableReason(page) === null || page.isTeamsImportConfigured;
 
   const openTranscription = (transcriptionId: string) => {
     setIsCreating(false);
@@ -216,7 +222,7 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
 
           {page.transcriptions.length === 0 ? (
             <p className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
-              Nothing yet. Record a meeting or upload one to see it here.
+              Nothing yet. Record a meeting, upload one, or import one from Teams to see it here.
             </p>
           ) : (
             <nav aria-label="Transcriptions">
@@ -301,7 +307,7 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
           {!isReady ? (
             <NotConfigured page={page} />
           ) : isCreating || page.active === null ? (
-            <TranscriptionComposer onStarted={openTranscription} />
+            <TranscriptionComposer page={page} onStarted={openTranscription} />
           ) : (
             // Keyed on the row so opening a different one remounts and
             // resets the polling and the open tab. Without the key React
@@ -368,35 +374,24 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
 }
 
 // -------------------------------------------------------------------
-// Three ways to be not-ready, three different sentences.
+// Nothing works: no way to record, and no way to import.
 //
-// Reducing them to one "Transcription is not configured" would send
-// somebody looking in the wrong place - and the third one especially,
-// because everything about that setup LOOKS right: the key is set, the
-// storage is set, the recorder works, the upload succeeds. Only the job
-// fails, minutes later, with a message from Azure about a URI.
+// Only reached when BOTH routes in are unavailable - the composer handles
+// the case where one of them still works, and says why the other does not.
+// The sentence naming the missing piece comes from recordingUnavailableReason
+// so this panel and that note cannot drift apart; reducing either to a plain
+// "not configured" would send somebody looking in the wrong place.
 //
-// Shown INSTEAD of the composer rather than as a warning above it. A
-// warning would let somebody record a meeting anyway and lose it.
+// Shown INSTEAD of the composer rather than as a warning above it. A warning
+// would let somebody record a meeting anyway and lose it.
 // -------------------------------------------------------------------
 function NotConfigured({ page }: { page: TranscriptionPageDTO }) {
-  const { title, detail } = !page.isStorageConfigured
-    ? {
-        title: "Transcription is not configured",
-        detail:
-          "There is nowhere to put a recording on this environment. Set AZURE_STORAGE_CONNECTION_STRING and restart.",
-      }
-    : !page.isSpeechConfigured
-      ? {
-          title: "Transcription is not configured",
-          detail:
-            "Recordings can be stored but nothing can transcribe them. Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION and restart.",
-        }
-      : {
-          title: "Transcription cannot run against local storage",
-          detail:
-            "Azure downloads the recording itself and cannot reach the storage emulator on this machine. Everything else works locally - to transcribe, point AZURE_STORAGE_CONNECTION_STRING at a real storage account.",
-        };
+  // Never null here: this only renders when recording is unavailable. The
+  // fallback exists so a future caller cannot make this crash.
+  const { title, detail } = recordingUnavailableReason(page) ?? {
+    title: "Transcription is not configured",
+    detail: "There is no way to record, upload or import a meeting on this environment.",
+  };
 
   return (
     <div

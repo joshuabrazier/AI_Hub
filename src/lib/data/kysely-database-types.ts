@@ -567,9 +567,29 @@ export const TRANSCRIPTION_IN_FLIGHT_STATUSES: readonly TranscriptionStatus[] = 
 export const TRANSCRIPTION_SOURCES = {
   UPLOAD: "upload",
   RECORDING: "recording",
+  // Imported from Teams, which transcribed it itself. No media ever reaches
+  // this app for one of these - there is nothing to upload, nothing in blob
+  // storage, and no Speech job. The row arrives already complete.
+  TEAMS: "teams",
 } as const;
 
 export type TranscriptionSource = (typeof TRANSCRIPTION_SOURCES)[keyof typeof TRANSCRIPTION_SOURCES];
+
+// How a transcription got here, as a past-tense verb, for the line under a
+// title: "Recorded 3 March", "Imported from Teams 3 March".
+export const TRANSCRIPTION_SOURCE_LABELS: Record<TranscriptionSource, string> = {
+  [TRANSCRIPTION_SOURCES.UPLOAD]: "Uploaded",
+  [TRANSCRIPTION_SOURCES.RECORDING]: "Recorded",
+  [TRANSCRIPTION_SOURCES.TEAMS]: "Imported from Teams",
+};
+
+// The same fact written for the header of a downloaded transcript, where
+// there is room for a sentence and no surrounding screen to give it context.
+export const TRANSCRIPTION_SOURCE_DESCRIPTIONS: Record<TranscriptionSource, string> = {
+  [TRANSCRIPTION_SOURCES.UPLOAD]: "Source: uploaded file",
+  [TRANSCRIPTION_SOURCES.RECORDING]: "Source: recorded in the browser",
+  [TRANSCRIPTION_SOURCES.TEAMS]: "Source: imported from a Microsoft Teams meeting",
+};
 
 // -------------------------------------------------------------------
 // One speaker turn.
@@ -579,7 +599,19 @@ export type TranscriptionSource = (typeof TRANSCRIPTION_SOURCES)[keyof typeof TR
 // "Speaker 1" for that reason rather than inventing an identity.
 // -------------------------------------------------------------------
 export type TranscriptionSegment = {
+  // Azure diarization numbers voices it has told apart but cannot name.
+  // Null when it could not separate them at all, which is what a single
+  // microphone in a room usually produces.
   speaker: number | null;
+  // A REAL NAME, and only Teams can supply one. It transcribes each
+  // participant's own microphone against their signed-in identity, so it is
+  // not clustering voices - it knows who is speaking. Null for anything
+  // recorded or uploaded here, where no such identity exists.
+  //
+  // Both fields rather than one: they are different kinds of certainty, and
+  // collapsing them would either lose the name or imply a name where there
+  // is only a guess.
+  speakerName?: string | null;
   startMs: number;
   endMs: number;
   text: string;
@@ -591,6 +623,10 @@ export type TranscriptionSegment = {
 // The MEDIA is not here: `storageKey` points at a blob. A Postgres
 // cascade therefore removes the row and leaves the file, so every delete
 // path clears storage first - the same rule as chat attachments.
+//
+// A 'teams' row has NO media and no Speech job: it is imported complete
+// through Microsoft Graph, so `storageKey`, `mediaType` and `speechJobId`
+// are all null on it and `sourceRef` says where it came from.
 // -------------------------------------------------------------------
 export interface Transcriptions {
   id: string;
@@ -598,14 +634,32 @@ export interface Transcriptions {
   title: string;
   source: TranscriptionSource;
   status: Generated<TranscriptionStatus>;
-  storageKey: string;
-  mediaType: string;
+  // NULL on a Teams import, which has no media at all - Teams transcribed
+  // the meeting itself and only the text was fetched. Every path that
+  // reaches storage has to say what it does with that, which is the point
+  // of the column being nullable rather than holding a key to nothing.
+  storageKey: string | null;
+  mediaType: string | null;
+  // What this row was imported from, in the source system's own terms - the
+  // Graph transcript id for 'teams', NULL for anything that originated
+  // here. Unique per person, so importing the same meeting twice finds the
+  // copy that already exists instead of paying for a second summary.
+  sourceRef: string | null;
   byteSize: number | null;
   durationSeconds: number | null;
   speechJobId: string | null;
   transcript: string | null;
   segments: ColumnType<TranscriptionSegment[] | null, string | null, string | null>;
   summary: string | null;
+  // How many model calls this row's summary has already cost. Counted rather
+  // than timed, because attempts are what a failing summary spends - see
+  // migration 015.
+  summaryAttempts: Generated<number>;
+  // The lease. Non-null while a sweep is summarising this row; a value older
+  // than the lease window means that attempt died without finishing and the
+  // row is free again. Deliberately NOT updatedAt, which the give-up rule
+  // already reads for a different question.
+  summaryStartedAt: Date | null;
   error: string | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;

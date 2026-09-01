@@ -195,6 +195,115 @@ export function isGuaranteedFormat(fileName: string): boolean {
 }
 
 // -------------------------------------------------------------------
+// ===================================================================
+// SUMMARY BUDGETS
+// ===================================================================
+//
+// These four numbers describe ONE calculation and they are only correct
+// together. Keeping them apart is what broke: the token cap said a summary
+// could be 4,000 tokens long and the timeout gave it 120 seconds, and at the
+// rate the model actually generates, 4,000 tokens does not fit in 120
+// seconds. So every meeting long enough to need a full-length summary timed
+// out at exactly 120s, three attempts in a row, while short meetings
+// finished in ten seconds and looked fine.
+//
+// Nobody had written the relationship down, so nobody could see it was
+// violated. It is derived here and asserted in the tests, which is what
+// stops the two drifting apart again.
+// -------------------------------------------------------------------
+
+/** The longest a summary may be. */
+export const SUMMARY_MAX_TOKENS = 4_000;
+
+// -------------------------------------------------------------------
+// The slowest generation rate we plan for, in output tokens per second.
+//
+// MEASURED, not guessed: a real logged call produced 293 output tokens in
+// 9,637ms. Taking that whole duration as generation - which is pessimistic,
+// since it includes connecting and prefill - gives 30 tokens per second.
+// The pessimistic reading is the right one for sizing a timeout.
+// -------------------------------------------------------------------
+export const SLOWEST_TOKENS_PER_SECOND = 30;
+
+// -------------------------------------------------------------------
+// Time allowed before the first token arrives.
+//
+// The model reads the whole transcript before it writes anything, and an
+// hour-long meeting is around 15,000 input tokens. This is that reading
+// time, plus connecting. It is the part the old 120 seconds had no room for
+// at all.
+// -------------------------------------------------------------------
+export const SUMMARY_PREFILL_ALLOWANCE_MS = 30_000;
+
+// -------------------------------------------------------------------
+// The hard ceiling, and it is NOT ours to choose.
+//
+// Summarising happens inside the sweep, which is an HTTP request, and Azure
+// App Service's load balancer terminates a request at 230 seconds. A
+// timeout above that would not protect anything - the platform would cut
+// the connection first, and the row would be left mid-flight with no error
+// recorded. 180 leaves room for the rest of the sweep on either side.
+//
+// Wanting a longer summary than this allows is not a matter of raising the
+// number. It needs work that outlives a request, which this feature
+// deliberately does not have.
+// -------------------------------------------------------------------
+export const SUMMARY_CEILING_MS = 180_000;
+
+// -------------------------------------------------------------------
+// How long one attempt at a summary may take before it is abandoned.
+//
+// DERIVED from the three above rather than picked, so that raising the
+// token cap raises the time it is given. Clamped to the platform ceiling -
+// and `summary-budget.test.ts` fails the build if a cap is ever set that
+// the ceiling cannot actually accommodate, which is the exact mistake this
+// replaces.
+// -------------------------------------------------------------------
+export const SUMMARY_TIMEOUT_MS = Math.min(
+  SUMMARY_CEILING_MS,
+  Math.ceil((SUMMARY_MAX_TOKENS / SLOWEST_TOKENS_PER_SECOND) * 1000) + SUMMARY_PREFILL_ALLOWANCE_MS,
+);
+
+// An hour of speech is roughly 60,000 characters, so this takes any real
+// meeting whole. It is a guard against a pathological input - a day-long
+// recording, a stuck microphone - rather than a limit anybody will meet.
+export const MAX_SUMMARY_INPUT_CHARS = 400_000;
+
+// -------------------------------------------------------------------
+// ===================================================================
+// ONE ATTEMPT AT A TIME, AND NOT FOREVER
+// ===================================================================
+//
+// Summarising is the most expensive thing this feature does, and it used to
+// be started by whoever happened to look. Nothing claimed the row before
+// the model call - the claim came after it - so every sweep that found a
+// row in `summarising` began its own summary. Every open tab polls every
+// six seconds, the page-load sweep runs, and the scheduled background sweep
+// runs, so one meeting was summarised three times over inside ninety
+// seconds and paid for all three.
+//
+// THE LEASE is how long one attempt may hold the row before another sweep
+// is allowed to assume it died. Comfortably longer than SUMMARY_TIMEOUT_MS,
+// because an attempt that is still running has not died.
+// -------------------------------------------------------------------
+export const SUMMARY_LEASE_MS = SUMMARY_CEILING_MS + 60_000;
+
+// -------------------------------------------------------------------
+// How many attempts a single transcription gets before the summary is
+// written off and the row completes without one.
+//
+// COUNTED RATHER THAN TIMED, which is the change. The old rule gave up
+// after fifteen minutes in `summarising` - but minutes are not what a
+// failing summary costs. Attempts are. Three concurrent attempts inside one
+// minute spent three times as much as the timer thought it was allowing,
+// and the timer had no way to know.
+//
+// The transcript is already stored by this point, so giving up costs nobody
+// their meeting - the screen offers to write the summary by hand.
+// -------------------------------------------------------------------
+export const MAX_SUMMARY_ATTEMPTS = 3;
+
+// -------------------------------------------------------------------
 // One transcription in the list.
 //
 // Carries no transcript, segments or summary: the list shows names and
@@ -228,9 +337,60 @@ export type TranscriptionDetailDTO = TranscriptionSummaryDTO & {
 };
 
 // -------------------------------------------------------------------
+// One Teams meeting somebody could import.
+//
+// Built from a calendar event, so it says nothing about whether a
+// transcript actually EXISTS - Graph has no endpoint that answers that
+// without resolving the meeting first, which is a call per row. `importedAs`
+// is the one thing known for certain here: the id of the transcription this
+// person already made from it, so the screen offers to open that instead of
+// importing a second copy.
+//
+// `joinUrl` is deliberately absent. The import takes an event id and reads
+// the URL back from Graph itself - see getTeamsMeeting.
+// -------------------------------------------------------------------
+export type TeamsMeetingDTO = {
+  eventId: string;
+  subject: string;
+  startsAt: Date;
+  endsAt: Date;
+  organiser: string | null;
+  importedAs: string | null;
+};
+
+// -------------------------------------------------------------------
+// The Teams panel, in one answer.
+//
+// `isConfigured` false means this deployment has no Microsoft sign-in at
+// all, which is the local-development case. Reported rather than throwing,
+// because "not available here" is a sentence and an error is not.
+// -------------------------------------------------------------------
+export type TeamsMeetingsDTO = {
+  isConfigured: boolean;
+  lookbackDays: number;
+  meetings: TeamsMeetingDTO[];
+  // True when the calendar window held more ENTRIES than the one page asked
+  // for. The online-meeting filter runs after that page is built, so this can
+  // be set while every Teams meeting is already listed: it means older
+  // meetings MAY be missing, never that any definitely are. Said out loud
+  // rather than swallowed, because a list quietly missing the meeting
+  // somebody wants reads as "the import is broken".
+  truncated: boolean;
+};
+
+// The import carries ONLY an opaque calendar id. Everything else about the
+// meeting - its join URL, its title - is read back from Graph, so nothing
+// the browser sends can name a row or reach a meeting.
+export const ImportTeamsMeetingSchema = z.object({
+  eventId: z.string().trim().min(1).max(512),
+});
+
+export type ImportTeamsMeetingRequestDTO = z.infer<typeof ImportTeamsMeetingSchema>;
+
+// -------------------------------------------------------------------
 // Everything the screen renders in one pass.
 //
-// THREE flags, because there are three different ways this can be not-ready
+// FOUR flags, because there are four different ways this can be not-ready
 // and each needs a different sentence. Storage can be configured without
 // Speech, in which case media uploads and nothing transcribes it. Both can
 // be configured and still not work, if the storage is the local emulator -
@@ -246,9 +406,64 @@ export type TranscriptionPageDTO = {
   // False against Azurite or a private-network storage account. Everything
   // up to creating the job still works; the job itself cannot.
   isStorageReachableByAzure: boolean;
+  // A FOURTH, and independent of the other three. Importing from Teams
+  // uploads nothing, stores nothing and never asks the Speech service - it
+  // needs Microsoft sign-in and nothing else. So a deployment can have this
+  // and not the other two, or the other two and not this.
+  isTeamsImportConfigured: boolean;
   transcriptions: TranscriptionSummaryDTO[];
   active: TranscriptionDetailDTO | null;
 };
+
+// -------------------------------------------------------------------
+// Whether the person can record or upload here, and if not, why not.
+//
+// THREE WAYS TO BE NOT-READY, THREE DIFFERENT SENTENCES. Reducing them to
+// one "not configured" would send somebody looking in the wrong place - and
+// the third especially, because everything about that setup LOOKS right:
+// the key is set, the storage is set, the recorder works, the upload
+// succeeds. Only the job fails, minutes later, with a message from Azure
+// about a URI.
+//
+// Derived HERE rather than in a component because two screens need the same
+// answer: the panel shown when nothing works at all, and the note above the
+// Teams tab when importing works but recording does not. Two copies of this
+// reasoning would drift, and the failure mode is a wrong diagnosis.
+//
+// Null when recording and uploading are both fine.
+// -------------------------------------------------------------------
+export function recordingUnavailableReason(
+  page: Pick<
+    TranscriptionPageDTO,
+    "isStorageConfigured" | "isSpeechConfigured" | "isStorageReachableByAzure"
+  >,
+): { title: string; detail: string } | null {
+  if (!page.isStorageConfigured) {
+    return {
+      title: "Recording and uploading are not configured",
+      detail:
+        "There is nowhere to put a recording on this environment. Set AZURE_STORAGE_CONNECTION_STRING and restart.",
+    };
+  }
+
+  if (!page.isSpeechConfigured) {
+    return {
+      title: "Recording and uploading are not configured",
+      detail:
+        "Recordings can be stored but nothing can transcribe them. Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION and restart.",
+    };
+  }
+
+  if (!page.isStorageReachableByAzure) {
+    return {
+      title: "Transcription cannot run against local storage",
+      detail:
+        "Azure downloads the recording itself and cannot reach the storage emulator on this machine. Everything else works locally - to transcribe, point AZURE_STORAGE_CONNECTION_STRING at a real storage account.",
+    };
+  }
+
+  return null;
+}
 
 // What the browser needs to upload the media itself: where to put it, and
 // which row to start once it has.
@@ -323,10 +538,20 @@ export function formatTimestamp(ms: number): string {
 // -------------------------------------------------------------------
 // A speaker's display name.
 //
-// The Speech service separates voices but has no idea who they are, so a
-// speaker is a number. Null means it could not tell them apart at all,
-// which happens on a single-microphone recording of a room.
+// TWO DIFFERENT KINDS OF CERTAINTY, in priority order. A Teams import
+// carries a real name, because Teams transcribes each participant's own
+// microphone against their signed-in identity - it is not clustering
+// voices, it knows who is talking. Everything recorded or uploaded here
+// gets a number instead: the Speech service separates voices but has no
+// idea who they are, and null means it could not separate them at all,
+// which is what a single microphone in a room usually produces.
+//
+// Taking the segment rather than the number is what keeps that order in one
+// place. A caller reaching for `segment.speaker` on its own would silently
+// print "Speaker 1" over a transcript that knows the person's name.
 // -------------------------------------------------------------------
-export function speakerLabel(speaker: number | null): string {
-  return speaker === null ? "Speaker" : `Speaker ${speaker}`;
+export function speakerLabel(segment: Pick<TranscriptionSegment, "speaker" | "speakerName">): string {
+  if (segment.speakerName) return segment.speakerName;
+
+  return segment.speaker === null ? "Speaker" : `Speaker ${segment.speaker}`;
 }

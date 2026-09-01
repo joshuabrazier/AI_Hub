@@ -57,13 +57,28 @@ function graphBaseUrl(): string {
 }
 
 // -------------------------------------------------------------------
-// The scopes a crawl needs, and why each one.
+// Every Graph scope this app asks for, and why each one.
 //
+// THE SHAREPOINT INVENTORY:
 //   Sites.Read.All   read site metadata and enumerate document libraries
 //   Files.Read.All   read driveItem metadata through the delta endpoint
 //
-// BOTH READ-ONLY. Phase 1 writes nothing to SharePoint and no scope here
-// permits it to.
+// THE TEAMS TRANSCRIPT IMPORT (src/lib/graph/teams-meetings.ts):
+//   Calendars.Read                    find the person's recent meetings
+//   OnlineMeetings.Read               resolve a join URL to its meeting
+//   OnlineMeetingTranscript.Read.All  read the transcript Teams produced
+//
+// ALL READ-ONLY. Nothing in this app writes to SharePoint, to a calendar or
+// to a meeting, and no scope here permits it to. A write scope belongs in
+// the change that needs it, not sitting here unused.
+//
+// OnlineMeetingTranscript.Read.All IS THE ONE TO UNDERSTAND. Microsoft
+// publishes no delegated scope narrower than `.All` for meeting
+// transcripts, so this is not a case of asking for more than is needed - it
+// is the only door there is. What actually bounds it is that the calls are
+// DELEGATED: every request runs as the signed-in person, and Graph will not
+// return a transcript for a meeting they were not part of. The tenant-wide
+// name describes the consent, not the reach.
 //
 // DEFINED HERE rather than beside the token code because auth.ts has to
 // request them and graph-token.ts imports auth.ts - putting them there
@@ -75,7 +90,13 @@ function graphBaseUrl(): string {
 // this list: `.All` needs tenant admin consent, and adding a scope does not
 // upgrade a refresh token that has already been issued.
 // -------------------------------------------------------------------
-export const GRAPH_SCOPES = ["Sites.Read.All", "Files.Read.All"] as const;
+export const GRAPH_SCOPES = [
+  "Sites.Read.All",
+  "Files.Read.All",
+  "Calendars.Read",
+  "OnlineMeetings.Read",
+  "OnlineMeetingTranscript.Read.All",
+] as const;
 
 const REQUEST_TIMEOUT_MS = 30000;
 const MAX_RETRIES = 3;
@@ -172,17 +193,93 @@ export class GraphRequestError extends Error {
   readonly outcome: GraphOutcome | null;
   readonly status: number | null;
   readonly retryAfterSeconds: number | null;
+  // The `code` from the error's innerError, when Graph sent one.
+  //
+  // THIS IS WHERE THE ACTIONABLE PART OF A 403 LIVES. Two 403s needing
+  // completely different remedies - one a lapsed consent, one a tenant
+  // setting an administrator has to turn on - are distinguished by nothing
+  // else. Microsoft's own guidance is to branch on this and never on the
+  // message, because the messages are documented as subject to change.
+  readonly innerErrorCode: string | null;
 
   constructor(
     message: string,
-    options: { outcome?: GraphOutcome | null; status?: number | null; retryAfterSeconds?: number | null } = {},
+    options: {
+      outcome?: GraphOutcome | null;
+      status?: number | null;
+      retryAfterSeconds?: number | null;
+      innerErrorCode?: string | null;
+    } = {},
   ) {
     super(message);
     this.name = "GraphRequestError";
     this.outcome = options.outcome ?? null;
     this.status = options.status ?? null;
     this.retryAfterSeconds = options.retryAfterSeconds ?? null;
+    this.innerErrorCode = options.innerErrorCode ?? null;
   }
+}
+
+// -------------------------------------------------------------------
+// Pull the innerError code out of a Graph error body.
+//
+// Best-effort by design: a body that is not JSON, or is not Graph's error
+// shape, gives null and the caller falls back to the status alone. A failure
+// to parse an error must never become a second, more confusing failure.
+//
+// The body is consumed here, so callers must not read it again.
+// -------------------------------------------------------------------
+export async function readGraphInnerErrorCode(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.json()) as { error?: { innerError?: { code?: unknown } } };
+
+    const code = body?.error?.innerError?.code;
+
+    return typeof code === "string" && code.length > 0 ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+// -------------------------------------------------------------------
+// Read a Graph failure's classification WITHOUT relying on instanceof.
+//
+// Class identity is PER BUNDLE CHUNK in a production build, so an error
+// thrown in one chunk and caught in another fails `instanceof` even though
+// it is the same class. That has already cost this app a day once, which is
+// why DisplayErrorMessage carries a boolean marker and isDisplayError exists
+// - and the same reasoning applies here.
+//
+// Identity is tried first, because it is the precise answer when it works,
+// and the fields are read structurally when it does not. The cost of getting
+// this wrong is not an exception: it is the "sign in again to renew access"
+// instruction quietly becoming a generic failure, on the one error that will
+// happen to everybody the day new scopes ship.
+// -------------------------------------------------------------------
+export function graphOutcomeOf(error: unknown): GraphOutcome | null {
+  if (error instanceof GraphRequestError) return error.outcome;
+
+  const outcome = (error as { outcome?: unknown } | null | undefined)?.outcome;
+
+  return outcome === GRAPH_OUTCOMES.NEEDS_REAUTH || outcome === GRAPH_OUTCOMES.THROTTLED
+    ? outcome
+    : null;
+}
+
+export function graphStatusOf(error: unknown): number | null {
+  if (error instanceof GraphRequestError) return error.status;
+
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+
+  return typeof status === "number" ? status : null;
+}
+
+export function graphInnerErrorOf(error: unknown): string | null {
+  if (error instanceof GraphRequestError) return error.innerErrorCode;
+
+  const code = (error as { innerErrorCode?: unknown } | null | undefined)?.innerErrorCode;
+
+  return typeof code === "string" && code.length > 0 ? code : null;
 }
 
 // Retry-After is documented as seconds. A date form is legal in HTTP
@@ -205,11 +302,21 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 //
 // `fetchImpl` is injectable so the retry logic can be tested without a
 // network. Nothing else passes it.
+//
+// `headers` are merged over the two this sets. It exists for `Prefer`, which
+// Graph uses to change what a response CONTAINS rather than how it is
+// authorised - immutable ids being the case here. Note that a Prefer header
+// applies only to the request it is sent with, so a caller wanting it on two
+// related calls has to pass it to both.
 // -------------------------------------------------------------------
 export async function graphRequest(
   url: string,
   accessToken: string,
-  options: { fetchImpl?: typeof fetch; now?: () => number } = {},
+  options: {
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<unknown> {
   const doFetch = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => Date.now());
@@ -233,7 +340,11 @@ export async function graphRequest(
 
     try {
       const response = await doFetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+          ...options.headers,
+        },
         signal: controller.signal,
       });
 
@@ -241,11 +352,20 @@ export async function graphRequest(
         return await response.json();
       }
 
-      // A token that no longer works. Terminal by design.
+      // A token that no longer works, OR a tenant setting that forbids this
+      // regardless of the token. Both arrive as 403 and only innerError.code
+      // tells them apart, so it is read here and carried on the error - the
+      // caller decides what it means, because the codes are specific to the
+      // endpoint rather than to Graph as a whole.
+      //
+      // Terminal either way: no retry fixes a consent problem or a tenant
+      // switch.
       if (response.status === 401 || response.status === 403) {
+        const innerErrorCode = await readGraphInnerErrorCode(response);
+
         throw new GraphRequestError(
           "Graph refused the delegated token, so somebody has to sign in again to renew consent",
-          { outcome: GRAPH_OUTCOMES.NEEDS_REAUTH, status: response.status },
+          { outcome: GRAPH_OUTCOMES.NEEDS_REAUTH, status: response.status, innerErrorCode },
         );
       }
 
