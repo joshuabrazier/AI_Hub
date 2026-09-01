@@ -1213,6 +1213,11 @@ async function compactIfNeeded(
 // -------------------------------------------------------------------
 export async function* streamAiChatReplyService(
   requestDTO: SendAiChatMessageRequestDTO,
+  // The deadline for the WHOLE turn, and the reader's own disconnect,
+  // combined by the caller. Optional so the service is still callable
+  // without one, but the route always passes it - see the note on
+  // CHAT_TURN_TIMEOUT_MS for what happened when nothing did.
+  signal?: AbortSignal,
 ): AsyncGenerator<string, void, undefined> {
   const user = await requireUser();
 
@@ -1329,6 +1334,14 @@ export async function* streamAiChatReplyService(
     for (let round = 0; ; round++) {
       const isFinalRound = round >= MAX_TOOL_ROUNDS;
 
+      // Checked BEFORE the pass rather than only during it. A turn with two
+      // seconds left on its deadline must not open a sixth request to
+      // Bedrock that can only be abandoned - that is a paid call whose
+      // answer is thrown away.
+      if (signal?.aborted) {
+        throw new Error("The reply took too long and was stopped.");
+      }
+
       const response = await getBedrockClient().send(
         new ConverseStreamCommand({
           modelId: BEDROCK_MODEL_ID,
@@ -1337,6 +1350,12 @@ export async function* streamAiChatReplyService(
           inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
           ...(isFinalRound ? {} : { toolConfig: CHAT_TOOL_CONFIG }),
         }),
+        // ONE SIGNAL FOR EVERY PASS, so the deadline bounds the turn rather
+        // than each request within it. It also cuts the SDK's own retry
+        // ladder short: five attempts of two minutes each is a sensible
+        // envelope for a background job and far too long for somebody
+        // watching a cursor.
+        { abortSignal: signal },
       );
 
       if (!response.stream) {

@@ -244,3 +244,48 @@ export const RemoveAiChatAttachmentSchema = z.object({
 });
 
 export type RemoveAiChatAttachmentRequestDTO = z.infer<typeof RemoveAiChatAttachmentSchema>;
+
+// -------------------------------------------------------------------
+// ===================================================================
+// HOW LONG ONE REPLY MAY TAKE
+// ===================================================================
+//
+// A chat turn had NO CEILING AT ALL, and the numbers that produced were not
+// small: two failed replies in the request log ran for 1,081 and 1,441
+// seconds - eighteen and twenty-four minutes - for answers nobody could
+// still be waiting for.
+//
+// Nothing was broken in isolation. It multiplied:
+//
+//   MAX_TOOL_ROUNDS allows 5 passes over the model, each a separate request
+//   x  maxAttempts: 5 on the Bedrock client
+//   x  requestTimeout: 120s per attempt
+//   =  50 minutes before the adaptive retry mode's own backoff is counted
+//
+// The transcription summariser was given AbortSignal.timeout for exactly
+// this reason. Chat - the interactive path, where somebody is actually
+// watching - was left without one.
+//
+// THE DEADLINE COVERS THE WHOLE TURN, not one pass. A per-pass ceiling
+// would simply multiply by five again, which is the bug rather than the
+// fix.
+// -------------------------------------------------------------------
+
+// Azure App Service's load balancer terminates a request at 230 seconds and
+// this is not ours to raise. It matters more than it looks: during a retry
+// storm nothing is written to the stream, so the connection is idle, so the
+// platform cuts it at ~4 minutes - and the server carried on calling
+// Bedrock for another twenty, billing for a reply that could never be
+// delivered.
+export const CHAT_PLATFORM_CEILING_MS = 230_000;
+
+// -------------------------------------------------------------------
+// The app's own deadline for one reply.
+//
+// DELIBERATELY BELOW THE PLATFORM'S. Whoever gives up first decides what
+// the reader sees: if the load balancer wins, the connection is severed
+// mid-stream and the app never learns it happened. If this wins, the stream
+// is closed cleanly, the partial answer is kept, and the failure is
+// recorded in the request log like any other.
+// -------------------------------------------------------------------
+export const CHAT_TURN_TIMEOUT_MS = 200_000;

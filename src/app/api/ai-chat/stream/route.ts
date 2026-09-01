@@ -7,7 +7,7 @@ import { MESSAGES } from "@/lib/constants";
 import { validateRequest } from "@/lib/server-requests";
 
 import { streamAiChatReplyService } from "@/features/ai-chat/ai-chat.service";
-import { SendAiChatMessageSchema } from "@/features/ai-chat/ai-chat.types";
+import { CHAT_TURN_TIMEOUT_MS, SendAiChatMessageSchema } from "@/features/ai-chat/ai-chat.types";
 
 // The Bedrock client and Kysely both need Node, and a streamed reply must
 // never be cached.
@@ -72,7 +72,27 @@ export async function POST(request: Request): Promise<Response> {
   // before the model is called. Started eagerly for exactly that reason: an
   // authorization failure has to be an HTTP status, not an error delivered
   // mid-stream after the client already saw a 200.
-  const replies = streamAiChatReplyService(validatedRequest.data);
+  // -----------------------------------------------------------------
+  // TWO REASONS TO STOP, COMBINED INTO ONE SIGNAL.
+  //
+  //   the DEADLINE   a turn had no ceiling at all, and the log holds
+  //                  replies that ran for twenty-four minutes. See
+  //                  CHAT_TURN_TIMEOUT_MS.
+  //   the READER     `request.signal` aborts when the browser goes away -
+  //                  a closed tab, a navigation, or the load balancer
+  //                  cutting an idle connection. Without it the server
+  //                  carried on retrying Bedrock long after there was
+  //                  anybody to answer, which is the case that produced
+  //                  those twenty-four minutes.
+  //
+  // Either one is a reason to stop, so they are combined rather than
+  // chosen between.
+  // -----------------------------------------------------------------
+  const deadline = AbortSignal.timeout(CHAT_TURN_TIMEOUT_MS);
+  const replies = streamAiChatReplyService(
+    validatedRequest.data,
+    AbortSignal.any([request.signal, deadline]),
+  );
 
   let first: IteratorResult<string, void>;
   try {
