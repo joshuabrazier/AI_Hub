@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   adfToPlainText,
+  classifyRnd,
   hoursFieldToSeconds,
+  labelsSnapshot,
   normaliseText,
   readCustomFieldValue,
+  readLabels,
   toAppZoneDate,
   toAppZoneSecondOfDay,
 } from "./jira-mapping";
@@ -182,5 +185,78 @@ describe("hoursFieldToSeconds", () => {
     expect(hoursFieldToSeconds(null)).toBeNull();
     expect(hoursFieldToSeconds(-5)).toBeNull();
     expect(hoursFieldToSeconds({})).toBeNull();
+  });
+});
+
+// -------------------------------------------------------------------
+// R&D classification from labels.
+//
+// This decides which hours can appear in an R&D Tax Incentive claim, so
+// the rules that matter are the ones about what is NOT admitted: exact
+// casing, and no third category for an item carrying both labels.
+// -------------------------------------------------------------------
+describe("readLabels", () => {
+  it("keeps the label array Jira sent", () => {
+    expect(readLabels(["RnD-core", "urgent"])).toEqual(["RnD-core", "urgent"]);
+  });
+
+  it("treats a missing or malformed labels field as no labels", () => {
+    expect(readLabels(undefined)).toEqual([]);
+    expect(readLabels(null)).toEqual([]);
+    expect(readLabels("RnD-core")).toEqual([]);
+  });
+
+  it("drops entries that are not usable strings rather than stringifying them", () => {
+    // "[object Object]" in the snapshot would be worse than a shorter list:
+    // the snapshot is the evidence for the classification.
+    expect(readLabels(["RnD-core", { x: 1 }, "", "   ", 42, null])).toEqual(["RnD-core"]);
+  });
+});
+
+describe("labelsSnapshot", () => {
+  it("stores the whole array, not just the labels we act on", () => {
+    // "What did this item actually look like" is the question asked of a
+    // snapshot, and a filtered copy cannot answer it.
+    expect(labelsSnapshot(["urgent", "RnD-core", "q3"])).toBe("urgent,RnD-core,q3");
+  });
+
+  it("is NULL for no labels, not an empty string", () => {
+    expect(labelsSnapshot([])).toBeNull();
+  });
+});
+
+describe("classifyRnd", () => {
+  it("reads core and supporting", () => {
+    expect(classifyRnd(["RnD-core"])).toEqual({ rndClass: "core", hasBothLabels: false });
+    expect(classifyRnd(["RnD-supporting"])).toEqual({ rndClass: "supporting", hasBothLabels: false });
+  });
+
+  it("is null when neither label is present", () => {
+    expect(classifyRnd([])).toEqual({ rndClass: null, hasBothLabels: false });
+    expect(classifyRnd(["urgent", "q3"])).toEqual({ rndClass: null, hasBothLabels: false });
+  });
+
+  it("resolves both labels to core AND reports it", () => {
+    // Both is a data entry error, not a third category. The hours must not
+    // be counted into two buckets, and somebody has to fix the item - so
+    // the flag travels rather than the number being quietly decided here.
+    expect(classifyRnd(["RnD-core", "RnD-supporting"])).toEqual({ rndClass: "core", hasBothLabels: true });
+  });
+
+  it("is CASE SENSITIVE, so a near miss is a miss", () => {
+    // Jira labels are case-sensitive; "rnd-core" is a different label. An
+    // hour wrongly left out of a claim is a smaller problem than an hour
+    // wrongly claimed, so this fails towards unclassified.
+    expect(classifyRnd(["rnd-core"]).rndClass).toBeNull();
+    expect(classifyRnd(["RND-CORE"]).rndClass).toBeNull();
+    expect(classifyRnd(["RnD-Core"]).rndClass).toBeNull();
+  });
+
+  it("does not match a label that merely contains the name", () => {
+    expect(classifyRnd(["not-RnD-core", "RnD-core-2027"]).rndClass).toBeNull();
+  });
+
+  it("ignores unrelated labels alongside a real one", () => {
+    expect(classifyRnd(["urgent", "RnD-supporting", "q3"]).rndClass).toBe("supporting");
   });
 });

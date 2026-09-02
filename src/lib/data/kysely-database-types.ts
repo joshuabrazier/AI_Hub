@@ -859,11 +859,54 @@ export interface WorklogFacts {
   hasNarrative: ColumnType<boolean, never, never>;
   jiraUpdatedAt: Date | null;
   syncedAt: Generated<Date>;
+  // -----------------------------------------------------------------
+  // R&D classification, FROZEN at sync time.
+  //
+  // Jira labels are mutable and Jira keeps no history of them, so deriving
+  // this live would let a label added in December reclassify every hour
+  // logged since July. These figures may support an R&D Tax Incentive
+  // claim, so what was classified and when has to be reproducible.
+  //
+  // Never join jira_issue to obtain these. The grain here is one row per
+  // WORKLOG; an issue with six worklogs would have every hour counted six
+  // times. See migration 016.
+  // -----------------------------------------------------------------
+  labelsSnapshot: string | null;
+  // 'core' | 'supporting' | null. See RndClass in jira-mapping.ts.
+  rndClass: string | null;
+  // NULL means never classified, which is not the same as classified as
+  // not-R&D: the first is a gap, the second is a decision.
+  classifiedAt: Date | null;
 }
 
 export type WorklogFact = Selectable<WorklogFacts>;
 export type NewWorklogFact = Insertable<WorklogFacts>;
 export type UpdateWorklogFact = Updateable<WorklogFacts>;
+
+// -------------------------------------------------------------------
+// Reclassification history
+//
+// One row whenever a sync changes an existing worklog's rnd_class. Only
+// CHANGES, so this stays a record of what moved rather than a log of every
+// run.
+//
+// `worklogId` is a SOFT reference with no foreign key: a worklog deleted in
+// Jira loses its worklog_fact row, and the record that it was once
+// classified as core has to outlive that, because hours were claimed on the
+// strength of it. Same rule as audit_logs.
+// -------------------------------------------------------------------
+export interface WorklogRndHistories {
+  id: string;
+  worklogId: string;
+  oldRndClass: string | null;
+  newRndClass: string | null;
+  oldLabels: string | null;
+  newLabels: string | null;
+  changedAt: Generated<Date>;
+}
+
+export type WorklogRndHistory = Selectable<WorklogRndHistories>;
+export type NewWorklogRndHistory = Insertable<WorklogRndHistories>;
 
 // -------------------------------------------------------------------
 // Staff Targets
@@ -1200,6 +1243,7 @@ export interface Database {
   jiraProject: JiraProjects;
   jiraIssue: JiraIssues;
   worklogFact: WorklogFacts;
+  worklogRndHistory: WorklogRndHistories;
   syncWatermark: SyncWatermarks;
   staffTarget: StaffTargets;
   staffRate: StaffRates;

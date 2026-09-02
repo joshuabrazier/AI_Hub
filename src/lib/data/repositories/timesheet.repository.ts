@@ -9,6 +9,7 @@ import {
   NewJiraProject,
   NewStaffTarget,
   NewWorklogFact,
+  NewWorklogRndHistory,
   StaffTarget,
   SyncWatermark,
   WorklogFact,
@@ -69,6 +70,12 @@ export async function upsertWorklogFactsRepo(rows: NewWorklogFact[], db: DBClien
             billableSource: eb.ref("excluded.billableSource"),
             narrative: eb.ref("excluded.narrative"),
             jiraUpdatedAt: eb.ref("excluded.jiraUpdatedAt"),
+            // Re-frozen on every write, exactly like billable above it. The
+            // caller has already recorded any change to rndClass in
+            // worklog_rnd_history, so overwriting here loses nothing.
+            labelsSnapshot: eb.ref("excluded.labelsSnapshot"),
+            rndClass: eb.ref("excluded.rndClass"),
+            classifiedAt: eb.ref("excluded.classifiedAt"),
             syncedAt: new Date(),
           })),
         )
@@ -377,5 +384,117 @@ export async function upsertStaffTargetRepo(row: NewStaffTarget, db: DBClient = 
       .executeTakeFirstOrThrow();
   } catch (error) {
     throw handleError("upsertStaffTargetRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// R&D classification: reading what is already frozen, and recording moves
+// -------------------------------------------------------------------
+
+// What a worklog is currently classified as, for the worklogs about to be
+// rewritten. Read BEFORE the upsert so a change can be detected and
+// recorded; after it the previous value is gone.
+export interface WorklogRndState {
+  worklogId: string;
+  rndClass: string | null;
+  labelsSnapshot: string | null;
+}
+
+export async function getWorklogRndStatesRepo(
+  worklogIds: string[],
+  db: DBClient = database,
+): Promise<WorklogRndState[]> {
+  try {
+    if (worklogIds.length === 0) return [];
+
+    const states: WorklogRndState[] = [];
+
+    // Chunked for the same reason the inserts are: Postgres caps bound
+    // parameters, and a busy sync window can carry thousands of ids.
+    for (const batch of chunk(worklogIds, INSERT_CHUNK_SIZE)) {
+      const rows = await db
+        .selectFrom("worklogFact")
+        .select(["worklogId", "rndClass", "labelsSnapshot"])
+        .where("worklogId", "in", batch)
+        .execute();
+
+      states.push(...rows);
+    }
+
+    return states;
+  } catch (error) {
+    throw handleError("getWorklogRndStatesRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Append reclassifications.
+//
+// Append-only and never updated, so a classification that moved twice
+// leaves two rows rather than one that has forgotten the middle. An R&D
+// claim is defended with the sequence, not the latest value.
+// -------------------------------------------------------------------
+export async function addWorklogRndHistoryRepo(
+  rows: NewWorklogRndHistory[],
+  db: DBClient = database,
+): Promise<number> {
+  try {
+    if (rows.length === 0) return 0;
+
+    let written = 0;
+
+    for (const batch of chunk(rows, INSERT_CHUNK_SIZE)) {
+      await db.insertInto("worklogRndHistory").values(batch).execute();
+      written += batch.length;
+    }
+
+    return written;
+  } catch (error) {
+    throw handleError("addWorklogRndHistoryRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The distinct issues already referenced by stored worklogs.
+//
+// The backfill's starting point: it needs today's labels for exactly these
+// and nothing else, so it does not walk the whole book of work.
+// -------------------------------------------------------------------
+export async function getDistinctWorklogIssueKeysRepo(db: DBClient = database): Promise<string[]> {
+  try {
+    const rows = await db.selectFrom("worklogFact").select("issueKey").distinct().execute();
+
+    return rows.map((row) => row.issueKey);
+  } catch (error) {
+    throw handleError("getDistinctWorklogIssueKeysRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Freeze a classification onto every worklog of one issue.
+//
+// The backfill's write. Scoped by issue key because that is what labels
+// belong to, and it keeps the statement count proportional to issues
+// rather than to worklogs.
+// -------------------------------------------------------------------
+export async function setWorklogRndClassForIssueRepo(
+  issueKey: string,
+  values: { labelsSnapshot: string | null; rndClass: string | null; classifiedAt: Date },
+  db: DBClient = database,
+): Promise<number> {
+  try {
+    const result = await db
+      .updateTable("worklogFact")
+      .set({
+        labelsSnapshot: values.labelsSnapshot,
+        rndClass: values.rndClass,
+        classifiedAt: values.classifiedAt,
+      })
+      .where("issueKey", "=", issueKey)
+      .executeTakeFirst();
+
+    return Number(result.numUpdatedRows ?? 0);
+  } catch (error) {
+    throw handleError("setWorklogRndClassForIssueRepo", error);
   }
 }

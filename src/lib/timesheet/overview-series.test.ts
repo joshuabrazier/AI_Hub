@@ -23,6 +23,7 @@ function fact(overrides: Partial<WorklogFactRow> = {}): WorklogFactRow {
     billable: overrides.billable === undefined ? "Billable" : overrides.billable,
     billableSource: overrides.billableSource ?? "parent",
     hasNarrative: overrides.hasNarrative ?? true,
+    rndClass: overrides.rndClass ?? null,
     isOrphan: overrides.isOrphan ?? false,
   };
 }
