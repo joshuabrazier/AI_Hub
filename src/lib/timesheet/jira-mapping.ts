@@ -152,6 +152,10 @@ export type RndClass = "core" | "supporting";
 
 export interface RndClassification {
   rndClass: RndClass | null;
+  // Which rule produced the answer above, or null when nothing did. See the
+  // note on RndSource: the answer without its provenance is not enough to
+  // defend a claim.
+  rndSource: RndSource | null;
   // Both labels on one item is a data entry error, not a third category.
   // It resolves to core - the more conservative of the two is NOT the
   // right instinct here, because core and supporting are claimed at
@@ -186,13 +190,54 @@ export function labelsSnapshot(labels: string[]): string | null {
   return labels.length > 0 ? labels.join(",") : null;
 }
 
-export function classifyRnd(labels: string[]): RndClassification {
+// -------------------------------------------------------------------
+// WHERE THE CLASSIFICATION CAME FROM.
+//
+// Two rules can now produce one, so the answer alone is no longer enough:
+// a claim has to be able to say why an hour is core, and "the code decided"
+// is a much weaker answer than "the item carries this label, here is the
+// snapshot". Recorded per worklog for exactly that reason.
+//
+// The same reasoning already governs billable_source on this table, which
+// records whether a billable status came from the item or was inherited
+// from its parent.
+// -------------------------------------------------------------------
+export type RndSource = "label" | "space";
+
+export function classifyRnd(
+  labels: string[],
+  // Jira project keys whose work is core R&D by default. A space that
+  // exists solely to hold the R&D programme should not need every item in
+  // it labelled by hand.
+  //
+  // Passed in rather than read from the environment here, because this
+  // module is pure and its tests depend on that.
+  options: { projectKey?: string | null; coreProjectKeys?: readonly string[] } = {},
+): RndClassification {
   const hasCore = labels.includes(RND_CORE_LABEL);
   const hasSupporting = labels.includes(RND_SUPPORTING_LABEL);
 
-  if (hasCore && hasSupporting) return { rndClass: "core", hasBothLabels: true };
-  if (hasCore) return { rndClass: "core", hasBothLabels: false };
-  if (hasSupporting) return { rndClass: "supporting", hasBothLabels: false };
+  if (hasCore && hasSupporting) return { rndClass: "core", rndSource: "label", hasBothLabels: true };
+  if (hasCore) return { rndClass: "core", rndSource: "label", hasBothLabels: false };
+  if (hasSupporting) return { rndClass: "supporting", rndSource: "label", hasBothLabels: false };
 
-  return { rndClass: null, hasBothLabels: false };
+  // -----------------------------------------------------------------
+  // No label. Only now does the space get a say.
+  //
+  // A LABEL ALWAYS WINS, and the ordering above is what guarantees it. An
+  // item sitting in the R&D space and deliberately marked RnD-supporting
+  // stays supporting: somebody said so, and a default that overruled them
+  // would make the label pointless exactly where it matters most.
+  //
+  // So this fills a gap rather than overriding anybody, and an unlabelled
+  // item in a space that exists for the R&D programme is far likelier to be
+  // an oversight than a considered statement that the work is not R&D.
+  // -----------------------------------------------------------------
+  const { projectKey, coreProjectKeys } = options;
+
+  if (projectKey && coreProjectKeys?.includes(projectKey)) {
+    return { rndClass: "core", rndSource: "space", hasBothLabels: false };
+  }
+
+  return { rndClass: null, rndSource: null, hasBothLabels: false };
 }

@@ -75,6 +75,7 @@ export async function upsertWorklogFactsRepo(rows: NewWorklogFact[], db: DBClien
             // worklog_rnd_history, so overwriting here loses nothing.
             labelsSnapshot: eb.ref("excluded.labelsSnapshot"),
             rndClass: eb.ref("excluded.rndClass"),
+            rndSource: eb.ref("excluded.rndSource"),
             classifiedAt: eb.ref("excluded.classifiedAt"),
             syncedAt: new Date(),
           })),
@@ -397,6 +398,7 @@ export async function upsertStaffTargetRepo(row: NewStaffTarget, db: DBClient = 
 export interface WorklogRndState {
   worklogId: string;
   rndClass: string | null;
+  rndSource: string | null;
   labelsSnapshot: string | null;
 }
 
@@ -414,7 +416,7 @@ export async function getWorklogRndStatesRepo(
     for (const batch of chunk(worklogIds, INSERT_CHUNK_SIZE)) {
       const rows = await db
         .selectFrom("worklogFact")
-        .select(["worklogId", "rndClass", "labelsSnapshot"])
+        .select(["worklogId", "rndClass", "rndSource", "labelsSnapshot"])
         .where("worklogId", "in", batch)
         .execute();
 
