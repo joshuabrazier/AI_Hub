@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { buildOutstanding, classifyIssue, isDoneStatus, type OutstandingIssueInput } from "./outstanding";
+import {
+  buildOutstanding,
+  classifyIssue,
+  isDoneStatus,
+  scopeIssues,
+  type OutstandingIssueInput,
+} from "./outstanding";
 
 const HOUR = 3600;
 
@@ -258,5 +264,93 @@ describe("isDoneStatus", () => {
     expect(isDoneStatus("To Do")).toBe(false);
     expect(isDoneStatus(null)).toBe(false);
     expect(isDoneStatus(undefined)).toBe(false);
+  });
+});
+
+// -------------------------------------------------------------------
+// Scoping, for the overview screen's client and project filters.
+// -------------------------------------------------------------------
+describe("scopeIssues", () => {
+  const all = [
+    issue({ issueKey: "TSSS-88", status: "To Do", currentEstimateSeconds: 97.5 * HOUR }),
+    issue({ issueKey: "TSSS-95", parentKey: "TSSS-88", status: "To Do" }),
+    issue({ issueKey: "TSSS-97", parentKey: "TSSS-88", status: "To Do" }),
+    issue({ issueKey: "TSSS-9", status: "To Do", currentEstimateSeconds: 1 * HOUR }),
+    issue({ issueKey: "RDP-1", status: "To Do", currentEstimateSeconds: 900 * HOUR }),
+  ];
+
+  it("narrows to one client", () => {
+    expect(scopeIssues(all, { clientKey: "TSSS" }).map((i) => i.issueKey)).not.toContain("RDP-1");
+    expect(scopeIssues(all, { clientKey: "TSSS" })).toHaveLength(4);
+  });
+
+  it("takes the WHOLE subtree for a project, not just the one issue", () => {
+    // The property that makes it safe to hand the result to buildOutstanding.
+    // A parent arriving without its children would look like a leaf and be
+    // counted as one, and children arriving without their parent would start
+    // inheriting estimates nobody meant them to have.
+    expect(scopeIssues(all, { projectKey: "TSSS-88" }).map((i) => i.issueKey).sort()).toEqual([
+      "TSSS-88",
+      "TSSS-95",
+      "TSSS-97",
+    ]);
+  });
+
+  it("gives the same figures scoped as it does in the full set", () => {
+    // The reason the subtree rule exists. If scoping changed the answer, the
+    // overview and the outstanding page would disagree about the same project.
+    const full = buildOutstanding(all).projects.find((p) => p.projectKey === "TSSS");
+    const scoped = buildOutstanding(scopeIssues(all, { projectKey: "TSSS-88" })).projects[0];
+
+    expect(scoped.items[0].remainingSeconds).toBe(
+      full?.items.find((i) => i.issueKey === "TSSS-88")?.remainingSeconds,
+    );
+  });
+
+  it("reaches deeper than one generation", () => {
+    const deep = [
+      issue({ issueKey: "A-1", status: "To Do" }),
+      issue({ issueKey: "A-2", parentKey: "A-1", status: "To Do" }),
+      issue({ issueKey: "A-3", parentKey: "A-2", status: "To Do" }),
+    ];
+
+    expect(scopeIssues(deep, { projectKey: "A-1" })).toHaveLength(3);
+  });
+
+  it("treats 'all' and null as no narrowing", () => {
+    // What the dropdowns actually send. Matching it literally would filter to
+    // a client key nobody has and empty every screen.
+    expect(scopeIssues(all, { clientKey: "all", projectKey: "all" })).toHaveLength(all.length);
+    expect(scopeIssues(all, {})).toHaveLength(all.length);
+  });
+
+  it("intersects a client and a project", () => {
+    expect(scopeIssues(all, { clientKey: "TSSS", projectKey: "TSSS-88" })).toHaveLength(3);
+    // A project belonging to another client selects nothing, rather than
+    // quietly ignoring one half of the filter.
+    expect(scopeIssues(all, { clientKey: "RDP", projectKey: "TSSS-88" })).toHaveLength(0);
+  });
+});
+
+describe("buildOutstanding - what a covering line is holding", () => {
+  it("counts the OPEN items a covering estimate stands in for", () => {
+    // The badge says a line covers items beneath it. Without the count that
+    // is a claim the reader has to open Jira to size.
+    const summary = buildOutstanding([
+      issue({ issueKey: "TSSS-88", status: "To Do", currentEstimateSeconds: 97.5 * HOUR }),
+      issue({ issueKey: "TSSS-89", parentKey: "TSSS-88", status: "In Progress" }),
+      issue({ issueKey: "TSSS-95", parentKey: "TSSS-88", status: "To Do" }),
+      issue({ issueKey: "TSSS-90", parentKey: "TSSS-88", status: "Done" }),
+    ]);
+
+    // Two open, not three. A finished child is not work the figure is still
+    // holding, so counting it would overstate what is left to do.
+    expect(summary.projects[0].items[0].coversOpenCount).toBe(2);
+  });
+
+  it("is zero for a line that covers nothing", () => {
+    const summary = buildOutstanding([issue({ issueKey: "A-1", status: "To Do", currentEstimateSeconds: HOUR })]);
+
+    expect(summary.projects[0].items[0]).toMatchObject({ coversChildren: false, coversOpenCount: 0 });
   });
 });

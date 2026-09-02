@@ -97,12 +97,15 @@ function ProjectCard({ project }: { project: ProjectOutstanding }) {
                     <TableCell className="max-w-[28rem]">
                       <span className="text-xs text-muted-foreground">{item.issueKey}</span>{" "}
                       <span className="align-middle">{item.summary}</span>
-                      {item.coversChildren && (
+                      {item.coversChildren && item.coversOpenCount > 0 && (
                         // A coarser figure than the rest of the column: one
                         // estimate standing in for several items beneath it.
-                        // Saying so is what lets the reader check it.
+                        // The COUNT is what makes that checkable rather than
+                        // merely stated - without it the reader has to open
+                        // Jira to find out how much this one line is holding.
                         <Badge variant="outline" className="ml-2 align-middle text-[0.65rem] font-normal">
-                          covers items beneath it
+                          covers {item.coversOpenCount} open{" "}
+                          {item.coversOpenCount === 1 ? "item" : "items"} beneath it
                         </Badge>
                       )}
                     </TableCell>

@@ -80,6 +80,12 @@ export interface OutstandingItem {
   // covering several items - and a screen that cannot say which lines are
   // which cannot be checked by the person reading it.
   coversChildren: boolean;
+  // How many OPEN items sit beneath it. The badge that says a line covers
+  // children promises something the reader would otherwise have to open Jira
+  // to size: "covers 4 open items beneath it" is checkable, "covers items
+  // beneath it" is only a claim. Open ones only - a finished child is not
+  // work this figure is still holding.
+  coversOpenCount: number;
   // Logged already exceeds the estimate. Not an error and not netted off
   // anywhere - just surfaced, because "0h remaining" on an item 3h over is a
   // different conversation from one that came in exactly on the money.
@@ -234,13 +240,17 @@ export function buildOutstanding(
   // The seen-set is a cycle guard. Jira should never produce one; an infinite
   // loop rendering a page is a bad way to find out it did.
   const childLoggedByParent = new Map<string, number>();
+  const openDescendants = new Map<string, number>();
+
   for (const issue of issues) {
     const seen = new Set<string>([issue.issueKey]);
     let ancestorKey = issue.parentKey;
+    const issueIsOpen = !isDoneStatus(issue.status);
 
     while (ancestorKey != null && !seen.has(ancestorKey)) {
       seen.add(ancestorKey);
       childLoggedByParent.set(ancestorKey, (childLoggedByParent.get(ancestorKey) ?? 0) + issue.loggedSeconds);
+      if (issueIsOpen) openDescendants.set(ancestorKey, (openDescendants.get(ancestorKey) ?? 0) + 1);
       ancestorKey = byKey.get(ancestorKey)?.parentKey ?? null;
     }
   }
@@ -315,6 +325,7 @@ export function buildOutstanding(
       loggedSeconds: loggedAgainst,
       remainingSeconds,
       coversChildren,
+      coversOpenCount: openDescendants.get(issue.issueKey) ?? 0,
       isOverrun: loggedAgainst > estimateSeconds,
     });
 
@@ -351,4 +362,63 @@ export function buildOutstanding(
     unestimatedLoggedSeconds: ordered.reduce((total, project) => total + project.unestimatedLoggedSeconds, 0),
     estimateCoverage: openIssueCount > 0 ? estimatedIssueCount / openIssueCount : null,
   };
+}
+
+// -------------------------------------------------------------------
+// Narrow the issue set to what a filter selected.
+//
+// The overview screen shows outstanding effort beside the period figures once
+// a client or a project is chosen, and this is how that set is picked.
+//
+// A PROJECT SCOPE TAKES THE WHOLE SUBTREE, not just the one issue, and that
+// is what makes it safe to reuse buildOutstanding on the result. The roll-up
+// rule works by comparing an issue against its parent and siblings, so an
+// issue arriving without its family would be judged against a family that is
+// not there: a child whose siblings were filtered out would look like an only
+// child and start inheriting a roll-up nobody meant it to have.
+//
+// Taking the subtree means every issue in the scoped set still sits beside
+// the relatives the rule needs. A child selected on its own is deliberately
+// NOT supported for that reason - the filter offers parents.
+//
+// Scopes combine: a client and a project narrow to the intersection, which is
+// what the two dropdowns above the screen look like they do.
+// -------------------------------------------------------------------
+export function scopeIssues(
+  issues: OutstandingIssueInput[],
+  scope: { clientKey?: string | null; projectKey?: string | null },
+): OutstandingIssueInput[] {
+  const { clientKey, projectKey } = scope;
+
+  let scoped = issues;
+
+  // 'all' is what the dropdowns send for "no narrowing". Treated as absent
+  // rather than matched, or every screen would filter to a client key nobody
+  // has.
+  if (clientKey != null && clientKey !== "all") {
+    scoped = scoped.filter((issue) => issue.projectKey === clientKey);
+  }
+
+  if (projectKey != null && projectKey !== "all") {
+    const wanted = new Set<string>([projectKey]);
+
+    // Walk down until nothing new is added, so a deeper tree than today's two
+    // levels is included rather than silently cut off at the first generation.
+    // The set membership is the termination condition, so a parent cycle
+    // cannot spin here either.
+    let added = true;
+    while (added) {
+      added = false;
+      for (const issue of scoped) {
+        if (issue.parentKey != null && wanted.has(issue.parentKey) && !wanted.has(issue.issueKey)) {
+          wanted.add(issue.issueKey);
+          added = true;
+        }
+      }
+    }
+
+    scoped = scoped.filter((issue) => wanted.has(issue.issueKey));
+  }
+
+  return scoped;
 }

@@ -4,7 +4,7 @@ import { getIssuesWithLoggedTimeRepo, getJiraProjectsRepo } from "@/lib/data/rep
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
 import { handleError } from "@/lib/handle-errors";
 import { requireUserRole } from "@/lib/auth/session-auth-server";
-import { buildOutstanding, type OutstandingSummary } from "@/lib/timesheet/outstanding";
+import { buildOutstanding, scopeIssues, type OutstandingSummary } from "@/lib/timesheet/outstanding";
 
 // -------------------------------------------------------------------
 // Outstanding effort, across every project.
@@ -19,7 +19,15 @@ import { buildOutstanding, type OutstandingSummary } from "@/lib/timesheet/outst
 // and an estimate set in July and worked in September belongs to both months.
 // A period argument here would be a filter nobody could interpret.
 // -------------------------------------------------------------------
-export async function getOutstandingEffortService(): Promise<OutstandingSummary> {
+export interface OutstandingScope {
+  // A Jira project key, eg "TSSS". What the overview screen calls a client.
+  clientKey?: string | null;
+  // A parent issue key, eg "TSSS-88". What the overview screen calls a
+  // project. Its whole subtree comes with it - see scopeIssues.
+  projectKey?: string | null;
+}
+
+export async function getOutstandingEffortService(scope: OutstandingScope = {}): Promise<OutstandingSummary> {
   try {
     await requireUserRole([USER_ROLES.ADMIN]);
 
@@ -27,9 +35,10 @@ export async function getOutstandingEffortService(): Promise<OutstandingSummary>
 
     const projectNames = new Map(projects.map((project) => [project.projectKey, project.name]));
 
-    // The engine gets rows and nothing else - no queries, no model, no
-    // rate lookups. Everything it needs is already resolved.
-    return buildOutstanding(
+    // Scoped BEFORE the engine runs, on the same rows, so a filtered figure
+    // is the same figure the unfiltered page shows for that project rather
+    // than a second calculation that could drift from it.
+    const rows = scopeIssues(
       issues.map((issue) => ({
         issueKey: issue.issueKey,
         parentKey: issue.parentKey,
@@ -40,8 +49,12 @@ export async function getOutstandingEffortService(): Promise<OutstandingSummary>
         currentEstimateSeconds: issue.currentEstimateSeconds,
         loggedSeconds: issue.loggedSeconds,
       })),
-      projectNames,
+      scope,
     );
+
+    // The engine gets rows and nothing else - no queries, no model, no rate
+    // lookups. Everything it needs is already resolved.
+    return buildOutstanding(rows, projectNames);
   } catch (error) {
     throw handleError("getOutstandingEffortService", error);
   }
