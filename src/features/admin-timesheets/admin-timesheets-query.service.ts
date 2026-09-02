@@ -15,6 +15,7 @@ import {
 } from "./admin-timesheets.service";
 import { buildAnswerMeasures, describeScope } from "./admin-timesheets-answer";
 import { getForecastForScopeService } from "./admin-timesheets-forecast.service";
+import { getOutstandingEffortService } from "./admin-timesheets-outstanding.service";
 import { getRevenueForFactsService } from "./admin-timesheets-revenue.service";
 import { buildQueryPrompt, QUERY_SYSTEM_PROMPT } from "./admin-timesheets-query.prompt";
 import { ResolvedQuerySchema, type TimesheetQueryResultDTO } from "./admin-timesheets-query.types";
@@ -152,6 +153,7 @@ export async function askTimesheetQueryService(
         currentGranularity: data.filters.granularity,
         currentPeriodLabel: data.period.label,
         categories: data.categoryOptions,
+        clients: data.clientOptions,
         projects: data.projectOptions,
         people: data.personOptions,
       }),
@@ -193,6 +195,12 @@ export async function askTimesheetQueryService(
       "that category",
       rejected,
     );
+    const client = admitOption(
+      resolved.client,
+      new Set(data.clientOptions.map((option) => option.value)),
+      "that client",
+      rejected,
+    );
     const project = admitOption(
       resolved.project,
       new Set(data.projectOptions.map((option) => option.value)),
@@ -212,6 +220,7 @@ export async function askTimesheetQueryService(
     const billable = resolved.billable && resolved.billable !== "all" ? resolved.billable : undefined;
 
     if (category) params.set("category", category);
+    if (client) params.set("client", client);
     if (project) params.set("project", project);
     if (people.length > 0) params.set("person", people.join(","));
     if (billable) params.set("billable", billable);
@@ -241,14 +250,55 @@ export async function askTimesheetQueryService(
     // -----------------------------------------------------------------
     const measures = resolved.measures ?? [];
 
+    // -----------------------------------------------------------------
+    // A question about work outstanding gets sent to the screen that answers
+    // it, not to the entries list.
+    //
+    // Only when EVERY measure asked for is an outstanding one. A question
+    // wanting cost and work-left together belongs on a period screen, because
+    // that is where the cost half lives - and sending it to a page with no
+    // period on it would answer the smaller half of the question.
+    //
+    // The client comes from the project when the question named only the
+    // project, since a project belongs to exactly one client and the
+    // Outstanding page needs both to open on the right scope.
+    // -----------------------------------------------------------------
+    const outstandingMeasures = measures.filter((measure) =>
+      ["outstandingWork", "budgetLeft", "unsizedWork"].includes(measure),
+    );
+    const wantsOutstanding = outstandingMeasures.length > 0;
+    const onlyOutstanding = wantsOutstanding && outstandingMeasures.length === measures.length;
+
+    const projectOption = project ? data.projectOptions.find((option) => option.value === project) : undefined;
+    const outstandingClient = client ?? projectOption?.clientKey ?? null;
+
+    const outstandingHref = (() => {
+      const outstandingParams = new URLSearchParams();
+      if (outstandingClient) outstandingParams.set("client", outstandingClient);
+      if (project) outstandingParams.set("project", project);
+      const query = outstandingParams.toString();
+      return query
+        ? `${ROUTES.ADMIN_TIMESHEETS_OUTSTANDING}?${query}`
+        : ROUTES.ADMIN_TIMESHEETS_OUTSTANDING;
+    })();
+
+    const resolvedHref = onlyOutstanding ? outstandingHref : href;
+
     if (measures.length === 0) {
-      return { understood: true, href, interpretation: resolved.interpretation, rejected, answer: null };
+      return {
+        understood: true,
+        href: resolvedHref,
+        interpretation: resolved.interpretation,
+        rejected,
+        answer: null,
+      };
     }
 
     const scopedRequest: TimesheetRequest = {
       granularity,
       start,
       category,
+      client,
       project,
       person: people.length > 0 ? people.join(",") : undefined,
       billable,
@@ -266,6 +316,15 @@ export async function askTimesheetQueryService(
     );
 
     const dashboard = needsCapacity ? (await getStaffDashboardService(scopedRequest)).dashboard : null;
+
+    // Scoped by CLIENT and PROJECT only. Deliberately not by person or by
+    // period: an estimate is not owned by anybody, and work left to do is a
+    // fact about now. Passing the period filters in would have produced a
+    // figure that changed when the reader stepped a month, which is exactly
+    // the misreading the caveat on these measures exists to prevent.
+    const outstanding = wantsOutstanding
+      ? await getOutstandingEffortService({ clientKey: outstandingClient, projectKey: project })
+      : null;
 
     // Today comes from the app's own zone, never a clock in this file: a
     // forecast that disagreed with the dashboard about what day it is would
@@ -287,7 +346,7 @@ export async function askTimesheetQueryService(
 
     return {
       understood: true,
-      href,
+      href: resolvedHref,
       interpretation: resolved.interpretation,
       rejected,
       answer: {
@@ -296,12 +355,13 @@ export async function askTimesheetQueryService(
           periodLabel: scoped.period.label,
           peopleNames,
           category,
-          projectLabel: project
-            ? (data.projectOptions.find((option) => option.value === project)?.summary ?? project)
+          clientLabel: client
+            ? (data.clientOptions.find((option) => option.value === client)?.label ?? client)
             : undefined,
+          projectLabel: projectOption?.summary ?? project ?? undefined,
           billable,
         }),
-        measures: buildAnswerMeasures(measures, scoped, revenue, dashboard, forecast),
+        measures: buildAnswerMeasures(measures, scoped, revenue, dashboard, forecast, outstanding),
       },
     };
   } catch (error) {

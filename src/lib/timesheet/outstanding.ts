@@ -135,6 +135,45 @@ export interface OutstandingTotals {
   // Estimated work already finished, so a commitment can be shown whole
   // without implying all of it is still to come.
   completedEstimateSeconds: number;
+  // What that finished work actually took. Kept beside the estimate rather
+  // than folded into loggedSeconds, because "we estimated 20h and spent 26h"
+  // is the sentence that tells you whether to trust the rest of the page.
+  completedLoggedSeconds: number;
+  completedCount: number;
+
+  // -----------------------------------------------------------------
+  // BUDGET, which is a DIFFERENT QUESTION from work left and the one people
+  // usually mean when they say "how much have we got left on this".
+  //
+  //   remainingSeconds  what the open tasks are estimated at, less what has
+  //                     gone into them. "How much work is still to do."
+  //
+  //   budgetRemaining   everything committed, less everything spent. "How
+  //                     much time can we still put into this."
+  //
+  // They come apart the moment an estimate is wrong, which is always.
+  // Measured live on Phase 2: finished items were estimated at 51h and took
+  // 5.5h, so 39h of work remains but 84.5h of the 97.5h commitment is still
+  // unspent. Coming in under gives the time back to the project, and a page
+  // showing only the first figure looks like 45h went missing.
+  //
+  // Both are shown. Neither is the "real" one - they answer different
+  // questions, and which one matters depends on whether you are planning
+  // delivery or watching a budget.
+  // -----------------------------------------------------------------
+  committedSeconds: number;
+  // Everything logged in scope: estimated, finished and unestimated alike.
+  // loggedSeconds deliberately excludes unestimated work to keep the
+  // estimate columns clean; a budget cannot afford that distinction, because
+  // time spent on an unestimated task is spent all the same.
+  spentSeconds: number;
+  // max(0, committed - spent). Floored for the same reason an item's is: an
+  // overrun is a different fact from budget remaining, and a negative here
+  // would let one overrunning project cancel out another's real headroom.
+  budgetRemainingSeconds: number;
+  // Spent more than was committed. Surfaced rather than hidden behind the
+  // floor above.
+  overBudgetSeconds: number;
   openCount: number;
   // Open items carrying an estimate of their own.
   estimatedCount: number;
@@ -161,6 +200,30 @@ export interface OutstandingTotals {
 // A PROJECT: one top-level piece of work, keyed by its own issue - TSSS-88
 // "Phase 2 - Xero Integration". What the business writes an invoice against.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// FINISHED WORK, and what it actually took.
+//
+// The other half of the same question. "39 h left" is only worth as much as
+// the estimates behind it, and the way to judge those is to look at what the
+// finished items were estimated at against what they actually cost.
+//
+// varianceSeconds is actual minus estimate, so POSITIVE means it took longer
+// than planned. Signed rather than absolute, because a team that consistently
+// runs over and a team that consistently runs under have opposite problems
+// and an absolute figure hides which one you have.
+// -------------------------------------------------------------------
+export interface CompletedItem {
+  issueKey: string;
+  summary: string;
+  issueType: string | null;
+  status: string | null;
+  // null when it was finished without ever being estimated. There is nothing
+  // to compare it against, and it is shown that way rather than as zero.
+  estimateSeconds: number | null;
+  loggedSeconds: number;
+  varianceSeconds: number | null;
+}
+
 export interface ProjectOutstanding extends OutstandingTotals {
   issueKey: string;
   summary: string;
@@ -169,6 +232,7 @@ export interface ProjectOutstanding extends OutstandingTotals {
   items: OutstandingItem[];
   unestimated: UnestimatedItem[];
   covered: CoveredItem[];
+  completed: CompletedItem[];
 }
 
 // -------------------------------------------------------------------
@@ -243,12 +307,45 @@ export function classifyIssue(
 
 // Totals that add nothing yet. Written as a factory rather than a shared
 // constant so two groupings can never end up mutating the same object.
+// Record a finished item, with its estimate where it had one of its own.
+// loggedOverride carries the subtree total for a parent that spoke for its
+// children, so a finished project is compared on everything spent beneath it.
+function recordCompleted(
+  project: ProjectOutstanding,
+  issue: OutstandingIssueInput,
+  estimateSeconds: number | null,
+  loggedOverride?: number,
+): void {
+  const loggedSeconds = loggedOverride ?? issue.loggedSeconds;
+
+  project.completed.push({
+    issueKey: issue.issueKey,
+    summary: issue.summary,
+    issueType: issue.issueType ?? null,
+    status: issue.status ?? null,
+    estimateSeconds,
+    loggedSeconds,
+    // Positive means it took longer than planned. Null when there was no
+    // estimate, because there is nothing to be over or under.
+    varianceSeconds: estimateSeconds === null ? null : loggedSeconds - estimateSeconds,
+  });
+
+  project.completedLoggedSeconds += loggedSeconds;
+  project.completedCount += 1;
+}
+
 function emptyTotals(): OutstandingTotals {
   return {
     estimateSeconds: 0,
     loggedSeconds: 0,
     remainingSeconds: 0,
     completedEstimateSeconds: 0,
+    completedLoggedSeconds: 0,
+    completedCount: 0,
+    committedSeconds: 0,
+    spentSeconds: 0,
+    budgetRemainingSeconds: 0,
+    overBudgetSeconds: 0,
     openCount: 0,
     estimatedCount: 0,
     coveredCount: 0,
@@ -262,7 +359,13 @@ function addInto(target: OutstandingTotals, source: OutstandingTotals): void {
   target.estimateSeconds += source.estimateSeconds;
   target.loggedSeconds += source.loggedSeconds;
   target.remainingSeconds += source.remainingSeconds;
+  // committedSeconds, spentSeconds, budgetRemainingSeconds and
+  // overBudgetSeconds are deliberately NOT summed here. They are derived, and
+  // finaliseBudget recomputes each level from that levels own totals - see
+  // the note there about why adding floored figures hides an overrun.
   target.completedEstimateSeconds += source.completedEstimateSeconds;
+  target.completedLoggedSeconds += source.completedLoggedSeconds;
+  target.completedCount += source.completedCount;
   target.openCount += source.openCount;
   target.estimatedCount += source.estimatedCount;
   target.coveredCount += source.coveredCount;
@@ -277,6 +380,34 @@ function addInto(target: OutstandingTotals, source: OutstandingTotals): void {
 function finaliseCoverage(totals: OutstandingTotals): void {
   const sized = totals.estimatedCount + totals.coveredCount;
   totals.estimateCoverage = totals.openCount > 0 ? sized / totals.openCount : null;
+}
+
+// -------------------------------------------------------------------
+// The budget figures, derived at each level from THAT LEVEL'S OWN totals.
+//
+// Not summed up from the level below, which would be the obvious shortcut and
+// would be wrong: budgetRemaining is floored at zero, so adding floored
+// figures hides an overrunning project behind a healthy one's headroom. Every
+// level subtracts its own spend from its own commitment, once.
+// -------------------------------------------------------------------
+function finaliseBudget(totals: OutstandingTotals): void {
+  totals.committedSeconds = totals.estimateSeconds + totals.completedEstimateSeconds;
+  totals.spentSeconds = totals.loggedSeconds + totals.unestimatedLoggedSeconds;
+
+  const difference = totals.committedSeconds - totals.spentSeconds;
+
+  totals.budgetRemainingSeconds = Math.max(0, difference);
+
+  // YOU CANNOT BE OVER A BUDGET NOBODY SET. With nothing committed the
+  // subtraction makes every hour ever logged look like an overrun: Internal
+  // Operations has no estimates at all and reported "13.5 h over" beside a
+  // budget of "unknown", which is two contradictory statements about the same
+  // project.
+  //
+  // The view guarded against showing it; the AI paths read these fields
+  // directly and would have said it out loud. So the guard belongs here,
+  // where every caller gets it.
+  totals.overBudgetSeconds = totals.committedSeconds > 0 ? Math.max(0, -difference) : 0;
 }
 
 export function buildOutstanding(
@@ -367,6 +498,7 @@ export function buildOutstanding(
         items: [],
         unestimated: [],
         covered: [],
+        completed: [],
       };
       projects.set(rootKey, project);
       clientFor(issue.projectKey).projects.push(project);
@@ -397,20 +529,27 @@ export function buildOutstanding(
     }
 
     if (role === "covered-by-parent") {
-      // Its figure is already inside the covering line's estimate, so nothing
-      // is added. It is listed so the reader can see what that line holds.
-      if (!done) {
-        project.covered.push({
-          issueKey: issue.issueKey,
-          summary: issue.summary,
-          issueType: issue.issueType ?? null,
-          status: issue.status ?? null,
-          loggedSeconds: issue.loggedSeconds,
-          coveredBy: issue.parentKey as string,
-        });
-        project.coveredCount += 1;
-        project.openCount += 1;
+      if (done) {
+        // Finished, and sized by a line above it. There is no estimate of its
+        // own to compare against, so it is recorded with a null one rather
+        // than a zero somebody would read as "estimated at nothing".
+        recordCompleted(project, issue, null);
+        continue;
       }
+
+      // Open, and its figure is already inside the covering line's estimate,
+      // so nothing is added to the totals. It is listed so the reader can see
+      // what that line is holding.
+      project.covered.push({
+        issueKey: issue.issueKey,
+        summary: issue.summary,
+        issueType: issue.issueType ?? null,
+        status: issue.status ?? null,
+        loggedSeconds: issue.loggedSeconds,
+        coveredBy: issue.parentKey as string,
+      });
+      project.coveredCount += 1;
+      project.openCount += 1;
       continue;
     }
 
@@ -419,6 +558,7 @@ export function buildOutstanding(
         // Finished, never estimated. Its hours are still real spend and belong
         // in the logged total; there is simply nothing outstanding to say.
         project.loggedSeconds += issue.loggedSeconds;
+        recordCompleted(project, issue, null);
         continue;
       }
 
@@ -448,6 +588,7 @@ export function buildOutstanding(
     if (done) {
       project.completedEstimateSeconds += estimateSeconds;
       project.loggedSeconds += loggedAgainst;
+      recordCompleted(project, issue, estimateSeconds, loggedAgainst);
       continue;
     }
 
@@ -476,18 +617,28 @@ export function buildOutstanding(
   const summary: OutstandingSummary = { ...emptyTotals(), clients: [] };
 
   for (const client of clients.values()) {
-    // A project that turned out to hold nothing open is dropped rather than
-    // shown as an empty row: it is finished work, and the screen is about what
-    // is left.
+    // A project holding nothing at all is dropped. One holding only FINISHED
+    // work is kept, because what it was estimated at against what it took is
+    // the evidence for every "work left" figure on the page - and dropping it
+    // here would take that evidence with it.
+    //
+    // WHICH OF THESE TO SHOW IS THE CALLER'S DECISION, not this function's.
+    // The client list is headed "with work open" and filters on openCount
+    // itself; a reader who has drilled into a client wants the finished
+    // projects too.
     client.projects = client.projects
-      .filter((project) => project.openCount > 0)
+      .filter((project) => project.openCount > 0 || project.completedCount > 0)
       .map((project) => {
         finaliseCoverage(project);
+        finaliseBudget(project);
         return {
           ...project,
           // Most remaining first. The screen exists to show what is left, so
           // the biggest piece of it belongs at the top.
           items: [...project.items].sort((a, b) => b.remainingSeconds - a.remainingSeconds),
+          // Biggest actual first. A finished list is read to find where the
+          // time went, and the largest number is where it went.
+          completed: [...project.completed].sort((a, b) => b.loggedSeconds - a.loggedSeconds),
           unestimated: [...project.unestimated].sort((a, b) => b.loggedSeconds - a.loggedSeconds),
           covered: [...project.covered].sort((a, b) => b.loggedSeconds - a.loggedSeconds),
         };
@@ -496,6 +647,7 @@ export function buildOutstanding(
 
     for (const project of client.projects) addInto(client, project);
     finaliseCoverage(client);
+    finaliseBudget(client);
   }
 
   summary.clients = [...clients.values()]
@@ -504,6 +656,7 @@ export function buildOutstanding(
 
   for (const client of summary.clients) addInto(summary, client);
   finaliseCoverage(summary);
+  finaliseBudget(summary);
 
   return summary;
 }

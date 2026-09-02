@@ -125,8 +125,25 @@ function ProjectPanel({ project }: { project: ProjectOutstanding }) {
           <p className="text-sm text-muted-foreground">
             {project.estimatedCount > 0 ? (
               <>
-                <span className="font-semibold text-foreground">{hours(project.remainingSeconds)}</span> left of{" "}
-                {hours(committed)} committed
+                <span className="font-semibold text-foreground">{hours(project.remainingSeconds)}</span> of work left
+                {project.committedSeconds > 0 && (
+                  <>
+                    {" "}
+                    &middot;{" "}
+                    {project.overBudgetSeconds > 0 ? (
+                      <span className="text-destructive">
+                        {hours(project.overBudgetSeconds)} over the {hours(committed)} committed
+                      </span>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-foreground">
+                          {hours(project.budgetRemainingSeconds)}
+                        </span>{" "}
+                        of budget left, of {hours(committed)}
+                      </>
+                    )}
+                  </>
+                )}
               </>
             ) : (
               // Never "0 h left". Nothing here is estimated, so the honest
@@ -208,6 +225,66 @@ function ProjectPanel({ project }: { project: ProjectOutstanding }) {
           </div>
         )}
 
+        {project.completed.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">
+              Finished
+              <span className="ml-2 font-normal text-muted-foreground">
+                {project.completedCount} {project.completedCount === 1 ? "item" : "items"},{" "}
+                {hours(project.completedLoggedSeconds)} actually spent
+                {project.completedEstimateSeconds > 0 && <> against {hours(project.completedEstimateSeconds)} estimated</>}
+              </span>
+            </p>
+
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead className="text-right">Estimate</TableHead>
+                    <TableHead className="text-right">Actual</TableHead>
+                    <TableHead className="text-right">Variance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {project.completed.map((item) => (
+                    <TableRow key={item.issueKey}>
+                      <IssueCell issueKey={item.issueKey} summary={item.summary} />
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {/* Never 0 h. An item finished without an estimate has
+                            nothing to compare against, and a zero would read as
+                            "we thought it was free". */}
+                        {item.estimateSeconds == null ? "not estimated" : hours(item.estimateSeconds)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{hours(item.loggedSeconds)}</TableCell>
+                      <TableCell
+                        className={cn(
+                          "text-right tabular-nums",
+                          item.varianceSeconds != null && item.varianceSeconds > 0 && "text-destructive",
+                        )}
+                      >
+                        {item.varianceSeconds == null ? (
+                          "-"
+                        ) : item.varianceSeconds === 0 ? (
+                          "on estimate"
+                        ) : (
+                          // Signed, and worded rather than left as a bare
+                          // number: "+6 h" is ambiguous about which direction
+                          // is bad, and consistently over and consistently
+                          // under are opposite problems.
+                          <>
+                            {hours(Math.abs(item.varianceSeconds))} {item.varianceSeconds > 0 ? "over" : "under"}
+                          </>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+
         {project.unestimated.length > 0 && (
           <div className="space-y-2">
             <p className="text-sm font-medium">
@@ -234,6 +311,13 @@ function ProjectPanel({ project }: { project: ProjectOutstanding }) {
 // answers is "who has work left" rather than "here is everything at once".
 // -------------------------------------------------------------------
 function ClientSummaryCard({ clients }: { clients: ClientOutstanding[] }) {
+  // The engine returns finished clients too, because their estimate-versus-
+  // actual history is the evidence behind every figure on this page. This
+  // table is headed "with work open" though, so it filters here rather than
+  // quietly widening what that heading means. Pick one from the dropdown to
+  // see a finished client's history.
+  const withOpenWork = clients.filter((client) => client.openCount > 0);
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -248,11 +332,13 @@ function ClientSummaryCard({ clients }: { clients: ClientOutstanding[] }) {
                 <TableHead className="text-right">Projects</TableHead>
                 <TableHead className="text-right">Open items</TableHead>
                 <TableHead className="text-right">Sized</TableHead>
-                <TableHead className="text-right">Left</TableHead>
+                <TableHead className="text-right">Finished</TableHead>
+                <TableHead className="text-right">Work left</TableHead>
+                <TableHead className="text-right">Budget left</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {clients.map((client) => (
+              {withOpenWork.map((client) => (
                 <TableRow key={client.clientKey}>
                   <TableCell>
                     {client.clientName}
@@ -267,6 +353,9 @@ function ClientSummaryCard({ clients }: { clients: ClientOutstanding[] }) {
                         the work is actually known. */}
                     {client.estimatedCount + client.coveredCount} of {client.openCount}
                   </TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">
+                    {client.completedCount > 0 ? hours(client.completedLoggedSeconds) : "-"}
+                  </TableCell>
                   <TableCell className="text-right font-medium tabular-nums">
                     {client.estimatedCount > 0 ? (
                       hours(client.remainingSeconds)
@@ -274,6 +363,15 @@ function ClientSummaryCard({ clients }: { clients: ClientOutstanding[] }) {
                       // The same rule as everywhere else on this page: nothing
                       // estimated means unknown, never zero.
                       <span className="text-amber-700 dark:text-amber-500">Unknown</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">
+                    {client.committedSeconds === 0 ? (
+                      <span className="text-amber-700 dark:text-amber-500">Unknown</span>
+                    ) : client.overBudgetSeconds > 0 ? (
+                      <span className="text-destructive">{hours(client.overBudgetSeconds)} over</span>
+                    ) : (
+                      hours(client.budgetRemainingSeconds)
                     )}
                   </TableCell>
                 </TableRow>
@@ -290,12 +388,38 @@ function Tiles({ summary }: { summary: OutstandingSummary }) {
   const coveragePercent = summary.estimateCoverage == null ? null : Math.round(summary.estimateCoverage * 100);
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {/* -------------------------------------------------------------
+          THE TWO "LEFT" FIGURES, side by side, because they are two
+          answers to the same question and each is misleading alone.
+
+          Work left is what the open tasks are estimated at. Budget left
+          is everything committed less everything spent - so coming in
+          under on finished work gives that time back to the project.
+
+          On Phase 2 they read 39 h and 84.5 h, because its finished
+          items were estimated at 51 h and took 5.5 h. Showing only the
+          first makes 45 h look like it went missing; showing only the
+          second overstates how much work is actually left to do.
+          ------------------------------------------------------------- */}
       <StatTile
-        label="Estimated work left"
+        label="Work left to do"
         hours={secondsToHours(summary.remainingSeconds)}
-        hint={`Across ${summary.estimatedCount} estimated open ${summary.estimatedCount === 1 ? "item" : "items"}`}
+        hint={`What the ${summary.estimatedCount} estimated open ${summary.estimatedCount === 1 ? "item is" : "items are"} estimated at`}
         index={0}
+      />
+      <StatTile
+        label="Budget left"
+        hours={secondsToHours(summary.budgetRemainingSeconds)}
+        hint={
+          summary.committedSeconds === 0
+            ? "Nothing committed to measure against"
+            : summary.overBudgetSeconds > 0
+              ? `${hours(summary.overBudgetSeconds)} over the ${hours(summary.committedSeconds)} committed`
+              : `Of ${hours(summary.committedSeconds)} committed, ${hours(summary.spentSeconds)} spent`
+        }
+        emphasis={summary.overBudgetSeconds > 0 ? "alert" : "normal"}
+        index={1}
       />
       <StatTile
         label="Not estimated"
@@ -307,7 +431,7 @@ function Tiles({ summary }: { summary: OutstandingSummary }) {
             : "Open items with no estimate"
         }
         emphasis={summary.unestimatedCount > 0 ? "alert" : "normal"}
-        index={1}
+        index={2}
       />
       <StatTile
         label="Estimate coverage"
@@ -319,14 +443,18 @@ function Tiles({ summary }: { summary: OutstandingSummary }) {
             : `${summary.estimatedCount + summary.coveredCount} of ${summary.openCount} open items are sized`
         }
         emphasis={coveragePercent != null && coveragePercent < 50 ? "alert" : "normal"}
-        index={2}
+        index={3}
       />
       <StatTile
-        label="Logged against it"
-        hours={secondsToHours(summary.loggedSeconds)}
-        hint="All time"
+        label="Finished"
+        hours={secondsToHours(summary.completedLoggedSeconds)}
+        hint={
+          summary.completedEstimateSeconds > 0
+            ? `${summary.completedCount} ${summary.completedCount === 1 ? "item" : "items"}, estimated at ${hours(summary.completedEstimateSeconds)}`
+            : `${summary.completedCount} ${summary.completedCount === 1 ? "item" : "items"}, none estimated`
+        }
         emphasis="muted"
-        index={3}
+        index={4}
       />
     </div>
   );

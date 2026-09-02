@@ -30,6 +30,11 @@ import type { OutstandingOption } from "./admin-timesheets-outstanding.service";
 const ALL = "all";
 
 function hoursLabel(option: OutstandingOption): string {
+  // Selectable, but say so. Its finished work is worth looking at and nothing
+  // is left to do on it, and a reader who picks it expecting hours remaining
+  // should learn that before the click rather than after.
+  if (option.isFinished) return "finished";
+
   if (!option.hasEstimates) {
     // Not "0 h". Nothing under it is estimated, so the honest label is that
     // the figure is unknown - and saying so here means the dead end is

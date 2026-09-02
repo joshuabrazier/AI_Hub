@@ -184,8 +184,22 @@ describe("buildOutstanding - unestimated work", () => {
   it("does not list finished unestimated work as outstanding", () => {
     const summary = buildOutstanding([issue({ issueKey: "A-1", status: "Done", loggedSeconds: 4 * HOUR })]);
 
-    expect(summary.clients).toHaveLength(0);
+    // Nothing outstanding, and nothing waiting to be estimated.
     expect(summary.unestimatedCount).toBe(0);
+    expect(summary.openCount).toBe(0);
+    expect(summary.remainingSeconds).toBe(0);
+
+    // It IS still reported, as finished work with the hours it took. This
+    // used to be dropped entirely, which took the estimate-versus-actual
+    // evidence with it - and that evidence is what every "work left" figure
+    // on the page rests on.
+    expect(summary.completedCount).toBe(1);
+    expect(summary.completedLoggedSeconds).toBe(4 * HOUR);
+  });
+
+  it("drops something that is neither open nor finished", () => {
+    // Nothing at all to say about it, so it is not a row.
+    expect(buildOutstanding([]).clients).toHaveLength(0);
   });
 });
 
@@ -397,5 +411,186 @@ describe("buildOutstanding - coverage counts covered work as sized", () => {
 
     // Two sized (the carrier and the one it covers), two not.
     expect(summary.estimateCoverage).toBe(0.5);
+  });
+});
+
+// -------------------------------------------------------------------
+// FINISHED WORK, and what it actually took.
+//
+// The other half of the same question: "39 h left" is worth exactly as much
+// as the estimates behind it, and the way to judge those is what the finished
+// items were estimated at against what they cost.
+// -------------------------------------------------------------------
+describe("buildOutstanding - completed work", () => {
+  const completedOf = (s: OutstandingSummary) => s.clients.flatMap((c) => c.projects.flatMap((p) => p.completed));
+
+  it("records what a finished item was estimated at and what it took", () => {
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", status: "Done", currentEstimateSeconds: 20 * HOUR, loggedSeconds: 26 * HOUR }),
+    ]);
+
+    expect(completedOf(summary)[0]).toMatchObject({
+      estimateSeconds: 20 * HOUR,
+      loggedSeconds: 26 * HOUR,
+      // Positive means it took LONGER. Signed on purpose: consistently over
+      // and consistently under are opposite problems, and an absolute figure
+      // hides which one you have.
+      varianceSeconds: 6 * HOUR,
+    });
+  });
+
+  it("reports a variance the other way as negative", () => {
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", status: "Done", currentEstimateSeconds: 10 * HOUR, loggedSeconds: 4 * HOUR }),
+    ]);
+
+    expect(completedOf(summary)[0].varianceSeconds).toBe(-6 * HOUR);
+  });
+
+  it("gives a null estimate, never zero, for work finished without one", () => {
+    // A zero would read as "we thought it was free" and would make the
+    // variance look like a total overrun.
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", status: "To Do", currentEstimateSeconds: HOUR }),
+      issue({ issueKey: "A-2", status: "Done", loggedSeconds: 3 * HOUR }),
+    ]);
+
+    expect(completedOf(summary)[0]).toMatchObject({ estimateSeconds: null, varianceSeconds: null });
+  });
+
+  it("totals what finished work cost separately from what it was estimated at", () => {
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", status: "Done", currentEstimateSeconds: 10 * HOUR, loggedSeconds: 12 * HOUR }),
+      issue({ issueKey: "A-2", status: "Done", currentEstimateSeconds: 5 * HOUR, loggedSeconds: 4 * HOUR }),
+    ]);
+
+    expect(summary.completedEstimateSeconds).toBe(15 * HOUR);
+    expect(summary.completedLoggedSeconds).toBe(16 * HOUR);
+    expect(summary.completedCount).toBe(2);
+  });
+
+  it("lists a finished item that a parent estimate covered", () => {
+    // It has no estimate of its own to be judged against, but the hours it
+    // took are real and are exactly what the covering estimate was spent on.
+    const summary = buildOutstanding([
+      issue({ issueKey: "TSSS-88", status: "To Do", currentEstimateSeconds: 97.5 * HOUR }),
+      issue({ issueKey: "TSSS-90", parentKey: "TSSS-88", status: "Done", loggedSeconds: 5 * HOUR }),
+      issue({ issueKey: "TSSS-95", parentKey: "TSSS-88", status: "To Do" }),
+    ]);
+
+    expect(completedOf(summary)).toHaveLength(1);
+    expect(completedOf(summary)[0]).toMatchObject({ issueKey: "TSSS-90", estimateSeconds: null });
+    // And it does not become outstanding work as well.
+    expect(summary.openCount).toBe(2);
+  });
+
+  it("does not record a rolled-up parent as a finished item of its own", () => {
+    // Its estimate is its children added up, so recording it would count the
+    // same finished work twice.
+    const summary = buildOutstanding([
+      issue({ issueKey: "P-1", status: "Done", currentEstimateSeconds: 10 * HOUR, loggedSeconds: 1 * HOUR }),
+      issue({ issueKey: "P-2", parentKey: "P-1", status: "Done", currentEstimateSeconds: 10 * HOUR, loggedSeconds: 9 * HOUR }),
+    ]);
+
+    expect(completedOf(summary).map((item) => item.issueKey)).toEqual(["P-2"]);
+    expect(summary.completedEstimateSeconds).toBe(10 * HOUR);
+  });
+});
+
+// -------------------------------------------------------------------
+// BUDGET LEFT versus WORK LEFT.
+//
+// The two come apart the moment an estimate is wrong, which is always. Coming
+// in UNDER on finished work gives that time back to the project: a task
+// estimated at 10h that took 2h leaves 8h of the commitment still available,
+// even though there is no work remaining on that task at all.
+//
+// Measured live on Phase 2: 39h of work remained while 84.5h of the 97.5h
+// commitment was unspent, because the finished items were estimated at 51h
+// and took 5.5h. A page showing only the first figure looks like 45h went
+// missing.
+// -------------------------------------------------------------------
+describe("buildOutstanding - budget left", () => {
+  it("gives back the time saved on work that came in under", () => {
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", status: "Done", currentEstimateSeconds: 10 * HOUR, loggedSeconds: 2 * HOUR }),
+      issue({ issueKey: "A-2", status: "To Do", currentEstimateSeconds: 5 * HOUR }),
+    ]);
+
+    // Work left is the open task alone.
+    expect(summary.remainingSeconds).toBe(5 * HOUR);
+    // Budget left is everything committed less everything spent, so the 8h
+    // saved on A-1 is still there to use.
+    expect(summary.committedSeconds).toBe(15 * HOUR);
+    expect(summary.spentSeconds).toBe(2 * HOUR);
+    expect(summary.budgetRemainingSeconds).toBe(13 * HOUR);
+  });
+
+  it("counts time spent on UNESTIMATED work against the budget", () => {
+    // loggedSeconds deliberately excludes it to keep the estimate columns
+    // clean. A budget cannot afford that distinction: an hour spent on an
+    // unsized task is an hour of the commitment gone.
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", status: "To Do", currentEstimateSeconds: 10 * HOUR, loggedSeconds: 1 * HOUR }),
+      issue({ issueKey: "A-2", status: "To Do", loggedSeconds: 3 * HOUR }),
+    ]);
+
+    expect(summary.spentSeconds).toBe(4 * HOUR);
+    expect(summary.budgetRemainingSeconds).toBe(6 * HOUR);
+  });
+
+  it("names an overrun rather than hiding it behind the floor", () => {
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", status: "Done", currentEstimateSeconds: 5 * HOUR, loggedSeconds: 12 * HOUR }),
+    ]);
+
+    expect(summary.budgetRemainingSeconds).toBe(0);
+    expect(summary.overBudgetSeconds).toBe(7 * HOUR);
+  });
+
+  it("does not let one project's headroom hide another's overrun", () => {
+    // The reason budget is recomputed at each level rather than summed up
+    // from below: adding floored figures would report 10h of headroom and no
+    // overrun anywhere.
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", projectKey: "A", status: "Done", currentEstimateSeconds: 10 * HOUR }),
+      issue({ issueKey: "B-1", projectKey: "A", status: "Done", currentEstimateSeconds: 1 * HOUR, loggedSeconds: 9 * HOUR }),
+    ]);
+
+    const projects = summary.clients[0].projects;
+    expect(projects.find((p) => p.issueKey === "A-1")?.budgetRemainingSeconds).toBe(10 * HOUR);
+    expect(projects.find((p) => p.issueKey === "B-1")?.overBudgetSeconds).toBe(8 * HOUR);
+
+    // And the client, computed from its own totals, nets to 2h left.
+    expect(summary.clients[0].budgetRemainingSeconds).toBe(2 * HOUR);
+  });
+
+  it("has no budget to report when nothing is estimated", () => {
+    // committed is 0, so "0h left" would be true arithmetic and a false
+    // statement. Callers check committedSeconds before showing it.
+    const summary = buildOutstanding([issue({ issueKey: "A-1", status: "To Do", loggedSeconds: 4 * HOUR })]);
+
+    expect(summary.committedSeconds).toBe(0);
+    expect(summary.spentSeconds).toBe(4 * HOUR);
+  });
+
+  it("is NOT over budget when there is no budget", () => {
+    // Caught on live data: Internal Operations has no estimates at all and
+    // reported "13.5 h over" beside a budget of "unknown" - two contradictory
+    // statements about one project. The page guarded against showing it; the
+    // AI reads these fields directly and would have said it out loud.
+    const summary = buildOutstanding([issue({ issueKey: "A-1", status: "To Do", loggedSeconds: 4 * HOUR })]);
+
+    expect(summary.overBudgetSeconds).toBe(0);
+  });
+
+  it("still reports an overrun once something IS committed", () => {
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", status: "To Do", currentEstimateSeconds: 1 * HOUR, loggedSeconds: 3 * HOUR }),
+      issue({ issueKey: "A-2", status: "To Do", loggedSeconds: 2 * HOUR }),
+    ]);
+
+    // 1h committed, 5h spent across both.
+    expect(summary.overBudgetSeconds).toBe(4 * HOUR);
   });
 });

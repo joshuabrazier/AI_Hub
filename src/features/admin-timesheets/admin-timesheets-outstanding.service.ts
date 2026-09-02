@@ -49,6 +49,10 @@ export interface OutstandingOption {
   // choosing an option that can only ever show "unknown" is a dead end the
   // reader should be able to see before they click it.
   hasEstimates: boolean;
+  // Nothing open. Still selectable - its finished work and what that took is
+  // worth looking at - but labelled, so picking it is a choice rather than a
+  // surprise.
+  isFinished: boolean;
 }
 
 export interface OutstandingBoard {
@@ -96,6 +100,7 @@ export async function getOutstandingBoardService(scope: OutstandingScope = {}): 
       remainingSeconds: client.remainingSeconds,
       openCount: client.openCount,
       hasEstimates: client.estimatedCount > 0,
+      isFinished: client.openCount === 0,
     }));
 
     const droppedFilters: string[] = [];
@@ -117,6 +122,7 @@ export async function getOutstandingBoardService(scope: OutstandingScope = {}): 
         remainingSeconds: project.remainingSeconds,
         openCount: project.openCount,
         hasEstimates: project.estimatedCount > 0,
+        isFinished: project.openCount === 0,
       })) ?? [];
 
     const requestedProject = scope.projectKey && scope.projectKey !== "all" ? scope.projectKey : null;

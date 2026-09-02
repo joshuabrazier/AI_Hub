@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { buildQueryPrompt, QUERY_SYSTEM_PROMPT } from "./admin-timesheets-query.prompt";
 import { ResolvedQuerySchema } from "./admin-timesheets-query.types";
-import type { CategoryOptionDTO, PersonOptionDTO, ProjectOptionDTO } from "./admin-timesheets.types";
+import type {
+  CategoryOptionDTO,
+  ClientOptionDTO,
+  PersonOptionDTO,
+  ProjectOptionDTO,
+} from "./admin-timesheets.types";
 
 // -------------------------------------------------------------------
 // The prompt hands the model a CLOSED VOCABULARY: it cannot know that
@@ -32,6 +37,11 @@ const projects: ProjectOptionDTO[] = [
   },
 ];
 
+const clients: ClientOptionDTO[] = [
+  { value: "all", label: "All clients", category: null, hours: 38.5, projectCount: 4 },
+  { value: "TSSS", label: "Trainer Suzie Swim School", category: "External", hours: 14.5, projectCount: 3 },
+];
+
 const people: PersonOptionDTO[] = [
   { value: "712020:abc-def", label: "Philipp Rohlfshagen", hours: 9, daysWorked: 1 },
 ];
@@ -44,6 +54,7 @@ function prompt(question = "Philipp's external work last month") {
     currentGranularity: "week",
     currentPeriodLabel: "17-23 Aug 2026",
     categories,
+    clients,
     projects,
     people,
   });
@@ -123,6 +134,7 @@ describe("buildQueryPrompt", () => {
       currentGranularity: "week",
       currentPeriodLabel: "a quiet week",
       categories,
+      clients: [],
       projects: [],
       people: [],
     });
@@ -146,6 +158,7 @@ describe("ResolvedQuerySchema", () => {
     granularity: "month",
     start: "2026-07-01",
     category: "External",
+    client: null,
     project: null,
     people: ["712020:abc-def"],
     billable: "Billable",
@@ -233,5 +246,129 @@ describe("ResolvedQuerySchema", () => {
     expect(shape).not.toContain("url");
     expect(shape).not.toContain("redirect");
     expect(shape).not.toContain("sql");
+  });
+});
+
+// -------------------------------------------------------------------
+// "TIME LEFT" MEANS TWO DIFFERENT THINGS, and the prompt has to say which is
+// which.
+//
+// Observed live before these rules existed: "how much time is left to do work
+// for the phase 2 project for trainer suzie" came back as remainingCapacity
+// and rendered "Contracted hours left: 300.00h". That is the team's remaining
+// contracted hours for September. The work outstanding on Phase 2 was 84.5h.
+//
+// Both numbers are real, both answer to the words "time left", and the wrong
+// one was quotable and completely misleading. So the distinction is spelled
+// out in the prompt and asserted here.
+// -------------------------------------------------------------------
+describe("work outstanding versus staff capacity", () => {
+  it("offers both measures", () => {
+    expect(QUERY_SYSTEM_PROMPT).toContain("outstandingWork");
+    expect(QUERY_SYSTEM_PROMPT).toContain("remainingCapacity");
+    expect(QUERY_SYSTEM_PROMPT).toContain("unsizedWork");
+  });
+
+  it("says plainly that they are different and must not be confused", () => {
+    expect(QUERY_SYSTEM_PROMPT).toMatch(/TIME LEFT.+TWO DIFFERENT MEASURES/i);
+  });
+
+  it("routes the exact wording that failed to the delivery measure", () => {
+    // The phrases from the question that went wrong, named in the prompt so
+    // there is nothing left to infer.
+    expect(QUERY_SYSTEM_PROMPT).toContain("How much time is left on Phase 2");
+    expect(QUERY_SYSTEM_PROMPT).toContain("how much is left to do");
+  });
+
+  it("keeps remainingCapacity for questions about the team, not the job", () => {
+    expect(QUERY_SYSTEM_PROMPT).toMatch(/contracted hours the PEOPLE have left/);
+    expect(QUERY_SYSTEM_PROMPT).toMatch(/how many hours has Louis got left this month/);
+  });
+
+  it("asks for the unsized count alongside a total, so a floor is not read as a forecast", () => {
+    expect(QUERY_SYSTEM_PROMPT).toMatch(/reads as complete when it is only a floor/);
+  });
+});
+
+// -------------------------------------------------------------------
+// A CLIENT IS NOT A PERSON.
+//
+// The same failure had a second half: "for trainer suzie" was hunted for in
+// the people list, not found, and dropped - so the only scope in the question
+// went missing and the answer covered everybody. There was no client field to
+// put it in at the time.
+// -------------------------------------------------------------------
+describe("clients in the vocabulary", () => {
+  it("offers the client field and its options", () => {
+    expect(QUERY_SYSTEM_PROMPT).toContain('"client": string | null');
+    expect(prompt()).toContain('"TSSS" = Trainer Suzie Swim School');
+  });
+
+  it("labels the client list as organisations rather than people", () => {
+    // A list headed only "clients" is what let a client's name be read as a
+    // person's in the first place.
+    expect(prompt()).toMatch(/OPTIONS - clients \(organisations the work is FOR, never people\)/);
+  });
+
+  it("says a client-sounding name is still a client", () => {
+    expect(QUERY_SYSTEM_PROMPT).toMatch(/A CLIENT IS NOT A PERSON/);
+    expect(QUERY_SYSTEM_PROMPT).toMatch(/even when it sounds like somebody's name/);
+  });
+
+  it("accepts a client in the schema", () => {
+    const parsed = ResolvedQuerySchema.safeParse({
+      understood: true,
+      granularity: "month",
+      start: "2026-09-01",
+      category: null,
+      client: "TSSS",
+      project: "TSSS-88",
+      people: null,
+      billable: null,
+      measures: ["outstandingWork", "unsizedWork"],
+      interpretation: "Work left on Phase 2 for Trainer Suzie Swim School.",
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------------
+// WORK LEFT versus BUDGET LEFT. Both correct, and a question can mean either.
+//
+// A task estimated at 10 hours that took 2 leaves no work behind it and 8
+// hours of the commitment still available. Quoting one figure as though it
+// were the whole answer is how 45 hours looked like it went missing on Phase
+// 2, where 39h of work remained against 84.5h of unspent budget.
+// -------------------------------------------------------------------
+describe("work left versus budget left", () => {
+  it("offers both measures", () => {
+    expect(QUERY_SYSTEM_PROMPT).toContain("budgetLeft");
+    expect(QUERY_SYSTEM_PROMPT).toContain("outstandingWork");
+  });
+
+  it("explains that finished work coming in under gives its time back", () => {
+    expect(QUERY_SYSTEM_PROMPT).toMatch(/estimated at 10 hours that took 2 gives 8 hours back/);
+  });
+
+  it("asks for both when a question could mean either", () => {
+    expect(QUERY_SYSTEM_PROMPT).toMatch(/ask for BOTH/);
+  });
+
+  it("accepts budgetLeft in the schema", () => {
+    const parsed = ResolvedQuerySchema.safeParse({
+      understood: true,
+      granularity: "month",
+      start: "2026-09-01",
+      category: null,
+      client: "TSSS",
+      project: "TSSS-88",
+      people: null,
+      billable: null,
+      measures: ["outstandingWork", "budgetLeft", "unsizedWork"],
+      interpretation: "Work and budget left on Phase 2.",
+    });
+
+    expect(parsed.success).toBe(true);
   });
 });
