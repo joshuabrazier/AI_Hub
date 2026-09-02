@@ -6,9 +6,16 @@ import {
   isDoneStatus,
   scopeIssues,
   type OutstandingIssueInput,
+  type OutstandingSummary,
 } from "./outstanding";
 
 const HOUR = 3600;
+
+// The summary is a tree - clients, then projects, then items - so these keep
+// each test asserting about the figures it cares about rather than restating
+// the shape of the tree every time.
+const allItems = (s: OutstandingSummary) => s.clients.flatMap((c) => c.projects.flatMap((p) => p.items));
+const allCovered = (s: OutstandingSummary) => s.clients.flatMap((c) => c.projects.flatMap((p) => p.covered));
 
 function issue(partial: Partial<OutstandingIssueInput> & { issueKey: string }): OutstandingIssueInput {
   return {
@@ -39,7 +46,7 @@ describe("buildOutstanding - the parent roll-up rule", () => {
     expect(summary.estimateSeconds).toBe(22.5 * HOUR);
     expect(summary.remainingSeconds).toBe(22.5 * HOUR);
     // The parent itself contributes no line - its children are its estimate.
-    expect(summary.projects[0].items.map((item) => item.issueKey)).toEqual(["TSSS-2", "TSSS-3"]);
+    expect(allItems(summary).map((item) => item.issueKey)).toEqual(["TSSS-2", "TSSS-3"]);
   });
 
   it("uses a parent estimate when NO child carries one", () => {
@@ -54,11 +61,11 @@ describe("buildOutstanding - the parent roll-up rule", () => {
 
     expect(summary.estimateSeconds).toBe(97.5 * HOUR);
     // The parent carries the estimate, so it is the line item.
-    expect(summary.projects[0].items).toHaveLength(1);
-    expect(summary.projects[0].items[0].issueKey).toBe("TSSS-88");
+    expect(allItems(summary)).toHaveLength(1);
+    expect(allItems(summary)[0].issueKey).toBe("TSSS-88");
     // And it is marked, because a coarse figure the reader cannot identify is
     // a figure they cannot check.
-    expect(summary.projects[0].items[0].coversChildren).toBe(true);
+    expect(allItems(summary)[0].coversChildren).toBe(true);
   });
 
   it("does NOT also list the children a stand-in parent speaks for", () => {
@@ -74,7 +81,12 @@ describe("buildOutstanding - the parent roll-up rule", () => {
     expect(summary.estimateSeconds).toBe(97.5 * HOUR);
     // Nor are they listed as unestimated - they are not unestimated, they are
     // estimated one level up.
-    expect(summary.unestimatedIssueCount).toBe(0);
+    expect(summary.unestimatedCount).toBe(0);
+    // They ARE listed as covered, under the line holding them, so the reader
+    // can see what the 97.5 h is actually for. This is the detail that makes
+    // the figure act-on-able rather than merely quotable.
+    expect(allCovered(summary).map((item) => item.issueKey).sort()).toEqual(["TSSS-95", "TSSS-97"]);
+    expect(allCovered(summary).every((item) => item.coveredBy === "TSSS-88")).toBe(true);
   });
 
   it("counts work logged BENEATH a stand-in parent against its estimate", () => {
@@ -109,7 +121,7 @@ describe("buildOutstanding - the parent roll-up rule", () => {
       issue({ issueKey: "A-2", parentKey: "A-1", status: "To Do", loggedSeconds: 1 * HOUR }),
     ]);
 
-    expect(summary.projects).toHaveLength(1);
+    expect(summary.clients).toHaveLength(1);
   });
 
   it("keeps a finished child from inflating what is left", () => {
@@ -124,7 +136,7 @@ describe("buildOutstanding - the parent roll-up rule", () => {
 
     expect(summary.remainingSeconds).toBe(1 * HOUR);
     // The finished work is still reported, just not as outstanding.
-    expect(summary.projects[0].completedEstimateSeconds).toBe(21.5 * HOUR);
+    expect(summary.completedEstimateSeconds).toBe(21.5 * HOUR);
   });
 });
 
@@ -144,7 +156,7 @@ describe("buildOutstanding - unestimated work", () => {
     ]);
 
     expect(summary.remainingSeconds).toBe(1 * HOUR);
-    expect(summary.unestimatedIssueCount).toBe(2);
+    expect(summary.unestimatedCount).toBe(2);
     // Hours already spent on unestimated work are reported separately, and
     // are the only honest thing that can be said about it.
     expect(summary.unestimatedLoggedSeconds).toBe(5 * HOUR);
@@ -159,7 +171,7 @@ describe("buildOutstanding - unestimated work", () => {
     ]);
 
     expect(summary.estimateCoverage).toBe(0.25);
-    expect(summary.openIssueCount).toBe(4);
+    expect(summary.openCount).toBe(4);
   });
 
   it("gives null coverage rather than 0 or 1 when there is no open work", () => {
@@ -172,8 +184,8 @@ describe("buildOutstanding - unestimated work", () => {
   it("does not list finished unestimated work as outstanding", () => {
     const summary = buildOutstanding([issue({ issueKey: "A-1", status: "Done", loggedSeconds: 4 * HOUR })]);
 
-    expect(summary.projects).toHaveLength(0);
-    expect(summary.unestimatedIssueCount).toBe(0);
+    expect(summary.clients).toHaveLength(0);
+    expect(summary.unestimatedCount).toBe(0);
   });
 });
 
@@ -194,7 +206,7 @@ describe("buildOutstanding - overruns", () => {
       issue({ issueKey: "A-1", status: "To Do", currentEstimateSeconds: 1 * HOUR, loggedSeconds: 6 * HOUR }),
     ]);
 
-    expect(summary.projects[0].items[0]).toMatchObject({ remainingSeconds: 0, isOverrun: true });
+    expect(allItems(summary)[0]).toMatchObject({ remainingSeconds: 0, isOverrun: true });
   });
 
   it("does not call an exactly-on-budget item an overrun", () => {
@@ -202,7 +214,7 @@ describe("buildOutstanding - overruns", () => {
       issue({ issueKey: "A-1", status: "To Do", currentEstimateSeconds: 2 * HOUR, loggedSeconds: 2 * HOUR }),
     ]);
 
-    expect(summary.projects[0].items[0].isOverrun).toBe(false);
+    expect(allItems(summary)[0].isOverrun).toBe(false);
   });
 });
 
@@ -299,12 +311,10 @@ describe("scopeIssues", () => {
   it("gives the same figures scoped as it does in the full set", () => {
     // The reason the subtree rule exists. If scoping changed the answer, the
     // overview and the outstanding page would disagree about the same project.
-    const full = buildOutstanding(all).projects.find((p) => p.projectKey === "TSSS");
-    const scoped = buildOutstanding(scopeIssues(all, { projectKey: "TSSS-88" })).projects[0];
+    const full = allItems(buildOutstanding(all)).find((item) => item.issueKey === "TSSS-88");
+    const scoped = allItems(buildOutstanding(scopeIssues(all, { projectKey: "TSSS-88" })))[0];
 
-    expect(scoped.items[0].remainingSeconds).toBe(
-      full?.items.find((i) => i.issueKey === "TSSS-88")?.remainingSeconds,
-    );
+    expect(scoped.remainingSeconds).toBe(full?.remainingSeconds);
   });
 
   it("reaches deeper than one generation", () => {
@@ -345,12 +355,47 @@ describe("buildOutstanding - what a covering line is holding", () => {
 
     // Two open, not three. A finished child is not work the figure is still
     // holding, so counting it would overstate what is left to do.
-    expect(summary.projects[0].items[0].coversOpenCount).toBe(2);
+    expect(allItems(summary)[0].coversOpenCount).toBe(2);
   });
 
   it("is zero for a line that covers nothing", () => {
     const summary = buildOutstanding([issue({ issueKey: "A-1", status: "To Do", currentEstimateSeconds: HOUR })]);
 
-    expect(summary.projects[0].items[0]).toMatchObject({ coversChildren: false, coversOpenCount: 0 });
+    expect(allItems(summary)[0]).toMatchObject({ coversChildren: false, coversOpenCount: 0 });
+  });
+});
+
+describe("buildOutstanding - coverage counts covered work as sized", () => {
+  it("does not report a fully covered project as barely estimated", () => {
+    // Measured on the live data and wrong at first: Phase 2 is one 97.5h
+    // estimate over four deliverables, and counting those four as unsized
+    // reported 20% coverage on work that is entirely estimated. That fired
+    // the "this is only a floor" warning at a project that did not deserve
+    // it - and a warning that cries wolf on good data teaches the reader to
+    // scroll past the one that matters.
+    const summary = buildOutstanding([
+      issue({ issueKey: "TSSS-88", status: "To Do", currentEstimateSeconds: 97.5 * HOUR }),
+      issue({ issueKey: "TSSS-89", parentKey: "TSSS-88", status: "In Progress" }),
+      issue({ issueKey: "TSSS-95", parentKey: "TSSS-88", status: "To Do" }),
+      issue({ issueKey: "TSSS-97", parentKey: "TSSS-88", status: "To Do" }),
+      issue({ issueKey: "TSSS-99", parentKey: "TSSS-88", status: "To Do" }),
+    ]);
+
+    expect(summary.openCount).toBe(5);
+    expect(summary.estimatedCount).toBe(1);
+    expect(summary.coveredCount).toBe(4);
+    expect(summary.estimateCoverage).toBe(1);
+  });
+
+  it("still counts genuinely unsized work against coverage", () => {
+    const summary = buildOutstanding([
+      issue({ issueKey: "A-1", status: "To Do", currentEstimateSeconds: 10 * HOUR }),
+      issue({ issueKey: "A-2", parentKey: "A-1", status: "To Do" }),
+      issue({ issueKey: "B-1", projectKey: "A", status: "To Do" }),
+      issue({ issueKey: "B-2", projectKey: "A", status: "To Do" }),
+    ]);
+
+    // Two sized (the carrier and the one it covers), two not.
+    expect(summary.estimateCoverage).toBe(0.5);
   });
 });

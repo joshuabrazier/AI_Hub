@@ -94,7 +94,12 @@ export default async function OverviewView(request: TimesheetRequest) {
               and hiding it behind "there is nothing to show" would suppress
               the more interesting half of the answer. It is not period data,
               so an empty period does not make it empty. */}
-          {outstanding && <OutstandingCard summary={outstanding} scopeLabel={scopeLabel} />}
+          {outstanding && <OutstandingCard
+              summary={outstanding}
+              scopeLabel={scopeLabel}
+              clientKey={filters.client}
+              projectKey={filters.project}
+            />}
 
           <SyncStatusLine syncStatus={syncStatus} />
         </>
@@ -157,7 +162,13 @@ export default async function OverviewView(request: TimesheetRequest) {
             />
           </div>
 
-          {outstanding && <OutstandingCard summary={outstanding} scopeLabel={scopeLabel} index={4} />}
+          {outstanding && <OutstandingCard
+              summary={outstanding}
+              scopeLabel={scopeLabel}
+              clientKey={filters.client}
+              projectKey={filters.project}
+              index={4}
+            />}
 
           {/* The week, day by day. The company shape at the grain people
               actually think in - a quarter of weekly bars answered a question

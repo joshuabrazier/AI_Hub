@@ -36,18 +36,32 @@ export function OutstandingCard({
   // What was filtered to, for the heading - so the card names the thing it is
   // describing rather than making the reader remember what the dropdowns say.
   scopeLabel,
+  // Carried into the link so the Outstanding page opens on the SAME scope.
+  // A link that dropped the filter would land the reader on every client and
+  // make them reselect what they had already chosen.
+  clientKey,
+  projectKey,
   index = 0,
 }: {
   summary: OutstandingSummary;
   scopeLabel: string;
+  clientKey?: string | null;
+  projectKey?: string | null;
   index?: number;
 }) {
   const coveragePercent = summary.estimateCoverage == null ? null : Math.round(summary.estimateCoverage * 100);
   const coverageIsPoor = coveragePercent != null && coveragePercent < 50;
 
+  const params = new URLSearchParams();
+  if (clientKey != null && clientKey !== "all") params.set("client", clientKey);
+  if (projectKey != null && projectKey !== "all") params.set("project", projectKey);
+  const href = params.toString()
+    ? `${ROUTES.ADMIN_TIMESHEETS_OUTSTANDING}?${params.toString()}`
+    : ROUTES.ADMIN_TIMESHEETS_OUTSTANDING;
+
   // Nothing open at all is a real answer and worth showing. Nothing open AND
   // nothing unestimated means the filter selected finished work only.
-  const nothingOpen = summary.openIssueCount === 0;
+  const nothingOpen = summary.openCount === 0;
 
   return (
     <Reveal index={index}>
@@ -62,10 +76,10 @@ export function OutstandingCard({
             </CardTitle>
 
             <Link
-              href={ROUTES.ADMIN_TIMESHEETS_OUTSTANDING}
+              href={href}
               className="inline-flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             >
-              Every project
+              Item by item
               <ArrowRight className="size-3.5" aria-hidden />
             </Link>
           </div>
@@ -82,7 +96,7 @@ export function OutstandingCard({
                     Estimated work left
                   </p>
                   <p className="mt-1 text-2xl font-semibold tabular-nums">
-                    {summary.estimatedIssueCount > 0 ? (
+                    {summary.estimatedCount > 0 ? (
                       hours(summary.remainingSeconds)
                     ) : (
                       // Never "0 h". Nothing here is estimated, so the honest
@@ -91,8 +105,8 @@ export function OutstandingCard({
                     )}
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    {summary.estimatedIssueCount > 0
-                      ? `Across ${summary.estimatedIssueCount} estimated ${summary.estimatedIssueCount === 1 ? "item" : "items"}`
+                    {summary.estimatedCount > 0
+                      ? `Across ${summary.estimatedCount} estimated ${summary.estimatedCount === 1 ? "item" : "items"}`
                       : "No open item here carries an estimate"}
                   </p>
                 </div>
@@ -101,7 +115,7 @@ export function OutstandingCard({
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Not estimated
                   </p>
-                  <p className="mt-1 text-2xl font-semibold tabular-nums">{summary.unestimatedIssueCount}</p>
+                  <p className="mt-1 text-2xl font-semibold tabular-nums">{summary.unestimatedCount}</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {summary.unestimatedLoggedSeconds > 0
                       ? `${hours(summary.unestimatedLoggedSeconds)} logged against them already`
@@ -111,13 +125,13 @@ export function OutstandingCard({
 
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Estimate coverage
+                    Work sized
                   </p>
                   <p className="mt-1 text-2xl font-semibold tabular-nums">
                     {coveragePercent == null ? "-" : `${coveragePercent}%`}
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    {summary.estimatedIssueCount} of {summary.openIssueCount} open items
+                    {summary.estimatedCount + summary.coveredCount} of {summary.openCount} open items
                   </p>
                 </div>
               </div>
@@ -127,7 +141,7 @@ export function OutstandingCard({
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" aria-hidden />
                   <p>
                     <span className="font-medium">
-                      {coveragePercent}% of the open work here is estimated, so this is a floor rather than a
+                      {coveragePercent}% of the open work here is sized, so this is a floor rather than a
                       forecast.
                     </span>{" "}
                     <span className="text-muted-foreground">
@@ -137,7 +151,9 @@ export function OutstandingCard({
                 </div>
               )}
 
-              {summary.projects.some((project) => project.items.some((item) => item.isOverrun)) && (
+              {summary.clients.some((client) =>
+                client.projects.some((project) => project.items.some((item) => item.isOverrun)),
+              ) && (
                 <p className="text-xs text-destructive">
                   Some items are already over their estimate. The outstanding figure counts them as zero left, never
                   as negative, so it does not net an overrun off other work.

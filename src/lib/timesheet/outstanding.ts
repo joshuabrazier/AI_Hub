@@ -103,40 +103,86 @@ export interface UnestimatedItem {
   // nothing on it at all.
   loggedSeconds: number;
 }
+// -------------------------------------------------------------------
+// AN OPEN ITEM WHOSE ESTIMATE LIVES ON AN ANCESTOR.
+//
+// These carry no figure of their own and are never counted - the hours are
+// already inside the covering line's estimate. They are listed anyway, and
+// that is the point of the type: "84.5 h left on Phase 2" is a number the
+// reader cannot act on until they can see the four open items it is holding.
+// Without this the covering badge names work nobody can look at.
+// -------------------------------------------------------------------
+export interface CoveredItem {
+  issueKey: string;
+  summary: string;
+  issueType: string | null;
+  status: string | null;
+  loggedSeconds: number;
+  // The ancestor whose estimate speaks for it, so the reader can see WHICH
+  // line is holding it rather than only that some line is.
+  coveredBy: string;
+}
 
-export interface ProjectOutstanding {
-  projectKey: string;
-  projectName: string;
+// -------------------------------------------------------------------
+// The figures for any one grouping. Shared by a client and a project so the
+// two levels cannot drift into reporting different things by different names.
+// -------------------------------------------------------------------
+export interface OutstandingTotals {
   // Open, estimated work only.
   estimateSeconds: number;
   loggedSeconds: number;
   remainingSeconds: number;
-  // Estimated work already finished, so a project's whole commitment can be
-  // shown without implying all of it is still to come.
+  // Estimated work already finished, so a commitment can be shown whole
+  // without implying all of it is still to come.
   completedEstimateSeconds: number;
-  items: OutstandingItem[];
-  // Open work carrying no estimate on either level. NEVER added to the
-  // figures above.
-  unestimated: UnestimatedItem[];
+  openCount: number;
+  // Open items carrying an estimate of their own.
+  estimatedCount: number;
+  // Open items whose size lives on a line above them. SIZED, not unsized -
+  // see the note on estimateCoverage.
+  coveredCount: number;
+  unestimatedCount: number;
   unestimatedLoggedSeconds: number;
-  // How many of the estimated lines stand in for children beneath them.
-  coversChildrenCount: number;
+  // The share of open work that has been SIZED, 0-1, or null when there is no
+  // open work. This is the number that says whether the rest can be trusted,
+  // so it is computed once here rather than in each component.
+  //
+  // COVERED ITEMS COUNT AS SIZED, and getting that wrong is worse than it
+  // sounds. Phase 2 is one 97.5h estimate over four deliverables: counting
+  // those four as unsized reported 20% coverage on work that is entirely
+  // estimated, which fired the "this is only a floor" warning at a project
+  // that did not deserve it. A warning that cries wolf on good data is worse
+  // than no warning, because it teaches the reader to scroll past the one
+  // that matters.
+  estimateCoverage: number | null;
 }
 
-export interface OutstandingSummary {
+// -------------------------------------------------------------------
+// A PROJECT: one top-level piece of work, keyed by its own issue - TSSS-88
+// "Phase 2 - Xero Integration". What the business writes an invoice against.
+// -------------------------------------------------------------------
+export interface ProjectOutstanding extends OutstandingTotals {
+  issueKey: string;
+  summary: string;
+  issueType: string | null;
+  status: string | null;
+  items: OutstandingItem[];
+  unestimated: UnestimatedItem[];
+  covered: CoveredItem[];
+}
+
+// -------------------------------------------------------------------
+// A CLIENT: the Jira project, keyed "TSSS", named "Trainer Suzie Swim
+// School". Holds the projects above.
+// -------------------------------------------------------------------
+export interface ClientOutstanding extends OutstandingTotals {
+  clientKey: string;
+  clientName: string;
   projects: ProjectOutstanding[];
-  remainingSeconds: number;
-  estimateSeconds: number;
-  loggedSeconds: number;
-  openIssueCount: number;
-  estimatedIssueCount: number;
-  unestimatedIssueCount: number;
-  unestimatedLoggedSeconds: number;
-  // The share of open issues carrying an estimate, 0-1, or null when there is
-  // no open work at all. This is the number that says whether the rest of the
-  // screen can be trusted, so it is computed here rather than left to a
-  // component to derive and get subtly different.
-  estimateCoverage: number | null;
+}
+
+export interface OutstandingSummary extends OutstandingTotals {
+  clients: ClientOutstanding[];
 }
 
 export function secondsToHours(seconds: number): number {
@@ -159,14 +205,22 @@ function hasEstimate(issue: OutstandingIssueInput | undefined): boolean {
 //
 //   covered-by-parent Its parent carries an estimate for the whole subtree,
 //                     because no child of that parent was estimated.
-//                     Contributes nothing at all - not even as unestimated,
-//                     since it is not unestimated, it is estimated one level
-//                     up. Listing it again is how 97.5h became 97.5h twelve
-//                     times over in the first draft of this file.
+//                     Contributes no figure of its own - it is not
+//                     unestimated, it is estimated one level up. Counting it
+//                     again is how 97.5h became 97.5h twelve times over in
+//                     the first draft of this file. It IS listed, under the
+//                     line that covers it, so the reader can see what that
+//                     line is holding.
 //
 //   carrier           Carries its own estimate.
 //
 //   unestimated       Open, and nothing above or on it says how long it takes.
+//
+// Coverage looks at the DIRECT parent only. Jira allows exactly two levels
+// here - Project above Deliverable, verified against the live read model - so
+// a deeper tree cannot arise today. If one ever does, a grandchild falls
+// through to "unestimated", which is the safe direction: it appears as work
+// nobody has sized rather than being silently absorbed into a figure above it.
 // -------------------------------------------------------------------
 export type IssueRole = "rolled-up-parent" | "covered-by-parent" | "carrier" | "unestimated";
 
@@ -187,6 +241,44 @@ export function classifyIssue(
   return "unestimated";
 }
 
+// Totals that add nothing yet. Written as a factory rather than a shared
+// constant so two groupings can never end up mutating the same object.
+function emptyTotals(): OutstandingTotals {
+  return {
+    estimateSeconds: 0,
+    loggedSeconds: 0,
+    remainingSeconds: 0,
+    completedEstimateSeconds: 0,
+    openCount: 0,
+    estimatedCount: 0,
+    coveredCount: 0,
+    unestimatedCount: 0,
+    unestimatedLoggedSeconds: 0,
+    estimateCoverage: null,
+  };
+}
+
+function addInto(target: OutstandingTotals, source: OutstandingTotals): void {
+  target.estimateSeconds += source.estimateSeconds;
+  target.loggedSeconds += source.loggedSeconds;
+  target.remainingSeconds += source.remainingSeconds;
+  target.completedEstimateSeconds += source.completedEstimateSeconds;
+  target.openCount += source.openCount;
+  target.estimatedCount += source.estimatedCount;
+  target.coveredCount += source.coveredCount;
+  target.unestimatedCount += source.unestimatedCount;
+  target.unestimatedLoggedSeconds += source.unestimatedLoggedSeconds;
+}
+
+// Coverage is a RATIO, so it is recomputed from the counts at each level
+// rather than averaged up from the level below. Averaging ratios of different
+// sizes is how a client with one fully estimated project and one with forty
+// unestimated items reports 50% coverage.
+function finaliseCoverage(totals: OutstandingTotals): void {
+  const sized = totals.estimatedCount + totals.coveredCount;
+  totals.estimateCoverage = totals.openCount > 0 ? sized / totals.openCount : null;
+}
+
 export function buildOutstanding(
   issues: OutstandingIssueInput[],
   projectNames: Map<string, string> = new Map(),
@@ -204,59 +296,86 @@ export function buildOutstanding(
     }
   }
 
-  const projects = new Map<string, ProjectOutstanding>();
-
-  const projectFor = (key: string): ProjectOutstanding => {
-    let project = projects.get(key);
-    if (!project) {
-      project = {
-        projectKey: key,
-        projectName: projectNames.get(key) ?? key,
-        estimateSeconds: 0,
-        loggedSeconds: 0,
-        remainingSeconds: 0,
-        completedEstimateSeconds: 0,
-        items: [],
-        unestimated: [],
-        unestimatedLoggedSeconds: 0,
-        coversChildrenCount: 0,
-      };
-      projects.set(key, project);
-    }
-    return project;
-  };
-
-  // Hours logged BENEATH each parent. Derived here rather than asked of the
-  // caller: a caller that forgot to supply it would pass zero, and the screen
-  // would silently report a parent's full estimate as outstanding with work
-  // already done against it. Deriving it makes that impossible to get wrong.
+  // Hours logged BENEATH each issue, and how many OPEN items sit under it.
+  //
+  // Derived here rather than asked of the caller: a caller that forgot would
+  // pass zero, and the screen would report a parent's full estimate as
+  // outstanding with work already done against it.
   //
   // Accumulated up the WHOLE chain rather than one level. Today Jira enforces
-  // Project above Deliverable and nothing between, so one level would be
-  // enough - but "enough given the current issue type scheme" is a fragile
-  // thing to bake into a number somebody quotes to a client, and walking the
-  // chain costs nothing.
+  // Project above Deliverable and nothing between, so one level would do -
+  // but "enough given the current issue type scheme" is a fragile thing to
+  // bake into a number somebody quotes to a client, and walking costs nothing.
   //
   // The seen-set is a cycle guard. Jira should never produce one; an infinite
   // loop rendering a page is a bad way to find out it did.
   const childLoggedByParent = new Map<string, number>();
   const openDescendants = new Map<string, number>();
+  // The top of each issue's chain, which is the project it belongs to. An
+  // issue with no parent is its own root.
+  const rootOf = new Map<string, string>();
 
   for (const issue of issues) {
     const seen = new Set<string>([issue.issueKey]);
-    let ancestorKey = issue.parentKey;
     const issueIsOpen = !isDoneStatus(issue.status);
+    let ancestorKey = issue.parentKey;
+    let root = issue.issueKey;
 
-    while (ancestorKey != null && !seen.has(ancestorKey)) {
+    while (ancestorKey != null && byKey.has(ancestorKey) && !seen.has(ancestorKey)) {
       seen.add(ancestorKey);
+      root = ancestorKey;
       childLoggedByParent.set(ancestorKey, (childLoggedByParent.get(ancestorKey) ?? 0) + issue.loggedSeconds);
       if (issueIsOpen) openDescendants.set(ancestorKey, (openDescendants.get(ancestorKey) ?? 0) + 1);
       ancestorKey = byKey.get(ancestorKey)?.parentKey ?? null;
     }
+
+    rootOf.set(issue.issueKey, root);
   }
 
+  const clients = new Map<string, ClientOutstanding>();
+  const projects = new Map<string, ProjectOutstanding>();
+
+  const clientFor = (key: string): ClientOutstanding => {
+    let client = clients.get(key);
+    if (!client) {
+      client = {
+        ...emptyTotals(),
+        clientKey: key,
+        clientName: projectNames.get(key) ?? key,
+        projects: [],
+      };
+      clients.set(key, client);
+    }
+    return client;
+  };
+
+  const projectFor = (issue: OutstandingIssueInput): ProjectOutstanding => {
+    const rootKey = rootOf.get(issue.issueKey) ?? issue.issueKey;
+    let project = projects.get(rootKey);
+
+    if (!project) {
+      // The root's own row, where it is in the set. A scoped query can leave a
+      // child whose parent was filtered out, so the child stands as its own
+      // project rather than being dropped.
+      const root = byKey.get(rootKey) ?? issue;
+      project = {
+        ...emptyTotals(),
+        issueKey: rootKey,
+        summary: root.summary,
+        issueType: root.issueType ?? null,
+        status: root.status ?? null,
+        items: [],
+        unestimated: [],
+        covered: [],
+      };
+      projects.set(rootKey, project);
+      clientFor(issue.projectKey).projects.push(project);
+    }
+
+    return project;
+  };
+
   for (const issue of issues) {
-    const project = projectFor(issue.projectKey);
     const done = isDoneStatus(issue.status);
     const parent = issue.parentKey != null ? byKey.get(issue.parentKey) : undefined;
 
@@ -267,22 +386,38 @@ export function buildOutstanding(
       rolledUpParents.has(issue.issueKey),
     );
 
-    // Its children are its estimate. The hours booked directly to it are
-    // still real time somebody spent - in the live data 10 hours sit on three
-    // such parents - so they stay in the project's logged total.
+    const project = projectFor(issue);
+
+    // Its children are its estimate. The hours booked directly to it are still
+    // real time somebody spent - in the live data 10 hours sit on three such
+    // parents - so they stay in the logged total.
     if (role === "rolled-up-parent") {
       project.loggedSeconds += issue.loggedSeconds;
       continue;
     }
 
-    // Already counted, one level up, estimate and hours alike.
-    if (role === "covered-by-parent") continue;
+    if (role === "covered-by-parent") {
+      // Its figure is already inside the covering line's estimate, so nothing
+      // is added. It is listed so the reader can see what that line holds.
+      if (!done) {
+        project.covered.push({
+          issueKey: issue.issueKey,
+          summary: issue.summary,
+          issueType: issue.issueType ?? null,
+          status: issue.status ?? null,
+          loggedSeconds: issue.loggedSeconds,
+          coveredBy: issue.parentKey as string,
+        });
+        project.coveredCount += 1;
+        project.openCount += 1;
+      }
+      continue;
+    }
 
     if (role === "unestimated") {
       if (done) {
-        // Finished, never estimated. Its hours are still real spend and
-        // belong in the project's logged total; there is simply nothing
-        // outstanding to say about it.
+        // Finished, never estimated. Its hours are still real spend and belong
+        // in the logged total; there is simply nothing outstanding to say.
         project.loggedSeconds += issue.loggedSeconds;
         continue;
       }
@@ -295,6 +430,8 @@ export function buildOutstanding(
         loggedSeconds: issue.loggedSeconds,
       });
       project.unestimatedLoggedSeconds += issue.loggedSeconds;
+      project.unestimatedCount += 1;
+      project.openCount += 1;
       continue;
     }
 
@@ -302,7 +439,7 @@ export function buildOutstanding(
 
     // A carrier with children stands in for all of them, so work already done
     // beneath it counts against its figure. Without this TSSS-88 reports its
-    // full 97.5h outstanding while 5.5h has already gone into the children it
+    // full 97.5h outstanding while 13h has already gone into the children it
     // is speaking for.
     const childLogged = childLoggedByParent.get(issue.issueKey);
     const coversChildren = childLogged != null;
@@ -332,36 +469,43 @@ export function buildOutstanding(
     project.estimateSeconds += estimateSeconds;
     project.loggedSeconds += loggedAgainst;
     project.remainingSeconds += remainingSeconds;
-    if (coversChildren) project.coversChildrenCount += 1;
+    project.estimatedCount += 1;
+    project.openCount += 1;
   }
 
-  const ordered = [...projects.values()]
-    .filter((project) => project.items.length > 0 || project.unestimated.length > 0)
-    .map((project) => ({
-      ...project,
-      // Most remaining first. The screen exists to show what is left, so the
-      // biggest piece of that belongs at the top rather than whatever happens
-      // to sort first alphabetically.
-      items: [...project.items].sort((a, b) => b.remainingSeconds - a.remainingSeconds),
-      unestimated: [...project.unestimated].sort((a, b) => b.loggedSeconds - a.loggedSeconds),
-    }))
-    .sort((a, b) => b.remainingSeconds - a.remainingSeconds || a.projectKey.localeCompare(b.projectKey));
+  const summary: OutstandingSummary = { ...emptyTotals(), clients: [] };
 
-  const estimatedIssueCount = ordered.reduce((total, project) => total + project.items.length, 0);
-  const unestimatedIssueCount = ordered.reduce((total, project) => total + project.unestimated.length, 0);
-  const openIssueCount = estimatedIssueCount + unestimatedIssueCount;
+  for (const client of clients.values()) {
+    // A project that turned out to hold nothing open is dropped rather than
+    // shown as an empty row: it is finished work, and the screen is about what
+    // is left.
+    client.projects = client.projects
+      .filter((project) => project.openCount > 0)
+      .map((project) => {
+        finaliseCoverage(project);
+        return {
+          ...project,
+          // Most remaining first. The screen exists to show what is left, so
+          // the biggest piece of it belongs at the top.
+          items: [...project.items].sort((a, b) => b.remainingSeconds - a.remainingSeconds),
+          unestimated: [...project.unestimated].sort((a, b) => b.loggedSeconds - a.loggedSeconds),
+          covered: [...project.covered].sort((a, b) => b.loggedSeconds - a.loggedSeconds),
+        };
+      })
+      .sort((a, b) => b.remainingSeconds - a.remainingSeconds || a.issueKey.localeCompare(b.issueKey));
 
-  return {
-    projects: ordered,
-    remainingSeconds: ordered.reduce((total, project) => total + project.remainingSeconds, 0),
-    estimateSeconds: ordered.reduce((total, project) => total + project.estimateSeconds, 0),
-    loggedSeconds: ordered.reduce((total, project) => total + project.loggedSeconds, 0),
-    openIssueCount,
-    estimatedIssueCount,
-    unestimatedIssueCount,
-    unestimatedLoggedSeconds: ordered.reduce((total, project) => total + project.unestimatedLoggedSeconds, 0),
-    estimateCoverage: openIssueCount > 0 ? estimatedIssueCount / openIssueCount : null,
-  };
+    for (const project of client.projects) addInto(client, project);
+    finaliseCoverage(client);
+  }
+
+  summary.clients = [...clients.values()]
+    .filter((client) => client.projects.length > 0)
+    .sort((a, b) => b.remainingSeconds - a.remainingSeconds || a.clientKey.localeCompare(b.clientKey));
+
+  for (const client of summary.clients) addInto(summary, client);
+  finaliseCoverage(summary);
+
+  return summary;
 }
 
 // -------------------------------------------------------------------
