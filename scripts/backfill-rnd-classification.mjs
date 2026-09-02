@@ -31,8 +31,12 @@
 // -------------------------------------------------------------------
 import pg from "pg";
 
-const RND_CORE_LABEL = "RnD-core";
-const RND_SUPPORTING_LABEL = "RnD-supporting";
+// The SAME rule the sync applies, imported rather than restated. It used to
+// be duplicated here with a comment asking whoever changed one to change the
+// other, and the first change after that comment updated the sync only. A
+// backfill classifying hours by a different rule from the sync is a quiet,
+// systematic wrong answer in a tax claim.
+import { classifyRnd } from "../src/lib/timesheet/rnd-rule.mjs";
 
 // Jira's cap for POST /rest/api/3/issue/bulkfetch.
 const BULK_BATCH_SIZE = 100;
@@ -49,6 +53,14 @@ const email = process.env.JIRA_EMAIL;
 const token = process.env.JIRA_API_TOKEN;
 
 const apply = process.argv.includes("--apply");
+
+// Read from the environment exactly as the sync does, so a backfill and a
+// sync run minutes apart cannot disagree about which spaces are core. Unset
+// means labels only.
+const coreProjectKeys = (process.env.RND_CORE_PROJECT_KEYS ?? "")
+  .split(",")
+  .map((key) => key.trim())
+  .filter((key) => key.length > 0);
 
 for (const [name, value] of Object.entries({ DATABASE_URL: databaseUrl, JIRA_BASE_URL: baseUrl, JIRA_EMAIL: email, JIRA_API_TOKEN: token })) {
   if (!value) {
@@ -96,18 +108,6 @@ async function bulkfetch(issueKeys) {
   throw new Error("unreachable");
 }
 
-// The same rule as classifyRnd in jira-mapping.ts. Duplicated here because a
-// .mjs script cannot import the TypeScript module - so if that rule ever
-// changes, change it in BOTH places. The unit tests cover the real one.
-function classify(labels) {
-  const hasCore = labels.includes(RND_CORE_LABEL);
-  const hasSupporting = labels.includes(RND_SUPPORTING_LABEL);
-
-  if (hasCore && hasSupporting) return { rndClass: "core", both: true };
-  if (hasCore) return { rndClass: "core", both: false };
-  if (hasSupporting) return { rndClass: "supporting", both: false };
-  return { rndClass: null, both: false };
-}
 
 const client = new pg.Client({ connectionString: databaseUrl });
 await client.connect();
@@ -155,10 +155,15 @@ try {
         ? issue.fields.labels.filter((label) => typeof label === "string" && label.trim().length > 0)
         : [];
 
-      const { rndClass, both } = classify(labels);
-      if (both) bothLabels.push(issue.key);
+      // The project key comes from the issue key rather than fields.project,
+      // because the key is what the worklog rows are matched on and the two
+      // must not be able to disagree.
+      const projectKey = typeof issue.key === "string" ? issue.key.split("-")[0] : null;
 
-      classifications.set(issue.key, { labels, rndClass });
+      const { rndClass, rndSource, hasBothLabels } = classifyRnd(labels, { projectKey, coreProjectKeys });
+      if (hasBothLabels) bothLabels.push(issue.key);
+
+      classifications.set(issue.key, { labels, rndClass, rndSource });
     }
 
     // An issue deleted in Jira since its worklogs were synced. Its hours stay
@@ -173,17 +178,27 @@ try {
     if (start + BULK_BATCH_SIZE < issueKeys.length) await wait(PAUSE_BETWEEN_BATCHES_MS);
   }
 
-  const summary = { core: 0, supporting: 0, none: 0 };
-  for (const { rndClass } of classifications.values()) {
+  const summary = { core: 0, supporting: 0, none: 0, bySpace: 0 };
+  for (const { rndClass, rndSource } of classifications.values()) {
     if (rndClass === "core") summary.core += 1;
     else if (rndClass === "supporting") summary.supporting += 1;
     else summary.none += 1;
+    if (rndSource === "space") summary.bySpace += 1;
   }
 
   console.log("");
   console.log(`  issues classified core:       ${summary.core}`);
   console.log(`  issues classified supporting: ${summary.supporting}`);
-  console.log(`  issues with neither label:    ${summary.none}`);
+  console.log(`  issues classified by neither: ${summary.none}`);
+  if (coreProjectKeys.length > 0) {
+    console.log("");
+    console.log(`  core spaces: ${coreProjectKeys.join(", ")}`);
+    // Reported apart from the labelled ones on purpose. "The item carried
+    // this label" is materially stronger evidence than "our config treats
+    // that project as R&D", and a total that merged them would hide how much
+    // of a claim rests on the weaker of the two.
+    console.log(`  of the above, ${summary.bySpace} issue(s) are core because of their SPACE, not a label.`);
+  }
   if (notFound.length) console.log(`  issues not found in Jira:     ${notFound.length}`);
   if (bothLabels.length) {
     console.log("");
@@ -200,12 +215,12 @@ try {
   const classifiedAt = new Date();
   let rowsWritten = 0;
 
-  for (const [issueKey, { labels, rndClass }] of classifications) {
+  for (const [issueKey, { labels, rndClass, rndSource }] of classifications) {
     const result = await client.query(
       `UPDATE worklog_fact
-          SET labels_snapshot = $2, rnd_class = $3, classified_at = $4
+          SET labels_snapshot = $2, rnd_class = $3, rnd_source = $4, classified_at = $5
         WHERE issue_key = $1 AND classified_at IS NULL`,
-      [issueKey, labels.length > 0 ? labels.join(",") : null, rndClass, classifiedAt],
+      [issueKey, labels.length > 0 ? labels.join(",") : null, rndClass, rndSource, classifiedAt],
     );
     rowsWritten += result.rowCount ?? 0;
   }

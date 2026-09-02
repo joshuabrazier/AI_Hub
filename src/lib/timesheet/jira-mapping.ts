@@ -133,35 +133,36 @@ export function hoursFieldToSeconds(field: unknown): number | null {
 }
 
 // -------------------------------------------------------------------
-// R&D classification from an issue's labels
+// R&D classification
 //
-// Two labels exist site-wide and are applied across every space, client
-// spaces included, so this is a property of the WORK ITEM and not of the
-// space it lives in. Work in a client space can be R&D.
+// The rule itself lives in ./rnd-rule.mjs, shared verbatim with the backfill
+// script, which is a node script and cannot import TypeScript. See the note
+// at the top of that file: the two used to be duplicated and drifted.
 //
-// The casing is exact. Jira labels are case-sensitive and "rnd-core" is a
-// different label from "RnD-core" - so a near miss is a miss, and is
-// reported as unclassified rather than quietly admitted. That is the
-// safer direction for a tax claim: an hour wrongly left out is a smaller
-// problem than an hour wrongly claimed.
+// Re-exported from here so callers keep one import for everything that maps
+// a Jira payload, and so the types below sit beside the rest of the mapping.
 // -------------------------------------------------------------------
-export const RND_CORE_LABEL = "RnD-core";
-export const RND_SUPPORTING_LABEL = "RnD-supporting";
+export { classifyRnd, RND_CORE_LABEL, RND_SUPPORTING_LABEL } from "./rnd-rule.mjs";
 
 export type RndClass = "core" | "supporting";
 
+// -------------------------------------------------------------------
+// WHERE THE CLASSIFICATION CAME FROM.
+//
+// Two rules can produce one, so the answer alone is not enough: a claim has
+// to be able to say why an hour is core, and "the code decided" is a much
+// weaker answer than "the item carries this label, here is the snapshot".
+// Recorded per worklog for exactly that reason.
+//
+// The same reasoning already governs billable_source on this table, which
+// records whether a billable status came from the item or was inherited from
+// its parent.
+// -------------------------------------------------------------------
+export type RndSource = "label" | "space";
+
 export interface RndClassification {
   rndClass: RndClass | null;
-  // Which rule produced the answer above, or null when nothing did. See the
-  // note on RndSource: the answer without its provenance is not enough to
-  // defend a claim.
   rndSource: RndSource | null;
-  // Both labels on one item is a data entry error, not a third category.
-  // It resolves to core - the more conservative of the two is NOT the
-  // right instinct here, because core and supporting are claimed at
-  // different rates and an item marked both is being asserted as core by
-  // whoever added that label. It is surfaced either way so somebody fixes
-  // the item rather than the number being quietly decided here.
   hasBothLabels: boolean;
 }
 
@@ -169,9 +170,8 @@ export interface RndClassification {
 // The label array as Jira sent it, normalised to strings.
 //
 // Anything that is not a non-empty string is dropped rather than
-// stringified: "[object Object]" in a labels snapshot would be worse than
-// a shorter list, because the snapshot is the evidence for the
-// classification.
+// stringified: "[object Object]" in a labels snapshot would be worse than a
+// shorter list, because the snapshot is the evidence for the classification.
 // -------------------------------------------------------------------
 export function readLabels(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -182,62 +182,10 @@ export function readLabels(value: unknown): string[] {
 // -------------------------------------------------------------------
 // Store the WHOLE label array, comma separated.
 //
-// Not just the two we act on. When a classification is questioned later
-// the question is "what did this item actually look like", and a filtered
-// copy cannot answer it.
+// Not just the two we act on. When a classification is questioned later the
+// question is "what did this item actually look like", and a filtered copy
+// cannot answer it.
 // -------------------------------------------------------------------
 export function labelsSnapshot(labels: string[]): string | null {
   return labels.length > 0 ? labels.join(",") : null;
-}
-
-// -------------------------------------------------------------------
-// WHERE THE CLASSIFICATION CAME FROM.
-//
-// Two rules can now produce one, so the answer alone is no longer enough:
-// a claim has to be able to say why an hour is core, and "the code decided"
-// is a much weaker answer than "the item carries this label, here is the
-// snapshot". Recorded per worklog for exactly that reason.
-//
-// The same reasoning already governs billable_source on this table, which
-// records whether a billable status came from the item or was inherited
-// from its parent.
-// -------------------------------------------------------------------
-export type RndSource = "label" | "space";
-
-export function classifyRnd(
-  labels: string[],
-  // Jira project keys whose work is core R&D by default. A space that
-  // exists solely to hold the R&D programme should not need every item in
-  // it labelled by hand.
-  //
-  // Passed in rather than read from the environment here, because this
-  // module is pure and its tests depend on that.
-  options: { projectKey?: string | null; coreProjectKeys?: readonly string[] } = {},
-): RndClassification {
-  const hasCore = labels.includes(RND_CORE_LABEL);
-  const hasSupporting = labels.includes(RND_SUPPORTING_LABEL);
-
-  if (hasCore && hasSupporting) return { rndClass: "core", rndSource: "label", hasBothLabels: true };
-  if (hasCore) return { rndClass: "core", rndSource: "label", hasBothLabels: false };
-  if (hasSupporting) return { rndClass: "supporting", rndSource: "label", hasBothLabels: false };
-
-  // -----------------------------------------------------------------
-  // No label. Only now does the space get a say.
-  //
-  // A LABEL ALWAYS WINS, and the ordering above is what guarantees it. An
-  // item sitting in the R&D space and deliberately marked RnD-supporting
-  // stays supporting: somebody said so, and a default that overruled them
-  // would make the label pointless exactly where it matters most.
-  //
-  // So this fills a gap rather than overriding anybody, and an unlabelled
-  // item in a space that exists for the R&D programme is far likelier to be
-  // an oversight than a considered statement that the work is not R&D.
-  // -----------------------------------------------------------------
-  const { projectKey, coreProjectKeys } = options;
-
-  if (projectKey && coreProjectKeys?.includes(projectKey)) {
-    return { rndClass: "core", rndSource: "space", hasBothLabels: false };
-  }
-
-  return { rndClass: null, rndSource: null, hasBothLabels: false };
 }
