@@ -8,6 +8,7 @@ import {
   FolderSearch,
   House,
   LayoutPanelLeft,
+  ListTodo,
   type LucideIcon,
   Mail,
   ScrollText,
@@ -125,6 +126,12 @@ const ADMIN_NAV: NavGroup[] = [
             tooltip: "Who the work is for, and their projects",
           },
           { label: "Staff", href: ROUTES.ADMIN_TIMESHEETS_STAFF, icon: UserRound, tooltip: "Hours and utilisation" },
+          {
+            label: "Outstanding",
+            href: ROUTES.ADMIN_TIMESHEETS_OUTSTANDING,
+            icon: ListTodo,
+            tooltip: "Effort still to come, by project",
+          },
           {
             label: "R&D",
             href: ROUTES.ADMIN_TIMESHEETS_RND,
