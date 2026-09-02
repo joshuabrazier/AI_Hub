@@ -1,4 +1,6 @@
+import { cn } from "@/lib/utils";
 import { ROUTES } from "@/lib/routes";
+import { computeRevenue, formatCents, type RevenueTotals } from "@/lib/timesheet/revenue";
 import {
   rollUpRndByIssue,
   rollUpRndByMonth,
@@ -9,6 +11,7 @@ import {
 } from "@/lib/timesheet/aggregate";
 
 import { getAdminTimesheetsService, TimesheetRequest } from "../admin-timesheets.service";
+import { getStaffRateRowsService } from "../admin-timesheets-rate.service";
 import { StatTile, SyncStatusLine } from "../timesheet-panels";
 import TimesheetShell from "../timesheet-shell";
 
@@ -32,7 +35,7 @@ import TimesheetShell from "../timesheet-shell";
 // programme the work was for, who did it, what it was booked to, and when.
 // -------------------------------------------------------------------
 export default async function RndView(request: TimesheetRequest) {
-  const data = await getAdminTimesheetsService(request);
+  const [data, rates] = await Promise.all([getAdminTimesheetsService(request), getStaffRateRowsService()]);
   const { period, report, syncStatus } = data;
 
   // Read off the fact rows, which are one row per worklog. Never joined to an
@@ -41,6 +44,37 @@ export default async function RndView(request: TimesheetRequest) {
   const totals = summariseRnd(report.facts);
 
   const unclassified = report.facts.filter((fact) => fact.rndClass === null).length;
+
+  // -----------------------------------------------------------------
+  // COST, because a claim is made in dollars and hours are only the
+  // working.
+  //
+  // computeRevenue is reused rather than reimplemented, so this cannot
+  // disagree with the money shown anywhere else in the product - same rate
+  // resolution, same effective-dated lookup, and crucially the same rule
+  // about when a cost is not reportable.
+  //
+  // THAT RULE IS THE IMPORTANT PART HERE. Cost comes back NULL unless every
+  // logged hour in the set had a cost rate. A partially costed total is the
+  // dangerous number for a claim: it looks complete, it is quotable, and it
+  // understates by exactly the hours nobody priced. uncostedHours says how
+  // much is missing, so a null is fixable rather than mysterious.
+  //
+  // Charge rates are deliberately not shown. What a client would have been
+  // billed is not the claimable figure - what the work cost the business is.
+  // -----------------------------------------------------------------
+  const coreMoney = computeRevenue(
+    report.facts.filter((fact) => fact.rndClass === "core"),
+    rates,
+  );
+  const supportingMoney = computeRevenue(
+    report.facts.filter((fact) => fact.rndClass === "supporting"),
+    rates,
+  );
+  const rndMoney = computeRevenue(
+    report.facts.filter((fact) => fact.rndClass !== null),
+    rates,
+  );
 
   return (
     <TimesheetShell
@@ -79,6 +113,31 @@ export default async function RndView(request: TimesheetRequest) {
           index={3}
         />
       </div>
+
+      {/* -------------------------------------------------------------
+          Claimable expenditure.
+          A claim is made in dollars; the hours above are the working. Cost
+          rather than charge rate, because what a client would have been
+          billed is not what the work cost the business.
+          ------------------------------------------------------------- */}
+      <section className="mt-6">
+        <h2 className="text-base font-semibold text-foreground">Cost of R&amp;D time</h2>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          What the classified hours cost the business, at the cost rates in force on each day the work was
+          done. This is the expenditure figure, not what a client would have been charged.
+        </p>
+
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <CostTile label="Core" money={coreMoney} hours={totals.coreHours} />
+          <CostTile label="Supporting" money={supportingMoney} hours={totals.supportingHours} />
+          <CostTile
+            label="Total R&D"
+            money={rndMoney}
+            hours={totals.coreHours + totals.supportingHours}
+            emphasis
+          />
+        </div>
+      </section>
 
       {/* The classification is a snapshot, and saying so on the screen is
           part of what makes the figure defensible. Somebody reading this in
@@ -207,5 +266,56 @@ function RndTable({
         </div>
       )}
     </section>
+  );
+}
+
+// -------------------------------------------------------------------
+// One cost figure, and an honest account of it when there is not one.
+//
+// A NULL COST IS SHOWN AS "NOT AVAILABLE", NEVER AS ZERO OR AS A PARTIAL
+// TOTAL. It means somebody in this set has no cost rate on file, so the
+// true figure is higher than anything that could be printed here. For a
+// claim that distinction is the whole ballgame: a number that is quietly
+// too low is worse than no number, because only one of the two gets
+// questioned.
+//
+// The uncosted hours are named so it is actionable - the fix is a cost rate
+// on the Staff screen, not anything on this page.
+// -------------------------------------------------------------------
+function CostTile({
+  label,
+  money,
+  hours,
+  emphasis = false,
+}: {
+  label: string;
+  money: RevenueTotals;
+  hours: number;
+  emphasis?: boolean;
+}) {
+  const available = money.costCents !== null;
+
+  return (
+    <div
+      className={cn(
+        "rounded-xl border p-4",
+        emphasis ? "border-primary/40 bg-primary/5" : "border-border bg-card",
+      )}
+    >
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+
+      <p className={cn("mt-1 text-2xl font-semibold", available ? "text-foreground" : "text-muted-foreground")}>
+        {available ? formatCents(money.costCents) : "Not available"}
+      </p>
+
+      {available ? (
+        <p className="mt-1 text-sm text-muted-foreground">{hours.toFixed(2)} h at cost</p>
+      ) : (
+        <p className="mt-1 text-sm text-muted-foreground">
+          {money.uncostedHours.toFixed(2)} of {hours.toFixed(2)} hours have no cost rate on file, so the total
+          would be understated. Set one on the Staff screen.
+        </p>
+      )}
+    </div>
   );
 }
