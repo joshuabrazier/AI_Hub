@@ -1,11 +1,11 @@
 import type { TimesheetSearchParams } from "@/features/admin-timesheets/admin-timesheets.service";
-import ReviewView from "@/features/admin-timesheets/views/review.view";
+import RndView from "@/features/admin-timesheets/views/rnd.view";
 
-export default async function AdminTimesheetReview({
+export default async function AdminTimesheetRnd({
   searchParams,
 }: {
   searchParams: Promise<TimesheetSearchParams>;
 }) {
   const params = await searchParams;
-  return <ReviewView {...params} />;
+  return <RndView {...params} />;
 }

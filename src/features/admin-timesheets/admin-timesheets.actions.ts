@@ -62,7 +62,6 @@ export async function syncTimesheetsNowAction(): Promise<ServerApiResponse<SyncN
     revalidatePath(ROUTES.ADMIN_TIMESHEETS);
     revalidatePath(ROUTES.ADMIN_TIMESHEETS_CLIENTS);
     revalidatePath(ROUTES.ADMIN_TIMESHEETS_STAFF);
-    revalidatePath(ROUTES.ADMIN_TIMESHEETS_REVIEW);
 
     // A dry run reports what it WOULD have written, so the message has to say
     // so - otherwise "17 entries updated" is a lie when JIRA_SYNC_ENABLED is

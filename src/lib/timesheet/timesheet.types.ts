@@ -39,6 +39,8 @@ export interface SnapshotWorklog {
   // The work description as it stands in Jira. Absent or blank is the finding
   // that job 7.1 exists to fix.
   narrative?: string | null;
+  // 'core' | 'supporting' | null, frozen onto the worklog at sync time.
+  rndClass?: string | null;
 }
 
 // -------------------------------------------------------------------
@@ -86,6 +88,10 @@ export interface TimesheetOptions {
 // A resolved worklog: the input joined to its issue and its parent, with the
 // billing question already answered and its provenance recorded.
 // -------------------------------------------------------------------
+// The two R&D Tax Incentive categories. `null` is work that carried neither
+// label at the moment it was synced, which is a decision, not a gap.
+export type RndClass = "core" | "supporting";
+
 export interface WorklogFactRow {
   worklogId: string;
   issueKey: string;
@@ -102,6 +108,11 @@ export interface WorklogFactRow {
   billable: string | null;
   billableSource: FactBillableSource;
   hasNarrative: boolean;
+  // As FROZEN at sync time, carried on the worklog. Never derived here from
+  // the issue's current labels: those are mutable, and deriving would let a
+  // label edit reclassify history. It is also the grain rule - joining an
+  // issue-level value in would count an issue's hours once per worklog.
+  rndClass: RndClass | null;
   // True when the worklog names an issue that is not in the snapshot. Such a
   // row is still counted - the time was worked - but it cannot be attributed,
   // and it raises a finding.

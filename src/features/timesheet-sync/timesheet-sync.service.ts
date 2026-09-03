@@ -1,12 +1,16 @@
 import "server-only";
 
 import { database } from "@/lib/data/kysely-database-client";
-import { NewJiraIssue, NewWorklogFact } from "@/lib/data/kysely-database-types";
+import { generateId } from "better-auth";
+
+import { NewJiraIssue, NewWorklogFact, NewWorklogRndHistory } from "@/lib/data/kysely-database-types";
 import {
+  addWorklogRndHistoryRepo,
   advanceSyncWatermarkRepo,
   deleteWorklogFactsRepo,
   getJiraIssuesRepo,
   getSyncWatermarkRepo,
+  getWorklogRndStatesRepo,
   recordSyncFailureRepo,
   upsertJiraIssuesRepo,
   upsertJiraProjectsRepo,
@@ -16,9 +20,12 @@ import { envServer } from "@/lib/env-server";
 import { handleError } from "@/lib/handle-errors";
 import { createJiraClient, ISSUE_FIELDS, JiraIssueResponse } from "@/lib/timesheet/jira-client";
 import {
+  classifyRnd,
   hoursFieldToSeconds,
+  labelsSnapshot,
   normaliseText,
   readCustomFieldValue,
+  readLabels,
   toAppZoneDate,
   toAppZoneSecondOfDay,
 } from "@/lib/timesheet/jira-mapping";
@@ -82,6 +89,20 @@ export interface SyncResult {
   issuesWritten: number;
   projectsWritten: number;
   orphanedIssueIds: string[];
+  // -----------------------------------------------------------------
+  // R&D classification outcomes.
+  //
+  // Warnings, never failures: none of these should stop a sync, and all of
+  // them are somebody's job to fix in Jira rather than in code.
+  // -----------------------------------------------------------------
+  rndReclassified: number;
+  // Items carrying BOTH labels. Resolved to core, and NAMED, so the item
+  // gets corrected rather than the ambiguity living on inside a number.
+  rndBothLabelsIssueKeys: string[];
+  // Items with no label of their own whose PARENT carries one. Not an
+  // error - but if this is ever non-zero, the labelling convention in Jira
+  // is parent-level and the decision not to inherit needs revisiting.
+  rndParentLabelledOnlyIssueKeys: string[];
   error: string | null;
 }
 
@@ -98,6 +119,9 @@ function emptyResult(overrides: Partial<SyncResult>): SyncResult {
     issuesWritten: 0,
     projectsWritten: 0,
     orphanedIssueIds: [],
+    rndReclassified: 0,
+    rndBothLabelsIssueKeys: [],
+    rndParentLabelledOnlyIssueKeys: [],
     error: null,
     ...overrides,
   };
@@ -321,6 +345,13 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
 
     const factRows: NewWorklogFact[] = [];
 
+    // Issues carrying BOTH labels - a data entry error, surfaced by key so
+    // somebody fixes the item rather than the number being quietly decided.
+    const bothLabelsIssueKeys = new Set<string>();
+    // Issues whose own labels say nothing but whose parent is labelled. See
+    // the note at the classification below.
+    const parentLabelledOnly = new Set<string>();
+
     for (const worklog of liveWorklogs) {
       const issue = issuesById.get(String(worklog.issueId));
 
@@ -334,12 +365,46 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
 
       const parentKey = issueRow.parentKey ?? null;
       const parentRow = parentKey ? (issueRowsByKey.get(parentKey) ?? cachedByKey.get(parentKey)) : undefined;
+      // The parent as Jira sent it, which is the only place its labels are.
+      // jira_issue deliberately does not store labels: they belong to the
+      // worklog snapshot, and a second stored copy is a second thing that
+      // can go stale.
+      const parentRaw = parentKey ? issuesByKey.get(parentKey) : undefined;
 
       const issueBillable = normaliseText(issueRow.billable);
       const parentBillable = normaliseText(parentRow?.billable);
 
       const billable = issueBillable ?? parentBillable ?? null;
       const billableSource = issueBillable ? "issue" : parentBillable ? "parent" : "unset";
+
+      // -------------------------------------------------------------
+      // R&D classification, from the labels on the item the time was
+      // booked to.
+      //
+      // DELIBERATELY NOT INHERITED FROM THE PARENT, unlike `billable`
+      // above. The labels are described as applying to work items, and
+      // inheriting one would silently claim hours on a deliverable nobody
+      // had labelled. Getting that wrong in the direction of claiming
+      // more is the expensive mistake.
+      //
+      // The cost of that choice is a real risk - somebody labels the
+      // Project and expects its deliverables to follow - so it is
+      // MEASURED rather than assumed away: rndParentLabelledOnly counts
+      // worklogs that came out unclassified while their parent carries a
+      // label. A non-zero count there means the convention in Jira is
+      // parent-level and this decision needs revisiting.
+      // -------------------------------------------------------------
+      const labels = readLabels(issue.fields?.labels);
+      const { rndClass, rndSource, hasBothLabels } = classifyRnd(labels, {
+        projectKey: issueRow.projectKey,
+        coreProjectKeys: envServer.RND_CORE_PROJECT_KEYS,
+      });
+
+      if (hasBothLabels) bothLabelsIssueKeys.add(issue.key);
+
+      if (rndClass === null && parentRaw && classifyRnd(readLabels(parentRaw.fields?.labels)).rndClass !== null) {
+        parentLabelledOnly.add(issue.key);
+      }
 
       factRows.push({
         worklogId: String(worklog.id),
@@ -359,6 +424,56 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
         billableSource,
         narrative: normaliseText(worklog.comment),
         jiraUpdatedAt: worklog.updated ? new Date(worklog.updated) : null,
+        // Frozen here, never derived at query time. See migration 016.
+        labelsSnapshot: labelsSnapshot(labels),
+        rndClass,
+        rndSource,
+        classifiedAt: runStartedAt,
+      });
+    }
+
+    // -----------------------------------------------------------------
+    // Reclassifications.
+    //
+    // Read BEFORE the upsert, because after it the previous value is gone.
+    // Only actual CHANGES produce a row: a sync that re-reads the same
+    // labels and reaches the same answer writes nothing, so the history
+    // stays a record of what moved rather than a log of every run.
+    //
+    // A worklog with no existing row is a first classification, not a
+    // reclassification - there is no "old" to record, and treating an
+    // insert as a change would fill the table with noise on any backfill.
+    // -----------------------------------------------------------------
+    const priorStates = await getWorklogRndStatesRepo(factRows.map((row) => row.worklogId));
+    const priorByWorklogId = new Map(priorStates.map((state) => [state.worklogId, state]));
+
+    const historyRows: NewWorklogRndHistory[] = [];
+
+    for (const row of factRows) {
+      const prior = priorByWorklogId.get(row.worklogId);
+      if (!prior) continue;
+
+      const next = row.rndClass ?? null;
+      const nextSource = row.rndSource ?? null;
+
+      // A change of SOURCE is recorded as well as a change of class. An hour
+      // that was core because somebody labelled it, and is now core only
+      // because of where it lives, is weaker evidence than it was - and a
+      // history that only watched the class would call that no change at all.
+      if (prior.rndClass === next && prior.rndSource === nextSource) continue;
+
+      historyRows.push({
+        id: generateId(),
+        worklogId: row.worklogId,
+        oldRndClass: prior.rndClass,
+        newRndClass: next,
+        // Both label arrays, so the change can be explained rather than
+        // merely observed: "core to null" is a fact, "core to null because
+        // RnD-core was removed" is an answer.
+        oldRndSource: prior.rndSource,
+        newRndSource: nextSource,
+        oldLabels: prior.labelsSnapshot,
+        newLabels: row.labelsSnapshot ?? null,
       });
     }
 
@@ -374,6 +489,9 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
       issuesWritten: issueRows.length,
       projectsWritten: projectRows.length,
       orphanedIssueIds,
+      rndReclassified: historyRows.length,
+      rndBothLabelsIssueKeys: [...bothLabelsIssueKeys].sort(),
+      rndParentLabelledOnlyIssueKeys: [...parentLabelledOnly].sort(),
       error: null,
     };
 
@@ -388,6 +506,10 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
     await database.transaction().execute(async (trx) => {
       await upsertJiraProjectsRepo(projectRows, trx);
       await upsertJiraIssuesRepo(issueRows, trx);
+      // History BEFORE the upsert, so a failure cannot leave a new
+      // classification stored with no record of what it replaced. Same
+      // transaction, so the pair is all or nothing.
+      await addWorklogRndHistoryRepo(historyRows, trx);
       await upsertWorklogFactsRepo(factRows, trx);
       await deleteWorklogFactsRepo(deletedIds, trx);
 

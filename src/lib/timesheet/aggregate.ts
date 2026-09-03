@@ -119,6 +119,12 @@ export function buildFacts(snapshot: TimesheetSnapshot): WorklogFactRow[] {
       billable,
       billableSource,
       hasNarrative: cleanText(worklog.narrative) !== null,
+      // Read straight off the worklog, never recomputed from the issue. The
+      // classification was frozen when the time was synced, and re-deriving
+      // it here would reintroduce exactly the mutability the snapshot exists
+      // to prevent. An unrecognised value is treated as unclassified rather
+      // than admitted into a claim.
+      rndClass: worklog.rndClass === "core" || worklog.rndClass === "supporting" ? worklog.rndClass : null,
       isOrphan: issue === undefined,
     });
   }
@@ -409,4 +415,142 @@ export function buildReport(snapshot: TimesheetSnapshot): TimesheetReport {
     blockingCount,
     warningCount: findings.length - blockingCount,
   };
+}
+
+// -------------------------------------------------------------------
+// R&D split: core, supporting and everything else.
+//
+// GROUPED FOUR WAYS because a claim is defended at four levels: which space
+// the work was for, who did it, which item it was booked to, and which
+// month it fell in. Every one of these reads the fact rows alone, so the
+// grain stays one row per worklog.
+//
+// "Non-R&D" is its own bucket and is never folded away. Hours with no class
+// are not evidence of anything - they are hours nobody classified - and
+// quietly adding them to either R&D bucket would inflate a claim, while
+// dropping them entirely would make the totals disagree with the timesheet
+// beside them.
+// -------------------------------------------------------------------
+export interface RndTotals {
+  coreSeconds: number;
+  supportingSeconds: number;
+  nonRndSeconds: number;
+  totalSeconds: number;
+  coreHours: number;
+  supportingHours: number;
+  nonRndHours: number;
+  totalHours: number;
+}
+
+export interface RndGroupTotal extends RndTotals {
+  // The grouping value. `key` is the identity; `label` is for display only
+  // and must never be grouped on - the same rule person_name follows.
+  key: string;
+  label: string;
+}
+
+function emptyRndTotals(): { core: number; supporting: number; nonRnd: number } {
+  return { core: 0, supporting: 0, nonRnd: 0 };
+}
+
+function toRndTotals(sums: { core: number; supporting: number; nonRnd: number }): RndTotals {
+  const total = sums.core + sums.supporting + sums.nonRnd;
+
+  return {
+    coreSeconds: sums.core,
+    supportingSeconds: sums.supporting,
+    nonRndSeconds: sums.nonRnd,
+    totalSeconds: total,
+    coreHours: hoursFromSeconds(sums.core),
+    supportingHours: hoursFromSeconds(sums.supporting),
+    nonRndHours: hoursFromSeconds(sums.nonRnd),
+    totalHours: hoursFromSeconds(total),
+  };
+}
+
+function addTo(sums: { core: number; supporting: number; nonRnd: number }, fact: WorklogFactRow): void {
+  if (fact.rndClass === "core") sums.core += fact.timeSpentSeconds;
+  else if (fact.rndClass === "supporting") sums.supporting += fact.timeSpentSeconds;
+  else sums.nonRnd += fact.timeSpentSeconds;
+}
+
+export function summariseRnd(facts: WorklogFactRow[]): RndTotals {
+  const sums = emptyRndTotals();
+  for (const fact of facts) addTo(sums, fact);
+
+  return toRndTotals(sums);
+}
+
+// -------------------------------------------------------------------
+// One grouping, done once.
+//
+// `keyOf` returns null for a fact that cannot be placed in this grouping -
+// a worklog with no project, say. Those are collected under an explicit
+// "(none)" key rather than dropped: hours that vanish between two views of
+// the same period are how a report stops being trusted.
+// -------------------------------------------------------------------
+function groupRnd(
+  facts: WorklogFactRow[],
+  keyOf: (fact: WorklogFactRow) => string | null,
+  labelOf: (fact: WorklogFactRow) => string | null,
+): RndGroupTotal[] {
+  const sums = new Map<string, { core: number; supporting: number; nonRnd: number }>();
+  const labels = new Map<string, string>();
+
+  for (const fact of facts) {
+    const key = keyOf(fact) ?? "(none)";
+
+    if (!sums.has(key)) sums.set(key, emptyRndTotals());
+    addTo(sums.get(key)!, fact);
+
+    // First non-empty label wins, so a row that happens to be missing a
+    // display name does not blank one already resolved.
+    if (!labels.has(key)) {
+      const label = labelOf(fact);
+      if (label) labels.set(key, label);
+    }
+  }
+
+  return [...sums.entries()]
+    .map(([key, totals]) => ({ key, label: labels.get(key) ?? key, ...toRndTotals(totals) }))
+    .sort((left, right) => right.totalSeconds - left.totalSeconds || left.key.localeCompare(right.key));
+}
+
+// A space IS the Jira project key. Classification cuts across spaces, so
+// this grouping is what shows an R&D-labelled TSSS item sitting in the
+// totals beside RDP.
+export function rollUpRndBySpace(facts: WorklogFactRow[]): RndGroupTotal[] {
+  return groupRnd(
+    facts,
+    (fact) => fact.projectKey,
+    (fact) => fact.projectKey,
+  );
+}
+
+export function rollUpRndByPerson(facts: WorklogFactRow[]): RndGroupTotal[] {
+  // Keyed on accountId, labelled with the display name. Never the reverse:
+  // two people can share a name and one person can change theirs.
+  return groupRnd(
+    facts,
+    (fact) => fact.personId,
+    (fact) => fact.personName,
+  );
+}
+
+export function rollUpRndByIssue(facts: WorklogFactRow[]): RndGroupTotal[] {
+  return groupRnd(
+    facts,
+    (fact) => fact.issueKey,
+    (fact) => fact.issueSummary,
+  );
+}
+
+// 'YYYY-MM' taken as a string slice of the already Adelaide-local work date.
+// Never via Date parsing, which is how a month boundary shifts a day.
+export function rollUpRndByMonth(facts: WorklogFactRow[]): RndGroupTotal[] {
+  return groupRnd(
+    facts,
+    (fact) => fact.workDate.slice(0, 7),
+    (fact) => fact.workDate.slice(0, 7),
+  ).sort((left, right) => left.key.localeCompare(right.key));
 }

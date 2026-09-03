@@ -131,3 +131,61 @@ export function hoursFieldToSeconds(field: unknown): number | null {
   if (!Number.isFinite(raw) || raw < 0) return null;
   return Math.round(raw * SECONDS_PER_HOUR);
 }
+
+// -------------------------------------------------------------------
+// R&D classification
+//
+// The rule itself lives in ./rnd-rule.mjs, shared verbatim with the backfill
+// script, which is a node script and cannot import TypeScript. See the note
+// at the top of that file: the two used to be duplicated and drifted.
+//
+// Re-exported from here so callers keep one import for everything that maps
+// a Jira payload, and so the types below sit beside the rest of the mapping.
+// -------------------------------------------------------------------
+export { classifyRnd, RND_CORE_LABEL, RND_SUPPORTING_LABEL } from "./rnd-rule.mjs";
+
+export type RndClass = "core" | "supporting";
+
+// -------------------------------------------------------------------
+// WHERE THE CLASSIFICATION CAME FROM.
+//
+// Two rules can produce one, so the answer alone is not enough: a claim has
+// to be able to say why an hour is core, and "the code decided" is a much
+// weaker answer than "the item carries this label, here is the snapshot".
+// Recorded per worklog for exactly that reason.
+//
+// The same reasoning already governs billable_source on this table, which
+// records whether a billable status came from the item or was inherited from
+// its parent.
+// -------------------------------------------------------------------
+export type RndSource = "label" | "space";
+
+export interface RndClassification {
+  rndClass: RndClass | null;
+  rndSource: RndSource | null;
+  hasBothLabels: boolean;
+}
+
+// -------------------------------------------------------------------
+// The label array as Jira sent it, normalised to strings.
+//
+// Anything that is not a non-empty string is dropped rather than
+// stringified: "[object Object]" in a labels snapshot would be worse than a
+// shorter list, because the snapshot is the evidence for the classification.
+// -------------------------------------------------------------------
+export function readLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.filter((label): label is string => typeof label === "string" && label.trim().length > 0);
+}
+
+// -------------------------------------------------------------------
+// Store the WHOLE label array, comma separated.
+//
+// Not just the two we act on. When a classification is questioned later the
+// question is "what did this item actually look like", and a filtered copy
+// cannot answer it.
+// -------------------------------------------------------------------
+export function labelsSnapshot(labels: string[]): string | null {
+  return labels.length > 0 ? labels.join(",") : null;
+}

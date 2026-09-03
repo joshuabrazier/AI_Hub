@@ -1,3 +1,4 @@
+import { CHAT_TOOL_CONFIG } from "@/features/ai-chat/ai-chat-tools";
 import { describe, expect, it } from "vitest";
 
 import { resolveNamed, resolvePerson } from "./timesheet-chat-facts.service";
@@ -139,5 +140,50 @@ describe("resolveNamed for clients", () => {
     // The note is read out to the user, so the wrong noun is a wrong answer.
     expect(resolveNamed("Nobody", CLIENTS, "client").note).toContain("client");
     expect(resolveNamed("Nobody", CLIENTS, "client").note).not.toContain("person");
+  });
+});
+
+// -------------------------------------------------------------------
+// The tool contract for work outstanding.
+//
+// Observed live: "how much time is left to do work for the phase 2 project
+// for trainer suzie" was answered with 300h of remaining CONTRACTED STAFF
+// HOURS. The work outstanding on Phase 2 was 39h. Both numbers were real,
+// both answer to "time left", and the wrong one was entirely convincing.
+//
+// These assert the contract that keeps them apart, since the model reads it
+// on every call and nothing else stops the same mistake.
+// -------------------------------------------------------------------
+describe("the timesheet tool contract", () => {
+  const description = CHAT_TOOL_CONFIG.tools?.[0] ?? {};
+  const text = JSON.stringify(description);
+
+  it("names both figures and says they must not be confused", () => {
+    expect(text).toContain("outstanding.workLeftHours");
+    expect(text).toContain("capacity.contractedHours");
+    expect(text).toContain("MUST NOT CONFUSE THEM");
+  });
+
+  it("routes the wording that failed to the delivery figure", () => {
+    expect(text).toContain("How much time is left on Phase 2");
+    expect(text).toContain("how much is left to do");
+  });
+
+  it("says the outstanding block is not about the period", () => {
+    // The payload is headed with a period label, so without this the model
+    // reports a live figure as that period's number.
+    expect(text).toContain("NOT ABOUT THE PERIOD");
+  });
+
+  it("forbids reporting an unestimated scope as zero", () => {
+    expect(text).toMatch(/never say zero/i);
+  });
+
+  it("offers a project argument, so a job can be asked about by name", () => {
+    const schema = CHAT_TOOL_CONFIG.tools?.[0] as {
+      toolSpec?: { inputSchema?: { json?: { properties?: Record<string, unknown> } } };
+    };
+
+    expect(Object.keys(schema.toolSpec?.inputSchema?.json?.properties ?? {})).toContain("project");
   });
 });

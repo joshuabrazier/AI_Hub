@@ -65,6 +65,7 @@ function toSnapshotWorklogs(rows: Awaited<ReturnType<typeof getWorklogFactsInRan
     startSecond: row.startSecond,
     timeSpentSeconds: row.timeSpentSeconds,
     narrative: row.narrative,
+    rndClass: row.rndClass,
   }));
 }
 
