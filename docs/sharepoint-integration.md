@@ -27,7 +27,18 @@ PATCH /drives/{driveId}/items/{itemId}               move (new parentReference)
 The API is the easy part. Everything hard about this feature is permissions,
 residency, and not destroying anything.
 
-## Identity: UNDECIDED, and it must be decided before code
+## Identity: DECIDED - delegated (Option A)
+
+Phase 1 shipped on Option A and the sections below are kept as the reasoning
+rather than as an open question. Every Graph call runs as the signed-in
+person, so Graph itself enforces what they may see, and nothing in this app
+decides who may read a document. That property is load-bearing: an app-only
+token would let the app reach documents the person driving it cannot, which
+is a bigger change than the convenience saves.
+
+Original comparison follows.
+
+### The two options
 
 Two options. They have very different security properties and the choice
 changes the shape of the whole feature, so it is not an implementation detail
@@ -97,7 +108,7 @@ Neither is a code task and both can invalidate the feature, so do them first.
 Each phase is useful on its own and shippable on its own. Do not start a later
 one before the one before it is in main.
 
-### Phase 1 - crawl and inventory. NO WRITES.
+### Phase 1 - crawl and inventory. NO WRITES. **SHIPPED.**
 
 Walk `delta` on each nominated drive and store what is there in our own
 Postgres tables.
@@ -183,6 +194,96 @@ Code walks approved rows. No model is involved. Folders first, then moves.
 - A failure on one item skips and reports. It never retries forever and it
   never aborts the batch.
 
+### The data model for phases 4 and 5
+
+Three tables, and the shape of them is where the safety lives rather than in
+the code that reads them.
+
+```text
+sharepoint_filing_plan     one proposal, and the approval that authorises it
+sharepoint_filing_folder   the destinations - AND the closed vocabulary
+sharepoint_filing_move     one row per file: where it was, where it should go
+```
+
+**THE CLOSED VOCABULARY IS A FOREIGN KEY, not a validation step.**
+`sharepoint_filing_move.to_folder_key` references
+`sharepoint_filing_folder(plan_id, key)`. So a destination the plan does not
+offer cannot be stored at all - the database refuses it before any code has an
+opinion. `admitOption` still runs at the boundary and still drops-and-names a
+miss, for the reason it always has: a rejected value has to be reported, not
+merely refused. But the schema is what makes "the model invented a path"
+impossible rather than unlikely, and that is worth the extra table.
+
+The model therefore returns a `key` - never a path, never a URL, never a
+drive id.
+
+**WHERE IT WAS IS WRITTEN AT PLAN TIME AND NEVER UPDATED.**
+
+```text
+from_parent_id   the Graph id of the folder it is in today
+from_path        the human-readable path, for the review screen and for people
+from_name        the file name at the time of review
+from_etag        the version that was reviewed
+```
+
+Written when the plan is built, before anything has touched SharePoint, and
+immutable afterwards. **That row is the only undo we get** - the recycle bin
+does not help with a move, and once a file has moved there is nothing in
+SharePoint that says where it came from.
+
+Which makes the reverse plan fall out for free: a new plan with from and to
+swapped. Undo is not a special code path with its own bugs, it is an ordinary
+plan that needs approving like any other, audited like any other. That is the
+main reason to store the origin as data rather than as a log line.
+
+**`from_etag` IS THE REFUSE-RATHER-THAN-GUESS RULE.** If the item's tag has
+changed between review and execution, the file is not the one somebody
+approved moving - it has been edited, renamed or already moved by someone
+else. The move is refused and reported. Every other option here is a guess
+about a document nobody looked at.
+
+**THE APPLY LOOP HAS THE SAME SHARP EDGE AS THE CHAT BLOBS: a Graph call
+cannot be rolled back by a Postgres rollback.** So each move commits its
+intent before acting on it.
+
+```text
+approved  -> applying   commit, THEN call Graph
+applying  -> applied    the move landed; record the new parent
+applying  -> failed     Graph refused; record why, skip, carry on
+```
+
+A crash leaves rows stuck in `applying`, and those are not ambiguous, just
+unknown - so a reconciliation pass reads the item's current parent from Graph
+and decides:
+
+- it is at the destination -> `applied`, the crash was after the move
+- it is still at `from_parent_id` -> back to `approved`, safe to retry
+- it is somewhere else entirely -> `failed`, and NAME it: somebody else moved
+  this file while we were working
+
+If that third case is ever non-zero, two things are reorganising one library
+at once and the run should stop. Same signal as `aiChatOrphanedBlobsPurged`
+being steadily non-zero.
+
+**Idempotency is a unique constraint, not a convention.**
+`UNIQUE (plan_id, item_id)` means a file appears at most once in a plan, and
+the applier only ever acts on rows in `approved`. Re-running a plan that was
+throttled halfway through resumes; it cannot double-move.
+
+**Exclusions are rows, not omissions.** An item with unique permissions, a
+retention label, a hold or a checkout gets a move row with status
+`excluded` and a reason, rather than being left out of the plan. A file
+silently missing from a reorganise is indistinguishable from a file nobody
+thought about, and the permission rule below is the one that turns a tidy-up
+into a disclosure.
+
+**Approval is on the PLAN and is the only thing that authorises a write.**
+`approved_by`, `approved_by_name` and `approved_at` on the plan row, with
+the name snapshotted the way `audit_logs` does it, plus an audit entry. There
+is no other path to a move: the executor reads approved plans and nothing
+else, and a plan whose crawl is older than its drive's last crawl is refused
+rather than applied against a library that has moved on.
+
 ## Rules that bite if ignored
 
 - **Permission inheritance is the sharpest edge in this whole feature.** A move
@@ -233,7 +334,7 @@ src/lib/sharepoint/graph-client.ts        Graph HTTP, retry, throttle. Mirrors
                                           src/lib/timesheet/jira-client.ts.
 src/lib/sharepoint/graph-token.ts         delegated token acquisition/refresh
 src/lib/data/repositories/sharepoint-*.repository.ts
-src/lib/data/sql/migrations/011_sharepoint_inventory.sql
+src/lib/data/sql/migrations/012_sharepoint_inventory.sql   (shipped)
 src/features/sharepoint-sync/             the crawl, service-only at first
 src/features/sharepoint/                  page / service / actions / types
 ```
@@ -243,8 +344,9 @@ src/features/sharepoint/                  page / service / actions / types
   `src/lib/auth/session-auth-server.ts`.
 - Mutations go through `.actions.ts` with Zod validation.
 - A scope failure answers `notFound()`, not "forbidden".
-- Next migration number is **011**. There are two 009 files already, so check
-  before assuming.
+- Next migration number is **018**. Phase 1 shipped as `012_sharepoint_inventory.sql`,
+  and the timesheet R&D work took 016 and 017 - so check the directory rather
+  than trusting this line.
 - `pnpm lint` and `pnpm exec tsc --noEmit` before anything is done.
 
 ## Where the work runs
