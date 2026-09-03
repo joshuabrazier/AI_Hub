@@ -65,7 +65,9 @@ export const ROUTES = {
   ADMIN_TIMESHEETS_ENTRIES: "/admin/timesheets/entries",
   ADMIN_TIMESHEETS_CLIENTS: "/admin/timesheets/clients",
   ADMIN_TIMESHEETS_STAFF: "/admin/timesheets/staff",
-  ADMIN_TIMESHEETS_REVIEW: "/admin/timesheets/review",
+  // R&D Tax Incentive split: core, supporting and everything else.
+  ADMIN_TIMESHEETS_RND: "/admin/timesheets/rnd",
+  ADMIN_TIMESHEETS_OUTSTANDING: "/admin/timesheets/outstanding",
   ADMIN_TIMESHEETS_EXPORT: "/admin/timesheets/export",
 
   // Manager area. Every one of these is scoped server-side to the teams the

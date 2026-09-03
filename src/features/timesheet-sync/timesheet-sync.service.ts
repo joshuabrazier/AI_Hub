@@ -395,7 +395,10 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
       // parent-level and this decision needs revisiting.
       // -------------------------------------------------------------
       const labels = readLabels(issue.fields?.labels);
-      const { rndClass, hasBothLabels } = classifyRnd(labels);
+      const { rndClass, rndSource, hasBothLabels } = classifyRnd(labels, {
+        projectKey: issueRow.projectKey,
+        coreProjectKeys: envServer.RND_CORE_PROJECT_KEYS,
+      });
 
       if (hasBothLabels) bothLabelsIssueKeys.add(issue.key);
 
@@ -424,6 +427,7 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
         // Frozen here, never derived at query time. See migration 016.
         labelsSnapshot: labelsSnapshot(labels),
         rndClass,
+        rndSource,
         classifiedAt: runStartedAt,
       });
     }
@@ -450,7 +454,13 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
       if (!prior) continue;
 
       const next = row.rndClass ?? null;
-      if (prior.rndClass === next) continue;
+      const nextSource = row.rndSource ?? null;
+
+      // A change of SOURCE is recorded as well as a change of class. An hour
+      // that was core because somebody labelled it, and is now core only
+      // because of where it lives, is weaker evidence than it was - and a
+      // history that only watched the class would call that no change at all.
+      if (prior.rndClass === next && prior.rndSource === nextSource) continue;
 
       historyRows.push({
         id: generateId(),
@@ -460,6 +470,8 @@ export async function syncJiraWorklogsService(options: { dryRun?: boolean } = {}
         // Both label arrays, so the change can be explained rather than
         // merely observed: "core to null" is a fact, "core to null because
         // RnD-core was removed" is an answer.
+        oldRndSource: prior.rndSource,
+        newRndSource: nextSource,
         oldLabels: prior.labelsSnapshot,
         newLabels: row.labelsSnapshot ?? null,
       });

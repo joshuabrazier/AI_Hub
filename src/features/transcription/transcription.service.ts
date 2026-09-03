@@ -55,6 +55,7 @@ import {
   listMeetingTranscripts,
   listRecentTeamsMeetings,
 } from "@/lib/graph/teams-meetings";
+import { selectTranscriptForOccurrence } from "@/lib/graph/teams-occurrence";
 import {
   eventIdFromSourceRef,
   parseTeamsVtt,
@@ -1129,12 +1130,40 @@ export async function importTeamsMeetingService(
       );
     }
 
-    // The newest, when there is more than one - a meeting stopped and
-    // restarted produces a second, and the later one is the fuller record.
-    // A missing createdDateTime sorts last rather than upsetting the order.
-    const transcript = [...transcripts].sort(
-      (a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0),
-    )[0];
+    // -----------------------------------------------------------------
+    // WHICH of the series' transcripts is THIS meeting's.
+    //
+    // Not a formality, and not answerable by ordering. Every occurrence of a
+    // recurring meeting shares one join URL, so `onlineMeetingId` above is
+    // the SERIES and these transcripts belong to any occurrence of it.
+    //
+    // Taking the newest - which this used to do - handed somebody the wrong
+    // meeting entirely: a weekly series transcribed once months ago had that
+    // one transcript stored under today's date and title, silently. See
+    // teams-occurrence.ts, where the reported case is the first test.
+    // -----------------------------------------------------------------
+    const selection = selectTranscriptForOccurrence(transcripts, {
+      startsAt: meeting.startsAt,
+      endsAt: meeting.endsAt,
+    });
+
+    if (selection.kind === "undateable") {
+      throw new DisplayErrorMessage(
+        "Microsoft did not say when that meeting's transcript was made, so it cannot be matched to this meeting. Record it here instead.",
+      );
+    }
+
+    if (selection.kind === "no-transcript-for-occurrence") {
+      // Deliberately a different sentence from "this meeting has no
+      // transcripts at all", because the remedy is different and the reason
+      // is not obvious: the series HAS transcripts, just not for the day
+      // being imported.
+      throw new DisplayErrorMessage(
+        "No transcript was made for this particular meeting. Other meetings in the same recurring series do have one, but transcription has to be started during each meeting separately.",
+      );
+    }
+
+    const transcript = selection.transcript;
 
     const sourceRef = teamsSourceRef(meeting.eventId, transcript.id);
 

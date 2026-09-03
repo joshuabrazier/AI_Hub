@@ -1,4 +1,5 @@
 import { formatCents, formatRate } from "@/lib/timesheet/revenue";
+import { secondsToHours, type OutstandingSummary } from "@/lib/timesheet/outstanding";
 
 import type { ForecastDTO } from "./admin-timesheets-forecast.service";
 import type { RevenueDTO } from "./admin-timesheets-revenue.service";
@@ -32,6 +33,11 @@ const LABELS: Record<QueryMeasure, string> = {
   projectedCost: "Projected cost",
   projectedValue: "Projected value",
   remainingCapacity: "Contracted hours left",
+  // Named for the thing it measures rather than "time left", which is the
+  // phrase that made these two indistinguishable in the first place.
+  outstandingWork: "Work left to do",
+  budgetLeft: "Budget left",
+  unsizedWork: "Open items with no estimate",
 };
 
 function hours(value: number | null | undefined): string {
@@ -76,6 +82,9 @@ export function buildAnswerMeasures(
   revenue: RevenueDTO,
   dashboard: StaffDashboardDTO | null,
   forecast: ForecastDTO | null,
+  // Only fetched when an outstanding measure was asked for, so an ordinary
+  // cost question does not pay for it.
+  outstanding: OutstandingSummary | null,
 ): QueryMeasureDTO[] {
   // Deduplicated but order-preserving, so a model that asks for cost twice
   // does not produce two identical rows.
@@ -193,6 +202,70 @@ export function buildAnswerMeasures(
                 : `${forecast.progress.weekdaysRemaining} weekday${forecast.progress.weekdaysRemaining === 1 ? "" : "s"} left, assuming no leave`,
         };
 
+      // -------------------------------------------------------------------
+      // WORK STILL TO DO. Not period figures, and the caveat says so on every
+      // one of them - the card above is headed with a period label, and a
+      // figure that ignores it sitting under that heading would otherwise
+      // read as "84.5h outstanding in September".
+      // -------------------------------------------------------------------
+      case "outstandingWork": {
+        if (outstanding === null) return { key, label: LABELS[key], value: "-", caveat: null };
+
+        const unsized = outstanding.unestimatedCount;
+
+        return {
+          key,
+          label: LABELS[key],
+          // Nothing sized means the answer is unknown, never zero. "0h left"
+          // on a job nobody has estimated is the most dangerous number this
+          // whole feature could produce.
+          value: outstanding.estimatedCount > 0 ? hours(secondsToHours(outstanding.remainingSeconds)) : "-",
+          caveat:
+            outstanding.openCount === 0
+              ? "Nothing is open - every item is in a finished status"
+              : outstanding.estimatedCount === 0
+                ? `Not known: none of the ${outstanding.openCount} open items carries an estimate`
+                : unsized > 0
+                  ? `As at today, not this period. A floor, not a forecast: ${unsized} more open ${unsized === 1 ? "item has" : "items have"} no estimate`
+                  : "As at today, not this period. Every open item is sized",
+        };
+      }
+
+      case "budgetLeft": {
+        if (outstanding === null) return { key, label: LABELS[key], value: "-", caveat: null };
+
+        return {
+          key,
+          label: LABELS[key],
+          // Nothing committed means nothing to measure against. "0 h" would
+          // read as "the budget is spent", which is the opposite of true.
+          value:
+            outstanding.committedSeconds === 0
+              ? "-"
+              : hours(secondsToHours(outstanding.budgetRemainingSeconds)),
+          caveat:
+            outstanding.committedSeconds === 0
+              ? "Nothing here is estimated, so there is no commitment to measure against"
+              : outstanding.overBudgetSeconds > 0
+                ? `${hours(secondsToHours(outstanding.overBudgetSeconds))} over the ${hours(secondsToHours(outstanding.committedSeconds))} committed. As at today, not this period`
+                : `Committed ${hours(secondsToHours(outstanding.committedSeconds))}, spent ${hours(secondsToHours(outstanding.spentSeconds))}. As at today, not this period`,
+        };
+      }
+
+      case "unsizedWork": {
+        if (outstanding === null) return { key, label: LABELS[key], value: "-", caveat: null };
+
+        return {
+          key,
+          label: LABELS[key],
+          value: String(outstanding.unestimatedCount),
+          caveat:
+            outstanding.unestimatedLoggedSeconds > 0
+              ? `${hours(secondsToHours(outstanding.unestimatedLoggedSeconds))} already logged against them`
+              : `${outstanding.estimatedCount + outstanding.coveredCount} of ${outstanding.openCount} open items are sized`,
+        };
+      }
+
       case "utilisation":
         return {
           key,
@@ -221,6 +294,7 @@ export function describeScope(input: {
   periodLabel: string;
   peopleNames: string[];
   category: string | undefined;
+  clientLabel: string | undefined;
   projectLabel: string | undefined;
   billable: string | undefined;
 }): string {
@@ -235,6 +309,7 @@ export function describeScope(input: {
   }
 
   if (input.category && input.category !== "all") parts.push(`in ${input.category}`);
+  if (input.clientLabel) parts.push(`for ${input.clientLabel}`);
   if (input.projectLabel) parts.push(`on ${input.projectLabel}`);
 
   return `${parts.join(", ")} - ${input.periodLabel}`;

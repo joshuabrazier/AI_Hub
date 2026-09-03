@@ -877,6 +877,10 @@ export interface WorklogFacts {
   // NULL means never classified, which is not the same as classified as
   // not-R&D: the first is a gap, the second is a decision.
   classifiedAt: Date | null;
+  // 'label' | 'space' | null. WHICH rule produced rndClass. With two rules
+  // able to produce one, the answer alone cannot defend a claim - see
+  // migration 017.
+  rndSource: string | null;
 }
 
 export type WorklogFact = Selectable<WorklogFacts>;
@@ -902,6 +906,11 @@ export interface WorklogRndHistories {
   newRndClass: string | null;
   oldLabels: string | null;
   newLabels: string | null;
+  // A change of SOURCE matters as much as a change of class: an hour that
+  // was core because somebody labelled it, and is now core only because of
+  // where it lives, is a weaker claim than it was.
+  oldRndSource: string | null;
+  newRndSource: string | null;
   changedAt: Generated<Date>;
 }
 
