@@ -350,3 +350,32 @@ again", which is why it reads Graph's `innerError.code` instead of the status.
 started during the meeting.** Neither is something the app can fix. A meeting a
 client ran on their own tenant belongs to their tenant, and the recorder is the
 answer for those.
+
+### Presence, for the in-meeting prompt
+
+The app can notice you are in a Teams meeting and offer to have it
+transcribed. That reads `/me/presence`, which needs the `Presence.Read`
+scope.
+
+`Presence.Read` is your OWN presence. Do not grant `Presence.Read.All`:
+it would let the app see when any colleague is in a call, which is a
+surveillance capability whatever it was added for, and nothing here needs it.
+
+Like every other Graph scope, adding it costs a tenant admin consent AND one
+sign-in from everybody. A refresh token already issued keeps the scopes it
+was granted with, so until somebody signs in again the prompt stays silent
+for them - by design, not as a failure.
+
+The prompt asks you to start transcription in Teams. It cannot start it for
+you: Graph has no API to do that on somebody's behalf. If you want it
+automatic, that is a Teams meeting policy that auto-transcribes, set by an
+admin:
+
+```powershell
+Set-CsTeamsMeetingPolicy -Identity Global -AllowTranscription $true
+```
+
+Nothing in the app records a Teams meeting itself, and that is deliberate.
+Teams announces transcription to everyone in the meeting; this app cannot put
+audio into a Teams call, so it could never announce anything to anybody but
+you. See the note at the top of `meeting-prompt.tsx`.
