@@ -23,6 +23,21 @@
 //
 // It also carries the caller's own signal, because a reader who has closed
 // the tab is a second, independent reason to stop.
+//
+// THE FIRST BYTE GETS ITS OWN, SHORTER DEADLINE, and that is a separate
+// judgement from the one above rather than a tightening of it.
+//
+// Silence BEFORE anything has arrived means nothing yet: no connection was
+// proven, no tokens were counted, no work is at risk. Silence AFTER a reply
+// has started is different - there is a partial answer worth protecting and
+// the model has demonstrated it is alive.
+//
+// Measured in production: Bedrock accepted a five-character prompt, returned
+// 200, and sent nothing for the full window. Every token count null. The AWS
+// SDK cannot catch that on its own - NodeHttpHandler clears its requestTimeout
+// the moment the response headers arrive, so a stream that opens and then
+// goes quiet is covered by nothing but this - which is why the wait was two
+// and a half minutes for an answer that was never coming.
 // -------------------------------------------------------------------
 
 export type StallGuard = {
@@ -34,11 +49,21 @@ export type StallGuard = {
   dispose(): void;
 };
 
-export function createStallGuard(timeoutMs: number, linked?: AbortSignal): StallGuard {
+export function createStallGuard(
+  timeoutMs: number,
+  linked?: AbortSignal,
+  // How long to wait for the FIRST sign of life. Defaults to the same window,
+  // so an existing caller behaves exactly as it did.
+  firstByteTimeoutMs: number = timeoutMs,
+): StallGuard {
   const controller = new AbortController();
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let finished = false;
+
+  // Widens to the full window as soon as anything arrives.
+  let current = firstByteTimeoutMs;
+  let started = false;
 
   const clear = () => {
     if (timer !== null) clearTimeout(timer);
@@ -57,12 +82,18 @@ export function createStallGuard(timeoutMs: number, linked?: AbortSignal): Stall
 
     clear();
 
+    const window = current;
+
     timer = setTimeout(() => {
       timer = null;
       controller.abort(
-        new Error(`Nothing was received for ${Math.round(timeoutMs / 1000)} seconds, so the request was stopped.`),
+        new Error(
+          started
+            ? `Nothing was received for ${Math.round(window / 1000)} seconds, so the request was stopped.`
+            : `The model sent nothing for ${Math.round(window / 1000)} seconds, so the request was stopped.`,
+        ),
       );
-    }, timeoutMs);
+    }, window);
   };
 
   if (linked) {
@@ -88,5 +119,13 @@ export function createStallGuard(timeoutMs: number, linked?: AbortSignal): Stall
   // precisely the window that needs covering.
   if (!controller.signal.aborted) arm();
 
-  return { signal: controller.signal, progress: arm, dispose };
+  // The first call widens the window, because from here on there is a partial
+  // reply worth protecting and the model has proved it is alive.
+  const progress = () => {
+    started = true;
+    current = timeoutMs;
+    arm();
+  };
+
+  return { signal: controller.signal, progress, dispose };
 }

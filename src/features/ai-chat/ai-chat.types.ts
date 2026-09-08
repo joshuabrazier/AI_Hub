@@ -302,3 +302,24 @@ export const CHAT_PLATFORM_IDLE_CEILING_MS = 230_000;
 // seconds, not minutes.
 // -------------------------------------------------------------------
 export const CHAT_STALL_TIMEOUT_MS = 150_000;
+
+// -------------------------------------------------------------------
+// How long to wait for the model's FIRST token.
+//
+// Much shorter than the stall window above, because the two protect
+// different things. Once a reply has started there is a partial answer worth
+// keeping and the model has proved it is alive; before that, silence is just
+// silence.
+//
+// Measured in production: Bedrock accepted "hi", returned 200 and sent
+// nothing at all - every token count null - and the reader waited the full
+// stall window for an answer that was never coming. The AWS SDK cannot catch
+// this: NodeHttpHandler clears its own requestTimeout as soon as the response
+// headers arrive, so a stream that opens and goes quiet is covered by nothing
+// but our guard.
+//
+// Twenty seconds is well past a normal first token, which is seconds even on
+// a large cached prompt, and far short of making somebody wonder whether the
+// page is broken.
+// -------------------------------------------------------------------
+export const CHAT_FIRST_TOKEN_TIMEOUT_MS = 20_000;
