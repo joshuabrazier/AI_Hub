@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 
-import { armTeamsAutoImportAction, getMeetingNowAction } from "../transcription.actions";
+import { ROUTES } from "@/lib/routes";
+
+import { cancelTeamsAutoImportAction, getMeetingNowAction } from "../transcription.actions";
 import type { MeetingNowDTO } from "../meeting-now.service";
 import { MeetingPromptPanel } from "./meeting-prompt-panel";
 
@@ -46,6 +47,42 @@ import { MeetingPromptPanel } from "./meeting-prompt-panel";
 // enough that a prompt arriving a minute in is still early.
 const POLL_MS = 90_000;
 
+// -------------------------------------------------------------------
+// A LEASE, so several open tabs do not each poll.
+//
+// This used to skip whenever the tab was hidden, which was the wrong rule
+// once a push notification was the point: during a meeting the browser is
+// BEHIND Teams, so the tab is always hidden at exactly the moment the
+// notification matters. Skipping then meant the meeting was never detected
+// and the notification never sent.
+//
+// So it polls regardless of visibility, and the tab-count problem is solved
+// properly instead: whichever tab gets there first writes a timestamp, and
+// the others stand down until it lapses. Two tabs can still race into one
+// extra call, which is a far better failure than not noticing a meeting.
+//
+// localStorage rather than a BroadcastChannel because it survives a tab being
+// closed mid-interval - a channel would need a live leader to hand over.
+// Wrapped in try/catch because a browser with site data blocked throws on
+// access, and there the right answer is to poll rather than to go silent.
+// -------------------------------------------------------------------
+const POLL_LEASE_KEY = "meeting-prompt:last-poll";
+
+function claimPollLease(): boolean {
+  try {
+    const previous = Number(window.localStorage.getItem(POLL_LEASE_KEY) ?? 0);
+
+    // A small slack, so a tab whose timer fires a few milliseconds early does
+    // not hand the whole interval to another one.
+    if (Number.isFinite(previous) && Date.now() - previous < POLL_MS - 2_000) return false;
+
+    window.localStorage.setItem(POLL_LEASE_KEY, String(Date.now()));
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 // Document Picture-in-Picture is not in lib.dom yet. Narrow declaration
 // rather than `any`, so a typo in the call is still caught.
 declare global {
@@ -57,7 +94,7 @@ declare global {
   }
 }
 
-function supportsFloatingWindow(): boolean {
+export function supportsFloatingWindow(): boolean {
   return typeof window !== "undefined" && "documentPictureInPicture" in window;
 }
 
@@ -69,7 +106,7 @@ function supportsFloatingWindow(): boolean {
 // Both shapes are copied because Next serves them differently: real <link>
 // stylesheets in production, inline <style> elements in development.
 // -------------------------------------------------------------------
-function copyStyles(target: Window): void {
+export function copyStyles(target: Window): void {
   for (const sheet of Array.from(document.styleSheets)) {
     try {
       const rules = Array.from(sheet.cssRules)
@@ -89,7 +126,7 @@ function copyStyles(target: Window): void {
   }
 }
 
-function useMeetingNow(): MeetingNowDTO | null {
+export function useMeetingNow(): MeetingNowDTO | null {
   const [state, setState] = useState<MeetingNowDTO | null>(null);
 
   // Once Graph says the scope is missing, nothing will change until the
@@ -100,12 +137,14 @@ function useMeetingNow(): MeetingNowDTO | null {
   useEffect(() => {
     let cancelled = false;
 
-    const poll = async () => {
+    const poll = async (options: { force?: boolean } = {}) => {
       if (cancelled || stopped.current) return;
-      // Nothing to prompt about in a tab nobody is looking at, and a person
-      // with several tabs open would otherwise multiply the Graph calls by
-      // the number of tabs.
-      if (document.visibilityState !== "visible") return;
+
+      // Deliberately NOT gated on visibility - see the note on the lease.
+      // A forced poll skips the lease, because somebody returning to the tab
+      // wants the current answer rather than the one another tab happens to
+      // have leased.
+      if (!options.force && !claimPollLease()) return;
 
       const result = await getMeetingNowAction();
 
@@ -118,13 +157,13 @@ function useMeetingNow(): MeetingNowDTO | null {
       setState(result.data);
     };
 
-    void poll();
+    void poll({ force: true });
     const timer = window.setInterval(() => void poll(), POLL_MS);
 
     // Ask again as soon as somebody comes back to the tab, rather than
-    // making them wait out the remainder of an interval that was skipped.
+    // showing them whatever the last poll found some time ago.
     const onVisible = () => {
-      if (document.visibilityState === "visible") void poll();
+      if (document.visibilityState === "visible") void poll({ force: true });
     };
     document.addEventListener("visibilitychange", onVisible);
 
@@ -140,18 +179,11 @@ function useMeetingNow(): MeetingNowDTO | null {
 
 export function MeetingPrompt() {
   const data = useMeetingNow();
-  const [pipWindow, setPipWindow] = useState<Window | null>(null);
 
-  // Which meetings this person has already asked us to collect, so the panel
-  // flips to its confirmed state and stays there for the rest of the meeting
-  // rather than asking again on the next poll.
-  const [armedKeys, setArmedKeys] = useState<Set<string>>(new Set());
-  const [arming, setArming] = useState(false);
-  const [armError, setArmError] = useState<string | null>(null);
-
-  // The same window as the state, reachable from an effect without making
-  // that effect depend on it.
-  const pipRef = useRef<Window | null>(null);
+  // Meetings somebody has said they do not want kept. Local, so the panel
+  // reflects the choice immediately; the server is what actually stops the
+  // collection, and a cancelled row is never re-armed by a later poll.
+  const [cancelledKeys, setCancelledKeys] = useState<Set<string>>(new Set());
 
   // Dismissals last for the SESSION and are keyed on the meeting, so saying
   // no to one meeting does not silence the next, and a page navigation does
@@ -160,92 +192,42 @@ export function MeetingPrompt() {
 
   const key = data?.meeting?.eventId ?? (data?.prompt ? "unknown-call" : null);
 
-  // ONE PATH OUT, and it is the window's own pagehide event. Closing the
-  // window is the only thing this does; the listener installed in popOut is
-  // what clears the state. Setting both here would mean two ways for the
-  // panel and the window to disagree about whether it is open - and the
-  // browser can close a Picture-in-Picture window on its own, so the
-  // listener has to work unaided regardless.
-  const closePip = useCallback(() => {
-    pipRef.current?.close();
+  // -----------------------------------------------------------------
+  // POP OUT INTO A REAL WINDOW, not a Picture-in-Picture one.
+  //
+  // A PiP window floats above everything but is tied to THIS document and
+  // dies the moment this tab closes - which is exactly when somebody wants it
+  // most, having shut the app to get on with the meeting. A window.open
+  // window is an independent browsing context and outlives its opener.
+  //
+  // That window can open a PiP of its own once it is up, so the on-top half
+  // is not lost either; see the note in meeting-prompt-window.tsx. Named, so
+  // pressing this twice focuses the window that already exists rather than
+  // opening a second one.
+  // -----------------------------------------------------------------
+  const popOut = useCallback(() => {
+    // Blocked by a popup blocker returns null, and there is nothing to report
+    // when it does: the in-page panel is still here and still says everything
+    // the window would.
+    window.open(ROUTES.MEETING_PROMPT, "meeting-prompt", "popup,width=460,height=680")?.focus();
   }, []);
-
-  const popOut = useCallback(async () => {
-    if (!supportsFloatingWindow()) return;
-
-    try {
-      // Requires a user gesture, which is why this is a button and the
-      // window cannot open itself.
-      const win = await window.documentPictureInPicture!.requestWindow({ width: 440, height: 560 });
-
-      copyStyles(win);
-      win.document.body.style.margin = "0";
-      win.addEventListener("pagehide", () => {
-        pipRef.current = null;
-        setPipWindow(null);
-      });
-
-      pipRef.current = win;
-      setPipWindow(win);
-    } catch {
-      // Refused, unsupported, or no gesture. The in-page panel is still
-      // there, so there is nothing to report.
-    }
-  }, []);
-
-  // A floating window outliving the meeting it is about would be a panel
-  // making a claim that is no longer true. Closing it is all this does - the
-  // pagehide listener clears the state.
-  useEffect(() => {
-    if (!data?.prompt) closePip();
-  }, [data?.prompt, closePip]);
-
-  // And it must not outlive the page either.
-  useEffect(() => () => pipRef.current?.close(), []);
 
   if (!data?.prompt || key === null || dismissed.has(key)) return null;
 
-  const dismiss = () => {
-    setDismissed((current) => new Set(current).add(key));
-    closePip();
-  };
+  const dismiss = () => setDismissed((current) => new Set(current).add(key));
 
-  const arm = async () => {
+  const cancelCollection = async () => {
     if (!data.meeting) return;
 
-    setArming(true);
-    setArmError(null);
+    const eventId = data.meeting.eventId;
 
-    const result = await armTeamsAutoImportAction({ eventId: data.meeting.eventId });
+    // Optimistic, in the safe direction: if the call fails the collection
+    // still happens, and an unwanted transcript can be deleted where a missed
+    // one cannot be recovered.
+    setCancelledKeys((current) => new Set(current).add(eventId));
 
-    setArming(false);
-
-    if (!result.success) {
-      // Shown in the panel rather than thrown. This is a live meeting and an
-      // error boundary over the page somebody is working in would be a worse
-      // interruption than the one it is reporting.
-      setArmError(result.formError ?? "That could not be set up just now.");
-      return;
-    }
-
-    setArmedKeys((current) => new Set(current).add(data.meeting!.eventId));
+    await cancelTeamsAutoImportAction({ eventId });
   };
-
-  const panel = (
-    <MeetingPromptPanel
-      data={data}
-      armed={data.meeting !== null && armedKeys.has(data.meeting.eventId)}
-      arming={arming}
-      armError={armError}
-      onArm={() => void arm()}
-      onDismiss={dismiss}
-      onPopOut={popOut}
-      canPopOut={supportsFloatingWindow()}
-      floating={pipWindow !== null}
-    />
-  );
-
-  if (pipWindow) return createPortal(<div className="p-3">{panel}</div>, pipWindow.document.body);
 
   // -----------------------------------------------------------------
   // BOTTOM CENTRE AND WIDE, not a corner card.
@@ -264,7 +246,17 @@ export function MeetingPrompt() {
       role="alert"
       aria-live="assertive"
     >
-      {panel}
+      <MeetingPromptPanel
+        data={data}
+        collecting={
+          data.autoImportArmed && data.meeting !== null && !cancelledKeys.has(data.meeting.eventId)
+        }
+        onCancelCollection={() => void cancelCollection()}
+        onDismiss={dismiss}
+        onPopOut={popOut}
+        canPopOut
+        floating={false}
+      />
     </div>
   );
 }
