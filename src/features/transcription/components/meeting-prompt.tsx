@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+
+import { ROUTES } from "@/lib/routes";
 
 import { cancelTeamsAutoImportAction, getMeetingNowAction } from "../transcription.actions";
 import type { MeetingNowDTO } from "../meeting-now.service";
@@ -57,7 +58,7 @@ declare global {
   }
 }
 
-function supportsFloatingWindow(): boolean {
+export function supportsFloatingWindow(): boolean {
   return typeof window !== "undefined" && "documentPictureInPicture" in window;
 }
 
@@ -69,7 +70,7 @@ function supportsFloatingWindow(): boolean {
 // Both shapes are copied because Next serves them differently: real <link>
 // stylesheets in production, inline <style> elements in development.
 // -------------------------------------------------------------------
-function copyStyles(target: Window): void {
+export function copyStyles(target: Window): void {
   for (const sheet of Array.from(document.styleSheets)) {
     try {
       const rules = Array.from(sheet.cssRules)
@@ -89,7 +90,7 @@ function copyStyles(target: Window): void {
   }
 }
 
-function useMeetingNow(): MeetingNowDTO | null {
+export function useMeetingNow(): MeetingNowDTO | null {
   const [state, setState] = useState<MeetingNowDTO | null>(null);
 
   // Once Graph says the scope is missing, nothing will change until the
@@ -140,16 +141,11 @@ function useMeetingNow(): MeetingNowDTO | null {
 
 export function MeetingPrompt() {
   const data = useMeetingNow();
-  const [pipWindow, setPipWindow] = useState<Window | null>(null);
 
   // Meetings somebody has said they do not want kept. Local, so the panel
   // reflects the choice immediately; the server is what actually stops the
   // collection, and a cancelled row is never re-armed by a later poll.
   const [cancelledKeys, setCancelledKeys] = useState<Set<string>>(new Set());
-
-  // The same window as the state, reachable from an effect without making
-  // that effect depend on it.
-  const pipRef = useRef<Window | null>(null);
 
   // Dismissals last for the SESSION and are keyed on the meeting, so saying
   // no to one meeting does not silence the next, and a page navigation does
@@ -158,84 +154,42 @@ export function MeetingPrompt() {
 
   const key = data?.meeting?.eventId ?? (data?.prompt ? "unknown-call" : null);
 
-  // ONE PATH OUT, and it is the window's own pagehide event. Closing the
-  // window is the only thing this does; the listener installed in popOut is
-  // what clears the state. Setting both here would mean two ways for the
-  // panel and the window to disagree about whether it is open - and the
-  // browser can close a Picture-in-Picture window on its own, so the
-  // listener has to work unaided regardless.
-  const closePip = useCallback(() => {
-    pipRef.current?.close();
+  // -----------------------------------------------------------------
+  // POP OUT INTO A REAL WINDOW, not a Picture-in-Picture one.
+  //
+  // A PiP window floats above everything but is tied to THIS document and
+  // dies the moment this tab closes - which is exactly when somebody wants it
+  // most, having shut the app to get on with the meeting. A window.open
+  // window is an independent browsing context and outlives its opener.
+  //
+  // That window can open a PiP of its own once it is up, so the on-top half
+  // is not lost either; see the note in meeting-prompt-window.tsx. Named, so
+  // pressing this twice focuses the window that already exists rather than
+  // opening a second one.
+  // -----------------------------------------------------------------
+  const popOut = useCallback(() => {
+    // Blocked by a popup blocker returns null, and there is nothing to report
+    // when it does: the in-page panel is still here and still says everything
+    // the window would.
+    window.open(ROUTES.MEETING_PROMPT, "meeting-prompt", "popup,width=460,height=680")?.focus();
   }, []);
-
-  const popOut = useCallback(async () => {
-    if (!supportsFloatingWindow()) return;
-
-    try {
-      // Requires a user gesture, which is why this is a button and the
-      // window cannot open itself.
-      const win = await window.documentPictureInPicture!.requestWindow({ width: 440, height: 560 });
-
-      copyStyles(win);
-      win.document.body.style.margin = "0";
-      win.addEventListener("pagehide", () => {
-        pipRef.current = null;
-        setPipWindow(null);
-      });
-
-      pipRef.current = win;
-      setPipWindow(win);
-    } catch {
-      // Refused, unsupported, or no gesture. The in-page panel is still
-      // there, so there is nothing to report.
-    }
-  }, []);
-
-  // A floating window outliving the meeting it is about would be a panel
-  // making a claim that is no longer true. Closing it is all this does - the
-  // pagehide listener clears the state.
-  useEffect(() => {
-    if (!data?.prompt) closePip();
-  }, [data?.prompt, closePip]);
-
-  // And it must not outlive the page either.
-  useEffect(() => () => pipRef.current?.close(), []);
 
   if (!data?.prompt || key === null || dismissed.has(key)) return null;
 
-  const dismiss = () => {
-    setDismissed((current) => new Set(current).add(key));
-    closePip();
-  };
+  const dismiss = () => setDismissed((current) => new Set(current).add(key));
 
   const cancelCollection = async () => {
     if (!data.meeting) return;
 
     const eventId = data.meeting.eventId;
 
-    // Optimistic. If the call fails the collection still happens, which is
-    // the safe direction to be wrong in: an unwanted transcript can be
-    // deleted, a missed one cannot be recovered.
+    // Optimistic, in the safe direction: if the call fails the collection
+    // still happens, and an unwanted transcript can be deleted where a missed
+    // one cannot be recovered.
     setCancelledKeys((current) => new Set(current).add(eventId));
 
     await cancelTeamsAutoImportAction({ eventId });
   };
-
-  const panel = (
-    <MeetingPromptPanel
-      data={data}
-      collecting={
-        data.autoImportArmed && data.meeting !== null && !cancelledKeys.has(data.meeting.eventId)
-      }
-      onCancelCollection={() => void cancelCollection()}
-      onDismiss={dismiss}
-      onPopOut={popOut}
-      canPopOut={supportsFloatingWindow()}
-      floating={pipWindow !== null}
-    />
-  );
-
-  if (pipWindow) return createPortal(<div className="p-3">{panel}</div>, pipWindow.document.body);
 
   // -----------------------------------------------------------------
   // BOTTOM CENTRE AND WIDE, not a corner card.
@@ -254,7 +208,17 @@ export function MeetingPrompt() {
       role="alert"
       aria-live="assertive"
     >
-      {panel}
+      <MeetingPromptPanel
+        data={data}
+        collecting={
+          data.autoImportArmed && data.meeting !== null && !cancelledKeys.has(data.meeting.eventId)
+        }
+        onCancelCollection={() => void cancelCollection()}
+        onDismiss={dismiss}
+        onPopOut={popOut}
+        canPopOut
+        floating={false}
+      />
     </div>
   );
 }

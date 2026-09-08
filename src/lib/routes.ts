@@ -47,6 +47,10 @@ export const ROUTES = {
   ADMIN_TEAMS: "/admin/teams",
   ADMIN_AI_CHAT: "/admin/ai-chat",
   ADMIN_TRANSCRIPTION: "/admin/transcription",
+  // The in-meeting prompt as its own window. Top level and outside the three
+  // areas on purpose: it is opened with window.open and has to OUTLIVE the
+  // page that opened it, so it cannot be a route under one of them.
+  MEETING_PROMPT: "/meeting-prompt",
   ADMIN_SUMMARIES: "/admin/summaries",
   ADMIN_CONTENT: "/admin/content",
   ADMIN_HOME_PAGE: "/admin/home-page",
@@ -177,6 +181,7 @@ export function isChromelessRoute(pathname: string) {
     ROUTES.PUBLIC_AUTH_RESET_PASSWORD,
     ROUTES.PUBLIC_AUTH_TWO_FACTOR,
     ROUTES.SETUP_TWO_FACTOR,
+    ROUTES.MEETING_PROMPT,
   ];
   if (chromelessRoutes.includes(pathname)) return true;
 
