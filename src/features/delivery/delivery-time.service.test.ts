@@ -298,38 +298,27 @@ describe("logTimeService", () => {
     );
   });
 
-  it("DISCARDS a userId supplied by an ordinary member and logs their own time", async () => {
-    signedInAsMember();
+  it("logs the SESSION user's time, whatever else is in the payload", async () => {
+    // Time is logged by the person who did the work, always. A lead used to
+    // be able to log on somebody's behalf and that capability has gone, so
+    // the property to hold is now stronger than "the role was checked
+    // first": there is nothing a caller can send that names anybody.
+    //
+    // Passed through an unknown-shaped payload rather than a typed one on
+    // purpose. LogTimeSchema no longer has the field, so a typed fixture
+    // could not express the attack, and a service that started reading a
+    // stray userId again would not be caught by a test that cannot send
+    // one. This is what a hand-rolled fetch to the action could carry.
+    signedInAsMember(true);
 
-    await logTimeService(logRequest({ userId: OTHER_ID }));
+    await logTimeService({ ...logRequest(), userId: OTHER_ID } as Unsafe as LogTimeRequestDTO);
 
     expect(mockAddEntry).toHaveBeenCalledWith(expect.objectContaining({ userId: ACTOR_ID }));
-    // Discarded, not validated: nothing was looked up about the named
-    // account, so there is nothing here to probe with.
+    // And nothing was looked up about the named account, so there is not
+    // even a probe here: no membership read means no way to learn whether
+    // that person is on the project.
     expect(mockGetProjectMember).not.toHaveBeenCalled();
-  });
-
-  it("lets a LEAD log for somebody else, at THAT person's band on this project", async () => {
-    signedInAsMember(true);
-    mockGetProjectMember.mockResolvedValue({
-      projectId: PROJECT_ID,
-      userId: OTHER_ID,
-      isLead: false,
-      rateBand: RATE_BANDS.DISCOUNTED,
-    } as Unsafe as NonNullable<Awaited<ReturnType<typeof getProjectMemberRepo>>>);
-
-    await logTimeService(logRequest({ userId: OTHER_ID }));
-
-    expect(mockGetRate).toHaveBeenCalledWith(OTHER_ID, RATE_BANDS.DISCOUNTED, "2026-06-16");
-    expect(mockAddEntry).toHaveBeenCalledWith(expect.objectContaining({ userId: OTHER_ID }));
-  });
-
-  it("refuses to log for somebody who is not on the project", async () => {
-    signedInAsMember(true);
-    mockGetProjectMember.mockResolvedValue(undefined);
-
-    await expect(logTimeService(logRequest({ userId: OTHER_ID }))).rejects.toThrow(/not a member/);
-    expect(mockAddEntry).not.toHaveBeenCalled();
+    expect(mockGetRate).toHaveBeenCalledWith(ACTOR_ID, RATE_BANDS.STANDARD, "2026-06-16");
   });
 
   it("refuses an admin who is not on the project, rather than logging an unvalued hour", async () => {
@@ -663,15 +652,6 @@ describe("addTimesheetRowService", () => {
 
     await expect(addTimesheetRowService(TASK_ID, "2026-06-15")).rejects.toThrow(
       /no longer available/,
-    );
-  });
-
-  it("refuses a row for somebody who could not log to the project anyway", async () => {
-    signedInAsMember(true);
-    mockGetProjectMember.mockResolvedValue(undefined);
-
-    await expect(addTimesheetRowService(TASK_ID, "2026-06-15", { userId: OTHER_ID })).rejects.toThrow(
-      /not a member/,
     );
   });
 });

@@ -1193,12 +1193,25 @@ export type TaskAttachmentUpload = {
 // invoice.
 // -------------------------------------------------------------------
 
+// -------------------------------------------------------------------
+// THERE IS NO userId HERE, AND THAT IS THE POINT.
+//
+// Time is logged by the person who did the work, always. This carried an
+// optional userId for a while so that a lead could log on somebody's
+// behalf, and it has been removed rather than left unused: an
+// authorization branch nothing exercises is a branch nothing protects
+// either, and this one guarded the most sensitive write in the module.
+//
+// It also removes a question the schema could not answer. An entry logged
+// by a lead for a member is indistinguishable from the member's own unless
+// the row records who typed it, so allowing it would have needed an
+// entered_by column to stay auditable. Not allowing it needs nothing.
+//
+// The owner is resolved from the SESSION in the service. Nothing a caller
+// sends can name somebody else, so there is no branch to get wrong.
+// -------------------------------------------------------------------
 export const LogTimeSchema = z.object({
   taskId: taskIdSchema,
-  // Whose time. Absent means the session user, which is the only value an
-  // ordinary member may use - the service resolves the actor from the session
-  // and only a lead or an admin may name somebody else.
-  userId: userIdSchema.optional(),
   workDate: calendarDateField,
   hours: entryHoursField,
   notes: optionalText(NOTE_MAX_CHARS),
@@ -1329,10 +1342,13 @@ export const AddTimesheetRowSchema = z
   .object({
     taskId: taskIdSchema,
     weekStart: calendarDateField,
-    // Absent means the session user. A lead or an admin may add a row to
-    // somebody else's week, matching who may log time for them - and the
-    // service, not this schema, is what decides that.
-    userId: userIdSchema.optional(),
+    // NO userId, for the same reason LogTimeSchema has none: a row is added
+    // to your OWN week. It used to carry one, justified as matching who may
+    // log time for somebody else, and that rule has gone.
+    //
+    // The timesheet WEEK read still takes a userId, and that is not an
+    // inconsistency: an admin LOOKING at somebody's week is a different act
+    // from writing to it, and is wanted for a rates conversation.
     weekStartsOn: weekDayNumberField.default(DEFAULT_WEEK_START),
   })
   .transform((request) => ({
@@ -1345,7 +1361,6 @@ export type AddTimesheetRowRequestDTO = z.output<typeof AddTimesheetRowSchema>;
 // The service's parameter shape, moved off delivery-time.service.ts. Same
 // relationship to the schema above as TimesheetWeekOptions has to its own.
 export type AddTimesheetRowOptions = {
-  userId?: string;
   weekStartsOn?: WeekDayNumber;
 };
 

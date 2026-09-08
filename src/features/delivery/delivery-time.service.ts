@@ -82,15 +82,20 @@ import {
 //
 //   `is_lead` IS THE SECOND GATE. An ordinary member logs their own time
 //   against tasks that already exist. Only a lead - or an admin, who is
-//   never a lead and can always act - logs time for somebody else or moves
-//   an estimate.
+//   never a lead and can always act - moves an estimate.
 //
-//   THE ACTOR COMES FROM THE SESSION. `LogTimeSchema.userId` is optional
-//   and means "me" when absent. When it is present, the branch on what the
-//   caller may do happens BEFORE the value is looked at, and for an
-//   ordinary member it is DISCARDED rather than validated - the same shape
-//   timesheet-chat-facts.service.ts uses for its `person` argument. A
-//   discarded id cannot be probed; a validated one can.
+//   TIME IS ALWAYS YOUR OWN, and that is the strongest rule in this file.
+//   Nothing a caller sends can name another person: LogTimeSchema and
+//   AddTimesheetRowSchema carry no userId, and the owner is read off the
+//   session. This started out as "only a lead may log for somebody else",
+//   which worked but left an authorization branch guarding the module's
+//   most sensitive write - and made a lead's entry indistinguishable from
+//   the member's own unless the row also recorded who typed it. Removing
+//   the capability removed the branch and the audit question together.
+//
+//   Editing is deliberately NOT the same rule. A lead may correct an entry
+//   on their own project, because correcting somebody's mistake is not
+//   authoring their work, and the entry keeps its original owner.
 //
 //   AN EMPTY SCOPE IS NOTHING. Somebody on no projects has no projects,
 //   and the one place this file builds an `in` list from a browser-held
@@ -340,12 +345,7 @@ function requireUnarchivedProject(access: ProjectAccess, act: string): void {
 // so there is nothing here to probe with somebody else's id. A lead or an
 // admin may name anybody; whether that person can actually be charged to
 // this project is a separate question, answered by findRateBandFor.
-// -------------------------------------------------------------------
-function resolveTimeOwner(actor: Actor, access: ProjectAccess, suppliedUserId: string | undefined): string {
-  if (!access.canManage) return actor.id;
 
-  return suppliedUserId ?? actor.id;
-}
 
 // -------------------------------------------------------------------
 // Which of the owner's three rates applies on THIS project.
@@ -550,7 +550,11 @@ export async function logTimeService(requestDTO: LogTimeRequestDTO): Promise<Tim
 
     requireUnarchivedProject(access, "logging time against it");
 
-    const ownerId = resolveTimeOwner(actor, access, requestDTO.userId);
+    // THE SESSION, and nothing else. LogTimeSchema carries no userId, so
+    // there is no supplied value to weigh a role against - see the note on
+    // that schema for why the capability went rather than being left
+    // unused.
+    const ownerId = actor.id;
 
     const workDate = requireWorkDateNotInFuture(requestDTO.workDate);
 
@@ -993,7 +997,9 @@ export async function addTimesheetRowService(
 
     requireUnarchivedProject(access, "adding one of its tasks to a timesheet");
 
-    const ownerId = resolveTimeOwner(actor, access, options.userId);
+    // The session, like logging time. A row belongs to the week of whoever
+    // is looking at it.
+    const ownerId = actor.id;
 
     // The band is DISCARDED - nothing is being priced yet. It is called for
     // its refusal: a row for somebody who is not on the project is a row
