@@ -1747,7 +1747,48 @@ async function ensureAutoImportArmed(
     endsAt: meeting.endsAt,
   });
 
+  // -----------------------------------------------------------------
+  // ONE NOTIFICATION PER MEETING, and the dedupe is free.
+  //
+  // This runs only on the branch that CREATED the row, so a poll every
+  // ninety seconds for the length of a meeting sends exactly one push. No
+  // notified_at column, no timestamp arithmetic, and no way for a retry to
+  // produce a second buzz - the uniqueness that stops a double import is the
+  // same uniqueness that stops a double notification.
+  //
+  // WHY PUSH AT ALL WHEN THERE IS ALREADY A PANEL: the panel is inside the
+  // browser, and during a meeting the browser is behind Teams. A push
+  // notification is drawn by the operating system, so it appears over
+  // whatever is on screen - the one thing no web page can do for itself.
+  // -----------------------------------------------------------------
+  await notifyMeetingStarted(userId, meeting.subject);
+
   return true;
+}
+
+// Best-effort, and never allowed to fail the arming it follows. A push
+// service being briefly unavailable must not stop a meeting being collected;
+// the collection is the part that cannot be redone later.
+async function notifyMeetingStarted(userId: string, subject: string): Promise<void> {
+  if (!isPushConfigured()) return;
+
+  try {
+    await sendPushToUser(userId, {
+      title: "Start recording this meeting",
+      body: `${subject} - in Teams: More actions, then Record and transcribe. It will be summarised for you afterwards.`,
+      // Opens the prompt window, which carries the full instructions and
+      // keeps running after the app is closed.
+      url: ROUTES.MEETING_PROMPT,
+      tag: "meeting-prompt",
+      // THE ONE PLACE THIS APP ASKS FOR A STICKY NOTIFICATION. A meeting
+      // cannot be transcribed retrospectively, so a prompt that auto-dismisses
+      // after five seconds while somebody is talking is the same as never
+      // having sent it.
+      requireInteraction: true,
+    });
+  } catch (error) {
+    console.error("notifyMeetingStarted: could not send", error);
+  }
 }
 
 export async function ensureAutoImportArmedForMeeting(

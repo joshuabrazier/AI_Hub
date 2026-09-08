@@ -47,6 +47,42 @@ import { MeetingPromptPanel } from "./meeting-prompt-panel";
 // enough that a prompt arriving a minute in is still early.
 const POLL_MS = 90_000;
 
+// -------------------------------------------------------------------
+// A LEASE, so several open tabs do not each poll.
+//
+// This used to skip whenever the tab was hidden, which was the wrong rule
+// once a push notification was the point: during a meeting the browser is
+// BEHIND Teams, so the tab is always hidden at exactly the moment the
+// notification matters. Skipping then meant the meeting was never detected
+// and the notification never sent.
+//
+// So it polls regardless of visibility, and the tab-count problem is solved
+// properly instead: whichever tab gets there first writes a timestamp, and
+// the others stand down until it lapses. Two tabs can still race into one
+// extra call, which is a far better failure than not noticing a meeting.
+//
+// localStorage rather than a BroadcastChannel because it survives a tab being
+// closed mid-interval - a channel would need a live leader to hand over.
+// Wrapped in try/catch because a browser with site data blocked throws on
+// access, and there the right answer is to poll rather than to go silent.
+// -------------------------------------------------------------------
+const POLL_LEASE_KEY = "meeting-prompt:last-poll";
+
+function claimPollLease(): boolean {
+  try {
+    const previous = Number(window.localStorage.getItem(POLL_LEASE_KEY) ?? 0);
+
+    // A small slack, so a tab whose timer fires a few milliseconds early does
+    // not hand the whole interval to another one.
+    if (Number.isFinite(previous) && Date.now() - previous < POLL_MS - 2_000) return false;
+
+    window.localStorage.setItem(POLL_LEASE_KEY, String(Date.now()));
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 // Document Picture-in-Picture is not in lib.dom yet. Narrow declaration
 // rather than `any`, so a typo in the call is still caught.
 declare global {
@@ -101,12 +137,14 @@ export function useMeetingNow(): MeetingNowDTO | null {
   useEffect(() => {
     let cancelled = false;
 
-    const poll = async () => {
+    const poll = async (options: { force?: boolean } = {}) => {
       if (cancelled || stopped.current) return;
-      // Nothing to prompt about in a tab nobody is looking at, and a person
-      // with several tabs open would otherwise multiply the Graph calls by
-      // the number of tabs.
-      if (document.visibilityState !== "visible") return;
+
+      // Deliberately NOT gated on visibility - see the note on the lease.
+      // A forced poll skips the lease, because somebody returning to the tab
+      // wants the current answer rather than the one another tab happens to
+      // have leased.
+      if (!options.force && !claimPollLease()) return;
 
       const result = await getMeetingNowAction();
 
@@ -119,13 +157,13 @@ export function useMeetingNow(): MeetingNowDTO | null {
       setState(result.data);
     };
 
-    void poll();
+    void poll({ force: true });
     const timer = window.setInterval(() => void poll(), POLL_MS);
 
     // Ask again as soon as somebody comes back to the tab, rather than
-    // making them wait out the remainder of an interval that was skipped.
+    // showing them whatever the last poll found some time ago.
     const onVisible = () => {
-      if (document.visibilityState === "visible") void poll();
+      if (document.visibilityState === "visible") void poll({ force: true });
     };
     document.addEventListener("visibilitychange", onVisible);
 

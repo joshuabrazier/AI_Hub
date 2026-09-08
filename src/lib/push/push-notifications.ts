@@ -96,6 +96,15 @@ export type PushMessage = {
   // Groups notifications on the device so a second one about the same thing
   // replaces the first rather than stacking.
   tag?: string;
+  // Keep it on screen until the person acts on it, rather than letting it
+  // auto-dismiss after a few seconds.
+  //
+  // OFF BY DEFAULT AND IT SHOULD STAY THAT WAY. A notification that will not
+  // go away is an interruption somebody has to deal with, and it is only
+  // worth it when the moment cannot be recovered - being in a meeting that
+  // needs transcription starting. "Your transcription is ready" can wait in
+  // the tray like anything else.
+  requireInteraction?: boolean;
 };
 
 // -------------------------------------------------------------------
