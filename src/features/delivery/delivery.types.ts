@@ -654,7 +654,31 @@ const entryHoursField = z.coerce
 // users(id) - two schemas that happen to agree today, not one schema shared
 // by two owners.
 // -------------------------------------------------------------------
-const dollarsField = z.coerce
+// -------------------------------------------------------------------
+// null IS MAPPED TO NaN SO THE REFINE BELOW REFUSES IT, and that one line
+// is load-bearing.
+//
+// z.coerce.number() runs Number(), and Number(null) is 0. Without this, a
+// caller sending null - the obvious spelling of "no rate recorded" for
+// anybody writing JSON rather than filling in a form - stored a rate of
+// $0.00. A cost rate of nought reports 100% margin on every hour that
+// person works, and a charge rate of nought reports the work as free.
+// Neither is a near miss: both are entirely plausible figures sitting
+// beside correct ones, which is the failure this module is written around.
+//
+// It is done HERE rather than in optionalDollarsField because both rates
+// use this field, and because a zod union takes the first branch that
+// SUCCEEDS - so an always-failing null branch in that union does not reject
+// anything, it just falls through to the coercion. Learned the hard way.
+//
+// NaN rather than a thrown error, because the "Enter an amount" refine in
+// the rules below is already the right message and already runs.
+// -------------------------------------------------------------------
+// The rules, over a number that has already been coerced. Split out so the
+// null guard can sit in front of the coercion and the rules can still be
+// written as one chain - `.preprocess()` does not return something `.min()`
+// can be called on.
+const dollarAmountRules = z
   .number()
   .refine((value) => Number.isFinite(value), "Enter an amount")
   .min(0, "A rate cannot be negative")
@@ -668,8 +692,19 @@ const dollarsField = z.coerce
   }, "Use at most two decimal places")
   .transform((value) => Math.round(value * 100));
 
-// Empty means "not recorded", which for a cost rate is a real answer: margin
-// stays unknown rather than becoming 100%.
+const dollarsField = z
+  .preprocess((value) => (value === null ? Number.NaN : value), z.coerce.number())
+  .pipe(dollarAmountRules);
+
+// -------------------------------------------------------------------
+// Empty means "not recorded", which for a cost rate is a real answer:
+// margin stays unknown rather than becoming 100%.
+//
+// "" IS THE ONE SPELLING OF ABSENCE THIS FIELD ACCEPTS, because it is what
+// an empty text input actually sends. null and undefined are both refused -
+// null by the guard on dollarsField above, which explains why - so a JSON
+// caller cannot reach the coercion and have absence read as nought.
+// -------------------------------------------------------------------
 const optionalDollarsField = z
   .union([z.literal(""), dollarsField])
   .transform((value) => (value === "" ? null : value));

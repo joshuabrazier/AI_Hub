@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { RATE_BANDS } from "@/lib/data/kysely-database-types";
+
 import {
   DAYS_IN_WEEK,
   DEFAULT_WEEK_START,
@@ -16,6 +18,7 @@ import {
   startOfWeek,
   weekDates,
   weekDayOf,
+  SetUserRateSchema,
 } from "./delivery.types";
 
 // -------------------------------------------------------------------
@@ -626,5 +629,49 @@ describe("marginCents", () => {
     expect(cost).toBeNull();
     expect(marginCents(charge, cost)).toBeNull();
     expect(marginCents(charge, cost)).not.toBe(charge);
+  });
+});
+
+describe("rate fields refuse null rather than reading it as nought", () => {
+  const base = { userId: "u".repeat(32), band: RATE_BANDS.STANDARD, effectiveFrom: "2026-07-01" };
+
+  // THIS WAS A LIVE BUG, found by rendering the rates screen against the
+  // schema. z.coerce.number() runs Number(), and Number(null) is 0 - so a
+  // caller sending null to mean "no cost recorded", which is the obvious
+  // spelling for anybody writing JSON rather than filling in a form, stored
+  // the cost as $0.00 and reported 100% margin on every hour that person
+  // worked. On the charge side it recorded the work as free.
+  //
+  // Neither reads as broken. Both are plausible figures sitting beside
+  // correct ones, which is the failure this whole module is written around.
+
+  it("refuses a null cost rate", () => {
+    expect(SetUserRateSchema.safeParse({ ...base, chargeRate: 150, costRate: null }).success).toBe(false);
+  });
+
+  it("refuses a null charge rate", () => {
+    expect(SetUserRateSchema.safeParse({ ...base, chargeRate: null, costRate: "" }).success).toBe(false);
+  });
+
+  it('still reads "" as not recorded, which is what an empty box sends', () => {
+    const parsed = SetUserRateSchema.safeParse({ ...base, chargeRate: 150, costRate: "" });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.costRate).toBeNull();
+  });
+
+  it("still accepts a REAL zero, which means the work genuinely costs nothing", () => {
+    // The point is to tell absence from nought, not to ban nought. An
+    // unpaid intern has a cost rate of 0 and that is a fact about them.
+    const parsed = SetUserRateSchema.safeParse({ ...base, chargeRate: 150, costRate: 0 });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.costRate).toBe(0);
+  });
+
+  it("converts dollars to cents, so nothing downstream multiplies", () => {
+    const parsed = SetUserRateSchema.safeParse({ ...base, chargeRate: "12.50", costRate: "" });
+
+    expect(parsed.success && parsed.data.chargeRate).toBe(1250);
   });
 });

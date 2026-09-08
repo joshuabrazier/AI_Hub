@@ -72,17 +72,48 @@ export const ROUTES = {
   // "my projects" and every signed-in person can be on one.
   ADMIN_CLIENTS: "/admin/clients",
   ADMIN_PROJECTS: "/admin/projects",
+  // Creating a project. `new` is a STATIC segment under the projects root,
+  // which Next resolves ahead of the dynamic one, so /admin/projects/new is
+  // the form and /admin/projects/<id> is a board. Ids are generated, so
+  // nothing can ever own the word "new" and make that ambiguous.
+  ADMIN_PROJECT_NEW: "/admin/projects/new",
+  // One project's board, and one project's setup. Ids are encoded even
+  // though every one of them is a uuid: a helper is called with whatever
+  // the caller has, encoding a uuid is a no-op, and the alternative is a
+  // path that is right until the first id that is not one.
+  adminProject: (projectId: string) => `/admin/projects/${encodeURIComponent(projectId)}`,
+  adminProjectSetup: (projectId: string) => `/admin/projects/${encodeURIComponent(projectId)}/setup`,
   // Effective-dated charge and cost rates. Admin-only and admin-only ONLY:
   // a charge rate is a client's price and a cost rate is a pay proxy, so
   // unlike projects there is no /manage or /portal counterpart to keep in
   // step. Named here rather than written as a string in the service, so the
   // revalidation and the page cannot disagree about the path.
   ADMIN_RATES: "/admin/rates",
+  // One person's rate history. The id is a routing parameter and nothing
+  // more - getUserRateHistoryService guards on admin and answers notFound()
+  // for an id that resolves to nobody.
+  adminUserRates: (userId: string) => `/admin/rates/${encodeURIComponent(userId)}`,
   // The timesheet WEEK, singular, and deliberately not under /projects: it
   // is one person's week across every project they are on, so it has no
   // project in its path. Distinct from ADMIN_TIMESHEETS above, which is the
   // Jira-era reporting screen over a different table.
   ADMIN_TIMESHEET: "/admin/timesheet",
+  // -----------------------------------------------------------------
+  // The delivery budget report, which is PER PROJECT and takes its project
+  // as a QUERY PARAMETER rather than a path segment.
+  //
+  // That is not a style choice. There is no cross-project budget read to
+  // build an index page from: `getProjectBudgetReportService` takes one
+  // project id, and delivery-rates.service.ts says at length why the
+  // across-projects view is not there and names the two repository
+  // functions it would need. A path segment would announce a list that does
+  // not exist. A query parameter says what is true - one report, opened for
+  // one project, the same way the transcription and chat pages take the row
+  // they open.
+  // -----------------------------------------------------------------
+  ADMIN_DELIVERY_BUDGET: "/admin/delivery-budget",
+  adminDeliveryBudgetForProject: (projectId: string) =>
+    `/admin/delivery-budget?projectId=${encodeURIComponent(projectId)}`,
 
   // Manager area. Every one of these is scoped server-side to the teams the
   // signed-in manager has been assigned to; the team id in the URL is for
@@ -95,6 +126,7 @@ export const ROUTES = {
   MANAGE_PROJECTS: "/manage/projects",
   MANAGE_TIMESHEET: "/manage/timesheet",
   manageTeam: (teamId: string) => `/manage/teams/${teamId}`,
+  manageProject: (projectId: string) => `/manage/projects/${encodeURIComponent(projectId)}`,
 
   // Member portal
   PORTAL: "/portal",
@@ -104,6 +136,13 @@ export const ROUTES = {
   PORTAL_PROJECTS: "/portal/projects",
   PORTAL_TIMESHEET: "/portal/timesheet",
   PORTAL_ACCOUNT: "/portal/account",
+  // The one id in the portal's path, and it is a PROJECT id rather than a
+  // person's: membership is the boundary here, so the row named in the URL
+  // is re-checked against `project_members` on every read and a project the
+  // caller is not on answers notFound(). The rule the portal was built on
+  // stands - nothing in this path identifies the actor, who still comes
+  // from the session.
+  portalProject: (projectId: string) => `/portal/projects/${encodeURIComponent(projectId)}`,
 
   // Errors
   ERROR_FORBIDDEN: "/forbidden",
@@ -176,6 +215,62 @@ export function transcriptionHomeForRole(role: string): string {
       return ROUTES.PORTAL_TRANSCRIPTION;
     default:
       return ROUTES.PORTAL_TRANSCRIPTION;
+  }
+}
+
+// -----------------------------------------------------------------
+// The same question for delivery, which is mounted in all three areas for
+// the same reason transcription is: MEMBERSHIP decides what somebody sees,
+// not their role, so an admin, a manager and a member all need the feature
+// and each needs it in their own area.
+//
+// These exist because the SCREENS have to build links to each other. A
+// project list links to a board, a board links back to a week, and a
+// component that assembles `/admin/projects/${id}` by hand is one that
+// sends a member to a path the proxy redirects away from - silently, to
+// their role home, which reads as a link that does nothing. Several
+// screens link to each other across this module, and every hand-rolled
+// prefix is another chance to get that wrong in a way nobody sees.
+//
+// Exhaustive switches and a least-privileged default, matching roleHome.
+// -----------------------------------------------------------------
+export function projectHomeForRole(role: string): string {
+  switch (role as UserRole) {
+    case USER_ROLES.ADMIN:
+      return ROUTES.ADMIN_PROJECTS;
+    case USER_ROLES.MANAGER:
+      return ROUTES.MANAGE_PROJECTS;
+    case USER_ROLES.MEMBER:
+      return ROUTES.PORTAL_PROJECTS;
+    default:
+      return ROUTES.PORTAL_PROJECTS;
+  }
+}
+
+/** One project's board, in the area this role is allowed to be in. */
+export function projectBoardForRole(role: string, projectId: string): string {
+  switch (role as UserRole) {
+    case USER_ROLES.ADMIN:
+      return ROUTES.adminProject(projectId);
+    case USER_ROLES.MANAGER:
+      return ROUTES.manageProject(projectId);
+    case USER_ROLES.MEMBER:
+      return ROUTES.portalProject(projectId);
+    default:
+      return ROUTES.portalProject(projectId);
+  }
+}
+
+export function timesheetHomeForRole(role: string): string {
+  switch (role as UserRole) {
+    case USER_ROLES.ADMIN:
+      return ROUTES.ADMIN_TIMESHEET;
+    case USER_ROLES.MANAGER:
+      return ROUTES.MANAGE_TIMESHEET;
+    case USER_ROLES.MEMBER:
+      return ROUTES.PORTAL_TIMESHEET;
+    default:
+      return ROUTES.PORTAL_TIMESHEET;
   }
 }
 
