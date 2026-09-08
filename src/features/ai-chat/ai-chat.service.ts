@@ -1265,6 +1265,21 @@ export async function* streamAiChatReplyService(
   // without one, but the route always passes it - see the note on
   // CHAT_TURN_TIMEOUT_MS for what happened when nothing did.
   signal?: AbortSignal,
+  // -----------------------------------------------------------------
+  // "SOMETHING ARRIVED FROM BEDROCK", which is NOT the same as "a chunk was
+  // yielded" - and conflating the two was a real bug.
+  //
+  // Only TEXT deltas are yielded. A tool round emits a block start, a run of
+  // tool-input deltas and a message stop, and yields nothing at all - so a
+  // caller measuring silence by what comes out of this generator sees a
+  // perfectly healthy stream as a dead one, for as long as the model spends
+  // deciding to call a tool and for the whole round trip that follows.
+  //
+  // With up to MAX_TOOL_ROUNDS of that, each a full model call plus a Jira
+  // and database lookup, the silence can run for minutes. The caller needs to
+  // hear the stream itself, not the filtered output of it.
+  // -----------------------------------------------------------------
+  onActivity?: () => void,
 ): AsyncGenerator<string, void, undefined> {
   const user = await requireUser();
 
@@ -1417,6 +1432,11 @@ export async function* streamAiChatReplyService(
       let stopReason: string | undefined;
 
       for await (const event of response.stream) {
+        // EVERY event, before anything is inspected. A tool call is as much a
+        // sign of life as a sentence, and the whole point is that the caller
+        // cannot tell the difference from the outside.
+        onActivity?.();
+
         const started = event.contentBlockStart?.start?.toolUse;
         if (started?.toolUseId && started.name) {
           toolCalls.set(event.contentBlockStart?.contentBlockIndex ?? 0, {

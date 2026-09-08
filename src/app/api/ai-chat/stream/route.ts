@@ -96,7 +96,11 @@ export async function POST(request: Request): Promise<Response> {
   // -----------------------------------------------------------------
   const stall = createStallGuard(CHAT_STALL_TIMEOUT_MS, request.signal, CHAT_FIRST_TOKEN_TIMEOUT_MS);
 
-  const replies = streamAiChatReplyService(validatedRequest.data, stall.signal);
+  // The guard hears the STREAM, not just the text that comes out of it. A
+  // tool round yields nothing for its whole duration - see the note on
+  // onActivity - so without this a healthy model deciding to look up a
+  // timesheet figure is indistinguishable from a dead request.
+  const replies = streamAiChatReplyService(validatedRequest.data, stall.signal, () => stall.progress());
 
   let first: IteratorResult<string, void>;
   try {
