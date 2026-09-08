@@ -67,6 +67,22 @@ export const ROUTES = {
   ADMIN_TIMESHEETS_STAFF: "/admin/timesheets/staff",
   ADMIN_TIMESHEETS_REVIEW: "/admin/timesheets/review",
   ADMIN_TIMESHEETS_EXPORT: "/admin/timesheets/export",
+  // Delivery. Clients are admin-only, so they live here and nowhere else;
+  // projects are mounted in all three areas because the left-hand nav is
+  // "my projects" and every signed-in person can be on one.
+  ADMIN_CLIENTS: "/admin/clients",
+  ADMIN_PROJECTS: "/admin/projects",
+  // Effective-dated charge and cost rates. Admin-only and admin-only ONLY:
+  // a charge rate is a client's price and a cost rate is a pay proxy, so
+  // unlike projects there is no /manage or /portal counterpart to keep in
+  // step. Named here rather than written as a string in the service, so the
+  // revalidation and the page cannot disagree about the path.
+  ADMIN_RATES: "/admin/rates",
+  // The timesheet WEEK, singular, and deliberately not under /projects: it
+  // is one person's week across every project they are on, so it has no
+  // project in its path. Distinct from ADMIN_TIMESHEETS above, which is the
+  // Jira-era reporting screen over a different table.
+  ADMIN_TIMESHEET: "/admin/timesheet",
 
   // Manager area. Every one of these is scoped server-side to the teams the
   // signed-in manager has been assigned to; the team id in the URL is for
@@ -76,6 +92,8 @@ export const ROUTES = {
   MANAGE_AI_CHAT: "/manage/ai-chat",
   MANAGE_TRANSCRIPTION: "/manage/transcription",
   MANAGE_SUMMARIES: "/manage/summaries",
+  MANAGE_PROJECTS: "/manage/projects",
+  MANAGE_TIMESHEET: "/manage/timesheet",
   manageTeam: (teamId: string) => `/manage/teams/${teamId}`,
 
   // Member portal
@@ -83,6 +101,8 @@ export const ROUTES = {
   PORTAL_AI_CHAT: "/portal/ai-chat",
   PORTAL_TRANSCRIPTION: "/portal/transcription",
   PORTAL_SUMMARIES: "/portal/summaries",
+  PORTAL_PROJECTS: "/portal/projects",
+  PORTAL_TIMESHEET: "/portal/timesheet",
   PORTAL_ACCOUNT: "/portal/account",
 
   // Errors

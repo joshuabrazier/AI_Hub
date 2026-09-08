@@ -6,9 +6,11 @@ import {
   RATE_BANDS,
   TASK_COLUMNS,
   TASK_COLUMN_ORDER,
+  USER_ROLES,
   type ProjectStatus,
   type RateBand,
   type TaskColumn,
+  type UserRole,
 } from "@/lib/data/kysely-database-types";
 
 // -------------------------------------------------------------------
@@ -58,6 +60,7 @@ const clientIdSchema = z.string().min(TABLE_ID_LENGTH);
 const projectIdSchema = z.string().min(TABLE_ID_LENGTH);
 const phaseIdSchema = z.string().min(TABLE_ID_LENGTH);
 const taskIdSchema = z.string().min(TABLE_ID_LENGTH);
+const taskAttachmentIdSchema = z.string().min(TABLE_ID_LENGTH);
 const timeEntryIdSchema = z.string().min(TABLE_ID_LENGTH);
 const budgetGroupIdSchema = z.string().min(TABLE_ID_LENGTH);
 const userIdSchema = z.string().min(TABLE_ID_LENGTH);
@@ -144,6 +147,26 @@ export const BOARD_COLUMN_COUNT = TASK_COLUMN_ORDER.length;
 export const MAX_PROJECT_MEMBERS = 200;
 export const MAX_PHASES_PER_PROJECT = 100;
 export const MAX_BUDGET_GROUP_MEMBERS = MAX_PROJECT_MEMBERS;
+
+// -------------------------------------------------------------------
+// How many EMPTY rows one timesheet week may carry.
+//
+// An empty row is a piece of somebody's screen rather than a fact about the
+// business, so it lives in a browser-held store and is handed back to the
+// week read as `addedTaskIds`. That makes the list untrusted input, and it
+// becomes an `in` list, so it is bounded here rather than trusted. Fifty is
+// far more rows than a week of real work has, and small enough that a
+// tampered store cannot turn one page load into an unbounded query.
+//
+// It CAPS rather than refuses - see TimesheetWeekSchema for why.
+// -------------------------------------------------------------------
+export const MAX_TIMESHEET_ADDED_ROWS = 50;
+
+// The bound on a stored attachment's file name, matching what AI chat puts on
+// one and for the same reason: a pathological name must not be able to bloat
+// the row. The name is display only - nothing downstream decides anything
+// from it - which is why the bound is generous rather than tight.
+export const ATTACHMENT_NAME_MAX_CHARS = 255;
 
 // -------------------------------------------------------------------
 // The window a work date or a rate start may fall in.
@@ -523,6 +546,44 @@ export function marginCents(chargeCents: number | null, costCents: number | null
 
 // -------------------------------------------------------------------
 // ===================================================================
+// THE SECOND GATE, IN ONE LINE
+// ===================================================================
+//
+// `project_members` is this module's security boundary and `is_lead` is a
+// second gate on top of it. This is that gate, and it lives in the contract
+// file because FOUR CALLERS need the same answer: the setup service resolving
+// what a project page may do, the board service resolving a card write, the
+// time service resolving an estimate adjustment, and a client component
+// deciding whether to render the button at all. It was written three times
+// before it was moved here, and three implementations of one authorization
+// decision is how a screen ends up offering a member a button the server
+// refuses.
+//
+// `canEditTasks` is the DTO's field and it is deliberately not `isLead`: an
+// admin is not a lead and can still edit, so a component deriving the rule
+// from a flag plus a role would be a second copy of an authorization
+// decision. It is a convenience for the UI either way - every write
+// re-checks - but a UI that disagrees with the server shows people buttons
+// that fail, so the rule lives in one place and is asserted in a test.
+//
+// A MANAGER IS NOT SPECIAL HERE. Their scope elsewhere in the app comes from
+// the teams an admin assigned them; this module's boundary is project
+// membership, and a manager who is a member of a project is a member of it
+// like anybody else. Widening it to "manager" would hand every manager every
+// project in the organisation.
+//
+// IT IS PURE AND IT HAS TO STAY PURE. Nothing here reads a session or a row -
+// the caller has resolved both already - which is what lets a client
+// component import it. It is therefore not an authorization CHECK: it answers
+// a question about two values THE SERVER decided, and a service that called
+// it on values off a request would be asking the request for permission.
+// -------------------------------------------------------------------
+export function canEditProjectTasks(role: UserRole, isLead: boolean): boolean {
+  return role === USER_ROLES.ADMIN || isLead;
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
 // SHARED FIELD BUILDERS
 // ===================================================================
 // -------------------------------------------------------------------
@@ -614,6 +675,45 @@ const optionalDollarsField = z
   .transform((value) => (value === "" ? null : value));
 
 // -------------------------------------------------------------------
+// The name a browser gives a file it is uploading.
+//
+// It arrives with whatever path the platform put in front of it - one browser
+// sends "C:\fakepath\notes.pdf", another a bare name - so the path is
+// stripped and the rest bounded HERE, which is the same normalisation the
+// board service performs on the row it stores, from the same constant. A
+// route that parses this hands over a name the service will not change.
+//
+// An empty result is REFUSED rather than renamed. The service falls back to
+// "Attachment" because its handover type is not parsed from a payload and it
+// has nobody to ask; a boundary does have somebody to ask, and "that file
+// needs a name" beats a file appearing under a name nobody chose.
+// -------------------------------------------------------------------
+const attachmentFileNameField = z
+  .string()
+  .transform((value) => value.split(/[\\/]/).pop()?.trim().slice(0, ATTACHMENT_NAME_MAX_CHARS) ?? "")
+  .refine((value) => value.length > 0, "That file needs a name");
+
+// -------------------------------------------------------------------
+// Which day the grid's week starts on, as one of the seven numbers
+// WEEK_DAY_NUMBERS names.
+//
+// Coerced, because it reaches an action from a URL or a select as "1".
+// REFUSED rather than defaulted when it is something else: a `weekStartsOn`
+// of "Monday" is the exact mistake the numbering exists to prevent, and it
+// would offset a grid by NaN days instead of failing.
+// -------------------------------------------------------------------
+const WEEK_DAY_NUMBER_VALUES = Object.values(WEEK_DAY_NUMBERS);
+
+// NULL AND A BOOLEAN ARE KEPT AWAY FROM THE COERCION on purpose. Number(null)
+// is 0, which is a legitimate Sunday, so a form posting null for "not chosen"
+// would shift the whole grid by a day rather than taking the default - the
+// one failure here that looks like a working screen.
+const weekDayNumberField = z
+  .union([z.number(), z.string()])
+  .pipe(z.coerce.number())
+  .pipe(z.literal(WEEK_DAY_NUMBER_VALUES));
+
+// -------------------------------------------------------------------
 // ===================================================================
 // CLIENTS
 // ===================================================================
@@ -661,6 +761,31 @@ export const UpdateClientSchema = z.object({
 
 export type UpdateClientInputDTO = z.input<typeof UpdateClientSchema>;
 export type UpdateClientRequestDTO = z.output<typeof UpdateClientSchema>;
+
+// -------------------------------------------------------------------
+// Retire a client, without touching its name or its notes.
+//
+// A NARROW MUTATION BESIDE A WIDE ONE, deliberately. UpdateClientSchema
+// carries `isActive` and can already do this, but it carries the name and the
+// notes as well - so a screen that only wants to retire somebody has to post
+// those back unchanged, and a stale form renames the client as a side effect
+// of a button that says "deactivate". There is still no delete: projects
+// reference clients ON DELETE RESTRICT precisely so that removing one cannot
+// take billing history with it, and this is what "gone" means instead.
+//
+// THE FIVE MOVED SHAPES KEEP THEIR NAMES. This one and the four below it
+// (archive a project; add, change and remove one member) were declared in
+// delivery-setup.service.ts as placeholder types with no validator, so they
+// arrive here already imported under those names by the services that call
+// them. Renaming them to this file's `...RequestDTO` convention would be
+// churn across three files for a shape the schema above it now proves either
+// way.
+// -------------------------------------------------------------------
+export const DeactivateClientSchema = z.object({
+  clientId: clientIdSchema,
+});
+
+export type DeactivateClientRequest = z.infer<typeof DeactivateClientSchema>;
 
 // -------------------------------------------------------------------
 // ===================================================================
@@ -744,6 +869,22 @@ export const MarkProjectBudgetAssignedSchema = z.object({
 export type MarkProjectBudgetAssignedRequestDTO = z.infer<typeof MarkProjectBudgetAssignedSchema>;
 
 // -------------------------------------------------------------------
+// Archive a project: the module's soft delete, as an act of its own.
+//
+// UpdateProjectSchema carries `status` and can already set it, which is why
+// nothing was ever blocked for want of this - but it also carries the title,
+// the description and the billable flag, so archiving through it means
+// posting a whole form back, and a stale one quietly reverts somebody else's
+// edit. There is no DeleteProject schema, deliberately: time entries hold
+// tasks ON DELETE RESTRICT, so archiving is what removal means here.
+// -------------------------------------------------------------------
+export const ArchiveProjectSchema = z.object({
+  projectId: projectIdSchema,
+});
+
+export type ArchiveProjectRequest = z.infer<typeof ArchiveProjectSchema>;
+
+// -------------------------------------------------------------------
 // Membership, posted as THE WHOLE SET rather than as add/remove deltas.
 //
 // Membership is the security boundary of this module, and the failure mode
@@ -779,6 +920,52 @@ export const SetProjectMembersSchema = z.object({
 });
 
 export type SetProjectMembersRequestDTO = z.infer<typeof SetProjectMembersSchema>;
+
+// -------------------------------------------------------------------
+// ONE MEMBER AT A TIME, beside the whole-set mutation above.
+//
+// The set stays what the setup screen posts, for the reason written above it.
+// These three are for the places where the act really is about one person -
+// the "add somebody" row, changing one member's band, the remove button
+// beside their name - and what they give that a set cannot is the thing a set
+// is worst at: a request naming ONE person cannot drop the other nine
+// because the form was built from a read taken ten minutes ago.
+//
+// `isLead` and `rateBand` are the same two decisions the set carries. NONE of
+// these ids is proof of anything: the service re-resolves the project against
+// the session and its own role check before it writes a row.
+// -------------------------------------------------------------------
+export const AddProjectMemberSchema = z.object({
+  projectId: projectIdSchema,
+  userId: userIdSchema,
+  // The second gate: only a lead creates or edits tasks. The rule itself is
+  // canEditProjectTasks above.
+  isLead: z.boolean(),
+  // Which of this person's three rates applies, and it is a PER PROJECT
+  // decision - the same consultant can be discounted for one client and
+  // standard for another.
+  rateBand: z.enum(RATE_BANDS),
+});
+
+export type AddProjectMemberRequest = z.infer<typeof AddProjectMemberSchema>;
+
+// The same four fields, and the same schema - but an UPDATE is a different
+// act from an ADD, because one expects a membership row to exist and the
+// other expects it not to, and the two services answer differently when they
+// are wrong. Two names over one shape is what keeps "already a member" and
+// "not a member yet" as separate refusals instead of one vague sentence.
+export const UpdateProjectMemberSchema = AddProjectMemberSchema;
+
+export type UpdateProjectMemberRequest = z.infer<typeof UpdateProjectMemberSchema>;
+
+// No band and no lead flag. Removal is about the person, and carrying either
+// would invite a caller to think a membership can be half-removed.
+export const RemoveProjectMemberSchema = z.object({
+  projectId: projectIdSchema,
+  userId: userIdSchema,
+});
+
+export type RemoveProjectMemberRequest = z.infer<typeof RemoveProjectMemberSchema>;
 
 // -------------------------------------------------------------------
 // ===================================================================
@@ -916,6 +1103,86 @@ export type DeleteTaskRequestDTO = z.infer<typeof DeleteTaskSchema>;
 
 // -------------------------------------------------------------------
 // ===================================================================
+// TASK ATTACHMENTS
+// ===================================================================
+//
+// A file on a card: metadata in Postgres, bytes in Azure Blob, streamed back
+// through a download route and never handed out as a signed URL.
+//
+// THREE SHAPES, AND ONE DELIBERATE ABSENCE - because an upload is not one act
+// but two halves that are trusted differently.
+//
+//   WHAT THE BROWSER SENDS is a task and a file name. That is
+//   UploadTaskAttachmentSchema, and it is validated like anything else here.
+//
+//   WHAT THE ROUTE THEN HANDS THE SERVICE is TaskAttachmentUpload, and it has
+//   NO SCHEMA ON PURPOSE. `mediaType` must have been derived by SNIFFING THE
+//   BYTES and `byteSize` must be the number actually written, so a parse of
+//   those two fields would check a shape while proving nothing about the only
+//   thing that matters - where the values came from - and would afterwards
+//   read as the check that had been done. The download route serves the
+//   stored type back with `nosniff`, so accepting a browser's `Content-Type`
+//   here is a stored-XSS decision made in the wrong file. The refusal is the
+//   type not being parseable from a payload at all; the service refusing a
+//   byteSize it was not given is the second line.
+//
+// The delete and the download hold an ATTACHMENT id rather than a task id, so
+// they share one schema: the row carries the task, the task carries the
+// project, and the service authorises on that project. An id here is a claim,
+// as everywhere else in this file.
+// -------------------------------------------------------------------
+
+// The two by-id reads on the board service: one task opened, and its files.
+// Both answer a miss with notFound(), so this bounds an id and decides
+// nothing about who may see what it names.
+export const TaskIdSchema = z.object({
+  taskId: taskIdSchema,
+});
+
+export type TaskIdRequestDTO = z.infer<typeof TaskIdSchema>;
+
+// What a multipart upload carries BESIDE the bytes. Everything else about the
+// stored row is derived server-side.
+export const UploadTaskAttachmentSchema = z.object({
+  taskId: taskIdSchema,
+  fileName: attachmentFileNameField,
+});
+
+export type UploadTaskAttachmentInputDTO = z.input<typeof UploadTaskAttachmentSchema>;
+export type UploadTaskAttachmentRequestDTO = z.output<typeof UploadTaskAttachmentSchema>;
+
+// Removing one file, and serving one back. One shape for both, because the id
+// is the whole request in each case.
+export const TaskAttachmentIdSchema = z.object({
+  attachmentId: taskAttachmentIdSchema,
+});
+
+export type TaskAttachmentIdRequestDTO = z.infer<typeof TaskAttachmentIdSchema>;
+
+// -------------------------------------------------------------------
+// What the upload path hands over once the bytes are safely in storage.
+//
+// NOT A REQUEST DTO. It is in the contract file because the route and the
+// service on either side of it are two modules, not because a browser sends
+// it, and NOTHING PARSES IT - see the absence described above. `mediaType`
+// must have been derived by sniffing the bytes and `byteSize` must be the
+// number of bytes actually written; both are then recorded as facts about the
+// file.
+//
+// `attachmentId` comes from the caller because the blob is written before the
+// row exists and the storage key is derived from it - which is also why no
+// caller ever supplies a storage key.
+// -------------------------------------------------------------------
+export type TaskAttachmentUpload = {
+  taskId: string;
+  attachmentId: string;
+  fileName: string;
+  mediaType: string;
+  byteSize: number;
+};
+
+// -------------------------------------------------------------------
+// ===================================================================
 // TIME
 // ===================================================================
 //
@@ -964,6 +1231,123 @@ export const DeleteTimeEntrySchema = z.object({
 });
 
 export type DeleteTimeEntryRequestDTO = z.infer<typeof DeleteTimeEntrySchema>;
+
+// -------------------------------------------------------------------
+// ===================================================================
+// THE TIMESHEET GRID'S TWO ENTRY POINTS
+// ===================================================================
+//
+// TWO CALLS THAT WRITE NOTHING AND STILL NEED A BOUND. Opening a week takes a
+// date and a list of empty rows; adding a row takes a task. Neither stores
+// anything - there is no `timesheet_week_rows` table and an empty row is
+// screen furniture - but both reach a query, and until these schemas existed
+// neither could be driven from a control on a screen at all: the services
+// take positional arguments and this file carried nothing for an action to
+// validate them against.
+//
+// THE VALIDATION AND THE NORMALISATION MOVED HERE FROM THE SERVICE, which is
+// where they belong. The week read was doing isCalendarDate plus the MIN/MAX
+// window itself, and de-duplicating and capping the added rows, so the work
+// was happening one layer too late for an action to do it at the boundary.
+//
+// THE SERVICE KEEPS ITS OWN TOLERANCE, AND THAT IS NOT A DUPLICATE. A week is
+// keyed on the URL's own `?week=`, which somebody may have bookmarked, edited
+// or been sent, and a bad one should land on THIS week rather than on an
+// error - the same reasoning the transcription page applies to an unknown id.
+// A page calls the service directly and gets that. An action gets this
+// schema, and an action's caller is a control the app itself wrote: a date it
+// made up is a bug worth reporting rather than one worth papering over.
+// -------------------------------------------------------------------
+export const TimesheetWeekSchema = z
+  .object({
+    // Any day in the week; normalised to the week's first day below.
+    weekStart: calendarDateField,
+    // Absent means the session user. THE SERVICE decides who may name
+    // somebody else, and the answer there is narrow - admins only, not leads,
+    // because a week is one person's time across every project they are on.
+    userId: userIdSchema.optional(),
+    // Tasks added to this week that have no time on them yet, handed back by
+    // the browser holding them. Not proof of anything: every one is
+    // re-authorised against the target's own membership.
+    //
+    // DE-DUPLICATED AND CAPPED RATHER THAN REFUSED. These ids are furniture
+    // out of a store a browser has been carrying for weeks, not a field
+    // somebody just filled in, so a stale list of sixty should open a working
+    // week rather than fail one. The cap is what keeps the `in` list bounded,
+    // and the service applies it again because a page calls the service
+    // directly.
+    addedTaskIds: z
+      .array(taskIdSchema)
+      .default([])
+      .transform((taskIds) => [...new Set(taskIds)].slice(0, MAX_TIMESHEET_ADDED_ROWS)),
+    weekStartsOn: weekDayNumberField.default(DEFAULT_WEEK_START),
+  })
+  .transform((request) => ({
+    ...request,
+    // NORMALISED THROUGH startOfWeek even when it parses, so a mid-week date
+    // opens the week containing it instead of seven columns beginning on a
+    // Wednesday. Idempotent - the start of a week is its own start - so the
+    // service normalising again cannot move it.
+    weekStart: startOfWeek(request.weekStart, request.weekStartsOn),
+  }));
+
+export type TimesheetWeekRequestDTO = z.output<typeof TimesheetWeekSchema>;
+
+// -------------------------------------------------------------------
+// The service's own parameter shape, moved off delivery-time.service.ts.
+//
+// IT IS NOT THE REQUEST DTO, and the difference is not cosmetic: the service
+// takes `weekStart` positionally and the rest as options, so a page that
+// already holds a date can call it without assembling a request. A parsed
+// TimesheetWeekRequestDTO is assignable to this, which is what lets an action
+// hand its validated value straight over.
+// -------------------------------------------------------------------
+export type TimesheetWeekOptions = {
+  // Absent means the session user. Only an admin may name somebody else - see
+  // the service's guard for why a lead cannot.
+  userId?: string;
+  // Tasks added to this week that have no time on them yet. Not proof of
+  // anything: every one is re-authorised.
+  addedTaskIds?: readonly string[];
+  weekStartsOn?: WeekDayNumber;
+};
+
+// -------------------------------------------------------------------
+// Add a row to the week.
+//
+// `weekStart` is here because the row comes back with seven empty cells in
+// the week's own order, so the grid can render it beside rows that came from
+// the week read without building cells of its own. It is normalised the same
+// way, for the same reason.
+//
+// Whether the row is allowed at all is the service's answer, and there it is
+// a refusal in words rather than a silent drop: the week read leaves out a
+// row somebody may no longer log to, because an empty row is furniture, but
+// here a person is asking for it and deserves to be told.
+// -------------------------------------------------------------------
+export const AddTimesheetRowSchema = z
+  .object({
+    taskId: taskIdSchema,
+    weekStart: calendarDateField,
+    // Absent means the session user. A lead or an admin may add a row to
+    // somebody else's week, matching who may log time for them - and the
+    // service, not this schema, is what decides that.
+    userId: userIdSchema.optional(),
+    weekStartsOn: weekDayNumberField.default(DEFAULT_WEEK_START),
+  })
+  .transform((request) => ({
+    ...request,
+    weekStart: startOfWeek(request.weekStart, request.weekStartsOn),
+  }));
+
+export type AddTimesheetRowRequestDTO = z.output<typeof AddTimesheetRowSchema>;
+
+// The service's parameter shape, moved off delivery-time.service.ts. Same
+// relationship to the schema above as TimesheetWeekOptions has to its own.
+export type AddTimesheetRowOptions = {
+  userId?: string;
+  weekStartsOn?: WeekDayNumber;
+};
 
 // -------------------------------------------------------------------
 // ===================================================================
@@ -1287,6 +1671,37 @@ export type BoardDTO = {
   phases: BoardPhaseDTO[];
 };
 
+// -------------------------------------------------------------------
+// One line of "my work": a card assigned to the signed-in person, from any
+// project they are on.
+//
+// HERE RATHER THAN ON THE SERVICE, because a client component renders this
+// list and a component importing a type out of a `server-only` module drags
+// the module in with it. That is most of what this file is for.
+//
+// NO userId FIELD, and the absence is the guard showing through the shape:
+// the actor is the session, and a list of somebody ELSE's work is a different
+// screen with a different guard rather than a parameter on this one.
+// `clientName` travels because "who is this for" is the first question a
+// cross-project work list has to answer.
+//
+// WHICH cards is the service's decision and not the DTO's: done is left out
+// because a work list is what remains, and archived projects are left out
+// because archiving is the module's soft delete - while a COMPLETED project
+// with open cards on it stays, since hiding those is how work goes missing.
+// -------------------------------------------------------------------
+export type MyWorkItemDTO = {
+  taskId: string;
+  title: string;
+  boardColumn: TaskColumn;
+  phaseName: string;
+  projectId: string;
+  projectTitle: string;
+  clientName: string;
+  estimateMinutes: number;
+  loggedMinutes: number;
+};
+
 // Metadata only. The bytes live in Azure Blob and are streamed back through a
 // download route, never handed out as a signed URL - the same decision chat
 // attachments made, for the same reason: a signed URL is a bearer token that
@@ -1497,4 +1912,121 @@ export type BudgetReportDTO = {
   chargeableCents?: number | null;
   costCents?: number | null;
   marginCents?: number | null;
+};
+
+// -------------------------------------------------------------------
+// ===================================================================
+// RATES, AS THE ADMIN SCREEN READS THEM
+// ===================================================================
+//
+// THE MONEY-BY-ABSENCE RULE DOES NOT APPLY TO THESE, and the reason is
+// worth writing down rather than left looking like an inconsistency.
+//
+// Absence exists so ONE DTO can serve TWO audiences: the budget report is
+// read by an admin now and is meant to be readable by a project lead later,
+// and a margin omitted has to be distinguishable from a margin nobody has
+// costed. A rate DTO has one audience. It is nothing but money, so a
+// non-admin is refused the whole object rather than handed a hollow one -
+// which is why the service that builds these guards on ADMIN with no
+// viewer-dependent shape to decide.
+//
+// `costRateCents` is therefore nullable and ALWAYS PRESENT, and its null
+// means what null means everywhere else in this file: nobody has recorded
+// a cost, so margin is unknown rather than 100%.
+// -------------------------------------------------------------------
+export type UserRateDTO = {
+  id: string;
+  userId: string;
+  band: RateBand;
+  // 'YYYY-MM-DD', the date the rate applies FROM. Routinely in the past
+  // (rates entered after the fact) and legitimately in the future ("the new
+  // rate starts on 1 July"), so nothing may treat a later date as an error.
+  effectiveFrom: string;
+  chargeRateCents: number;
+  costRateCents: number | null;
+  updatedAt: Date;
+};
+
+// -------------------------------------------------------------------
+// One person's row on the rates screen: what they are worth in each of the
+// three bands, as at one date.
+//
+// ALL THREE BANDS ARE ALWAYS PRESENT, null where the person has no rate -
+// the same decision BoardColumnDTO makes about empty columns, for the same
+// reason. A missing key and a priced-at-nothing band look identical to a
+// table that renders whatever it finds, and showing which bands are still
+// blank is most of what this screen is for.
+// -------------------------------------------------------------------
+export type UserRateBandsDTO = {
+  userId: string;
+  // Nullable for the reason it is on ProjectMemberDTO: this app
+  // DE-IDENTIFIES dormant accounts in place rather than deleting them, so
+  // somebody with rate history can have no usable name and still hold a
+  // valid row.
+  name: string | null;
+  // Here to tell two people with the same name apart, which is worth a
+  // column on a screen where picking the wrong row misprices a client.
+  email: string | null;
+  // The ACCOUNT's status, so an admin can see that somebody deactivated
+  // still has the rates behind the time they already logged.
+  isActive: boolean;
+  bands: Record<RateBand, UserRateDTO | null>;
+};
+
+export type UserRatesOverviewDTO = {
+  // 'YYYY-MM-DD' in the APP timezone, and it travels because "current" is a
+  // question about a day. A heading that cannot say which date it resolved
+  // leaves a forward-dated rate looking like a missing one.
+  asAtDate: string;
+  people: UserRateBandsDTO[];
+};
+
+// One person's whole history, newest start date first and then by band -
+// the order the repository imposes, because three bands can share a start
+// date and an unordered pair reshuffles between loads.
+export type UserRateHistoryDTO = {
+  userId: string;
+  name: string | null;
+  email: string | null;
+  rates: UserRateDTO[];
+};
+
+// -------------------------------------------------------------------
+// WHAT DELETING A RATE ROW WILL DO, worked out BEFORE it is done.
+//
+// Deleting a rate does not restate history: a time entry snapshots the
+// cents it was charged at, so nothing already reported moves. What it
+// changes is what FUTURE entries resolve to - and because a rate is the
+// greatest `effectiveFrom` on or before the work date and never a later
+// one, removing the EARLIEST row of a band leaves a window of dates with no
+// rate at all rather than falling forward onto the next one.
+//
+// THAT WINDOW IS INVISIBLE AFTERWARDS. An entry backdated into it comes
+// back unvalued and no screen says the rate it needed was deleted. So the
+// consequence is computed from the rows while they still exist and handed
+// back: the confirmation dialog says it beforehand, and the delete returns
+// the same shape so the act can be reported even if the dialog was skipped.
+//
+// `consequence` is a finished SENTENCE rather than three booleans for a
+// component to assemble, on the same principle as the rest of this file -
+// the arithmetic, and here the wording, is finished before anything renders
+// it. Four surfaces phrasing this from the parts is four chances to get the
+// off-by-one in the window wrong.
+// -------------------------------------------------------------------
+export type UserRateDeletionImpactDTO = {
+  rate: UserRateDTO;
+  personName: string | null;
+  // True when this is the earliest row in its band. Then, and only then,
+  // removing it leaves work dates with no rate.
+  leavesGap: boolean;
+  // 'YYYY-MM-DD': the earlier row that will apply instead. Null exactly
+  // when `leavesGap` is true.
+  fallsBackToEffectiveFrom: string | null;
+  // The window that becomes unvalued, INCLUSIVE at both ends. Both null
+  // unless `leavesGap`. `unvaluedTo` is null when there is no later row in
+  // the band either, so the window is open-ended - the state a band is in
+  // once its only rate is gone.
+  unvaluedFrom: string | null;
+  unvaluedTo: string | null;
+  consequence: string;
 };

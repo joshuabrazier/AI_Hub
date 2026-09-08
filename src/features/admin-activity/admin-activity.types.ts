@@ -56,6 +56,33 @@ export const AUDIT_ACTION_META: Record<string, { label: string; category: string
   [AUDIT_ACTIONS.TEAM_MEMBER_ROLE_CHANGED]: { label: "Team role changed", category: "Access" },
   [AUDIT_ACTIONS.TEAM_MEMBER_REMOVED]: { label: "Removed from team", category: "Access" },
 
+  // Project membership. Filed under Access, alongside team membership, for
+  // the same reason: `project_members` is what every delivery read filters
+  // on, so putting somebody on a project - or making them its lead - is a
+  // grant, not housekeeping.
+  [AUDIT_ACTIONS.PROJECT_MEMBER_ADDED]: { label: "Added to project", category: "Access" },
+  [AUDIT_ACTIONS.PROJECT_MEMBER_CHANGED]: { label: "Project role or rate band changed", category: "Access" },
+  [AUDIT_ACTIONS.PROJECT_MEMBER_REMOVED]: { label: "Removed from project", category: "Access" },
+
+  // Delivery. Its own category rather than folded into Teams: a client and a
+  // project are what the work is FOR, and an admin looking for "when was this
+  // engagement archived" is asking a different question from "who changed
+  // access".
+  [AUDIT_ACTIONS.CLIENT_CREATED]: { label: "Client created", category: "Delivery" },
+  [AUDIT_ACTIONS.CLIENT_UPDATED]: { label: "Client updated", category: "Delivery" },
+  [AUDIT_ACTIONS.CLIENT_STATUS_CHANGED]: { label: "Client retired/restored", category: "Delivery" },
+  [AUDIT_ACTIONS.PROJECT_CREATED]: { label: "Project created", category: "Delivery" },
+  [AUDIT_ACTIONS.PROJECT_UPDATED]: { label: "Project updated", category: "Delivery" },
+  [AUDIT_ACTIONS.PROJECT_STATUS_CHANGED]: { label: "Project status changed", category: "Delivery" },
+
+  // Rates. Same category, because a rate is what the work is worth, but the
+  // DELETE label says what it does rather than naming the act: removing the
+  // earliest rate of a band leaves work dates with no rate at all, and this
+  // entry is the only lasting record of who opened that window - the row
+  // that would have explained it is what was deleted.
+  [AUDIT_ACTIONS.USER_RATE_SET]: { label: "Rate set", category: "Delivery" },
+  [AUDIT_ACTIONS.USER_RATE_DELETED]: { label: "Rate removed", category: "Delivery" },
+
   // Teams
   [AUDIT_ACTIONS.TEAM_CREATED]: { label: "Team created", category: "Teams" },
   [AUDIT_ACTIONS.TEAM_UPDATED]: { label: "Team updated", category: "Teams" },
