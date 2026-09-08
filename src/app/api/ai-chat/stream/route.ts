@@ -9,7 +9,11 @@ import { validateRequest } from "@/lib/server-requests";
 import { createStallGuard } from "@/lib/stall-guard";
 
 import { streamAiChatReplyService } from "@/features/ai-chat/ai-chat.service";
-import { CHAT_STALL_TIMEOUT_MS, SendAiChatMessageSchema } from "@/features/ai-chat/ai-chat.types";
+import {
+  CHAT_FIRST_TOKEN_TIMEOUT_MS,
+  CHAT_STALL_TIMEOUT_MS,
+  SendAiChatMessageSchema,
+} from "@/features/ai-chat/ai-chat.types";
 
 // The Bedrock client and Kysely both need Node, and a streamed reply must
 // never be cached.
@@ -90,9 +94,13 @@ export async function POST(request: Request): Promise<Response> {
   //
   // The guard carries both, so whichever happens first stops the work.
   // -----------------------------------------------------------------
-  const stall = createStallGuard(CHAT_STALL_TIMEOUT_MS, request.signal);
+  const stall = createStallGuard(CHAT_STALL_TIMEOUT_MS, request.signal, CHAT_FIRST_TOKEN_TIMEOUT_MS);
 
-  const replies = streamAiChatReplyService(validatedRequest.data, stall.signal);
+  // The guard hears the STREAM, not just the text that comes out of it. A
+  // tool round yields nothing for its whole duration - see the note on
+  // onActivity - so without this a healthy model deciding to look up a
+  // timesheet figure is indistinguishable from a dead request.
+  const replies = streamAiChatReplyService(validatedRequest.data, stall.signal, () => stall.progress());
 
   let first: IteratorResult<string, void>;
   try {
