@@ -1,17 +1,18 @@
-import { FIRST_TRY_AFTER_MINUTES, isAutoImportWindowClosed } from "./auto-import-window";
-import { randomUUID } from "node:crypto";
-import {
-  armTeamsAutoImportRepo,
-  cancelTeamsAutoImportRepo,
-  getDueTeamsAutoImportsRepo,
-  recordTeamsAutoImportAttemptRepo,
-  settleTeamsAutoImportRepo,
-} from "@/lib/data/repositories/teams-auto-import.repository";
 import "server-only";
 
 import { ConverseStreamCommand, type Message, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
 import { generateId } from "better-auth";
 import { revalidatePath } from "next/cache";
+
+import {
+  armTeamsAutoImportRepo,
+  cancelTeamsAutoImportRepo,
+  getDueTeamsAutoImportsRepo,
+  getTeamsAutoImportForMeetingRepo,
+  recordTeamsAutoImportAttemptRepo,
+  settleTeamsAutoImportRepo,
+} from "@/lib/data/repositories/teams-auto-import.repository";
+import { FIRST_TRY_AFTER_MINUTES, isAutoImportWindowClosed } from "./auto-import-window";
 
 import {
   BEDROCK_MODEL_ID,
@@ -1712,43 +1713,58 @@ export async function getTranscriptTextService(
 const AUTO_IMPORT_SWEEP_BATCH = 20;
 
 // -------------------------------------------------------------------
-// "I have started transcription - collect this one for me."
+// Arm a meeting for collection, WITHOUT anybody pressing anything.
 //
-// The subject and end time come from GRAPH, never from the browser. The
-// browser sends an event id and nothing else, exactly as the manual import
-// does: a title from a client would name a row after something the meeting
-// is not, and an end time from a client would decide when we start asking
-// Microsoft for somebody's transcript.
+// THERE IS NO BUTTON, AND THAT IS THE POINT. The first version made somebody
+// come back to the app mid-meeting and confirm, which is exactly the friction
+// this feature exists to remove - and a confirmation nobody presses means a
+// transcript nobody collects.
+//
+// Arming everything we detect is safe because OUR ROW IS NOT THE GATE. The
+// gate is whether transcription was started in Teams at all, which is a
+// deliberate act that Microsoft announces to everyone in the meeting. If
+// nobody started one there is nothing to fetch and the row settles as
+// no_transcript having cost a handful of Graph calls. So the worst case is
+// quiet, and the best case is that it just works.
+//
+// Called from the polled read, so it must be cheap and idempotent: an
+// existing row for this meeting is left completely alone, including one
+// somebody cancelled - re-arming that would override a person who said no.
 // -------------------------------------------------------------------
-export async function armTeamsAutoImportService(
-  requestDTO: ImportTeamsMeetingRequestDTO,
-): Promise<{ armed: boolean; subject: string | null }> {
+async function ensureAutoImportArmed(
+  userId: string,
+  meeting: { eventId: string; subject: string; endsAt: Date },
+): Promise<boolean> {
+  const existing = await getTeamsAutoImportForMeetingRepo(userId, meeting.eventId);
+
+  if (existing) return existing.status !== TEAMS_AUTO_IMPORT_STATUSES.CANCELLED;
+
+  await armTeamsAutoImportRepo({
+    id: generateId(),
+    userId,
+    eventId: meeting.eventId,
+    subject: meeting.subject,
+    endsAt: meeting.endsAt,
+  });
+
+  return true;
+}
+
+export async function ensureAutoImportArmedForMeeting(
+  userId: string,
+  meeting: { eventId: string; subject: string; endsAt: Date },
+): Promise<boolean> {
   try {
-    const user = await requireUser();
+    if (!isTeamsImportConfigured()) return false;
 
-    if (!isTeamsImportConfigured()) {
-      throw new DisplayErrorMessage(
-        "Importing from Teams needs Microsoft sign-in, which is not configured on this environment.",
-      );
-    }
-
-    const meeting = await getTeamsMeeting(user.id, requestDTO.eventId);
-
-    if (!meeting) {
-      throw new DisplayErrorMessage("That meeting is no longer in your calendar.");
-    }
-
-    await armTeamsAutoImportRepo({
-      id: randomUUID(),
-      userId: user.id,
-      eventId: meeting.eventId,
-      subject: meeting.subject,
-      endsAt: meeting.endsAt,
-    });
-
-    return { armed: true, subject: meeting.subject };
+    return await ensureAutoImportArmed(userId, meeting);
   } catch (error) {
-    throw handleError("armTeamsAutoImportService", error);
+    // A polled read must not fail because the collection could not be
+    // recorded. The prompt still tells somebody to start transcription in
+    // Teams, which is the part that cannot be recovered later; the row can be
+    // written on the next poll.
+    console.error("ensureAutoImportArmedForMeeting: could not arm", error);
+    return false;
   }
 }
 

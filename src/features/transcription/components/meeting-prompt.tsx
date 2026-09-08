@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { armTeamsAutoImportAction, getMeetingNowAction } from "../transcription.actions";
+import { cancelTeamsAutoImportAction, getMeetingNowAction } from "../transcription.actions";
 import type { MeetingNowDTO } from "../meeting-now.service";
 import { MeetingPromptPanel } from "./meeting-prompt-panel";
 
@@ -142,12 +142,10 @@ export function MeetingPrompt() {
   const data = useMeetingNow();
   const [pipWindow, setPipWindow] = useState<Window | null>(null);
 
-  // Which meetings this person has already asked us to collect, so the panel
-  // flips to its confirmed state and stays there for the rest of the meeting
-  // rather than asking again on the next poll.
-  const [armedKeys, setArmedKeys] = useState<Set<string>>(new Set());
-  const [arming, setArming] = useState(false);
-  const [armError, setArmError] = useState<string | null>(null);
+  // Meetings somebody has said they do not want kept. Local, so the panel
+  // reflects the choice immediately; the server is what actually stops the
+  // collection, and a cancelled row is never re-armed by a later poll.
+  const [cancelledKeys, setCancelledKeys] = useState<Set<string>>(new Set());
 
   // The same window as the state, reachable from an effect without making
   // that effect depend on it.
@@ -210,34 +208,26 @@ export function MeetingPrompt() {
     closePip();
   };
 
-  const arm = async () => {
+  const cancelCollection = async () => {
     if (!data.meeting) return;
 
-    setArming(true);
-    setArmError(null);
+    const eventId = data.meeting.eventId;
 
-    const result = await armTeamsAutoImportAction({ eventId: data.meeting.eventId });
+    // Optimistic. If the call fails the collection still happens, which is
+    // the safe direction to be wrong in: an unwanted transcript can be
+    // deleted, a missed one cannot be recovered.
+    setCancelledKeys((current) => new Set(current).add(eventId));
 
-    setArming(false);
-
-    if (!result.success) {
-      // Shown in the panel rather than thrown. This is a live meeting and an
-      // error boundary over the page somebody is working in would be a worse
-      // interruption than the one it is reporting.
-      setArmError(result.formError ?? "That could not be set up just now.");
-      return;
-    }
-
-    setArmedKeys((current) => new Set(current).add(data.meeting!.eventId));
+    await cancelTeamsAutoImportAction({ eventId });
   };
 
   const panel = (
     <MeetingPromptPanel
       data={data}
-      armed={data.meeting !== null && armedKeys.has(data.meeting.eventId)}
-      arming={arming}
-      armError={armError}
-      onArm={() => void arm()}
+      collecting={
+        data.autoImportArmed && data.meeting !== null && !cancelledKeys.has(data.meeting.eventId)
+      }
+      onCancelCollection={() => void cancelCollection()}
       onDismiss={dismiss}
       onPopOut={popOut}
       canPopOut={supportsFloatingWindow()}

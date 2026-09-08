@@ -5,6 +5,7 @@ import { handleError } from "@/lib/handle-errors";
 import { transcriptionHomeForRole } from "@/lib/routes";
 import { getMyPresence, listMeetingsAroundNow } from "@/lib/graph/teams-presence";
 import { resolveMeetingNow } from "@/lib/graph/meeting-now";
+import { ensureAutoImportArmedForMeeting } from "./transcription.service";
 
 // -------------------------------------------------------------------
 // "Are you in a meeting right now, and shall I prompt you about it?"
@@ -46,10 +47,22 @@ export interface MeetingNowDTO {
   // exists for exactly this, and its note says why: a link built for one role
   // and followed by another does not error, it lands somewhere else entirely.
   transcriptionHref: string;
+  // Collection is armed the moment a meeting is detected, with no button to
+  // press. False when there is nothing to collect - an ad hoc call with no
+  // calendar entry - or when somebody cancelled this one.
+  autoImportArmed: boolean;
 }
 
 function nothing(href: string): MeetingNowDTO {
-  return { prompt: false, meeting: null, ambiguous: [], certain: false, unavailable: null, transcriptionHref: href };
+  return {
+    prompt: false,
+    meeting: null,
+    ambiguous: [],
+    certain: false,
+    unavailable: null,
+    transcriptionHref: href,
+    autoImportArmed: false,
+  };
 }
 
 export async function getMeetingNowService(): Promise<MeetingNowDTO> {
@@ -92,7 +105,17 @@ export async function getMeetingNowService(): Promise<MeetingNowDTO> {
           })),
         };
 
-      case "in-meeting":
+      case "in-meeting": {
+        // THE READ ARMS THE COLLECTION. Doing it here rather than behind a
+        // button is the whole design: a confirmation nobody presses is a
+        // transcript nobody collects, and the real gate is whether anyone
+        // started transcription in Teams at all.
+        const armed = await ensureAutoImportArmedForMeeting(user.id, {
+          eventId: resolved.meeting.eventId,
+          subject: resolved.meeting.subject,
+          endsAt: resolved.meeting.endsAt,
+        });
+
         return {
           prompt: true,
           meeting: {
@@ -105,7 +128,9 @@ export async function getMeetingNowService(): Promise<MeetingNowDTO> {
           certain: resolved.certainty === "confirmed",
           unavailable: null,
           transcriptionHref: href,
+          autoImportArmed: armed,
         };
+      }
     }
   } catch (error) {
     throw handleError("getMeetingNowService", error);
