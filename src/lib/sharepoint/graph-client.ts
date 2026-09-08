@@ -96,6 +96,12 @@ export const GRAPH_SCOPES = [
   "Calendars.Read",
   "OnlineMeetings.Read",
   "OnlineMeetingTranscript.Read.All",
+  // YOUR OWN presence, and deliberately not Presence.Read.All. The .All
+  // variant would let this app see when any colleague is in a call, which is
+  // a surveillance capability whatever it was added for. This one is the
+  // signed-in person's own state and nothing else, which is all the
+  // in-meeting prompt needs.
+  "Presence.Read",
 ] as const;
 
 const REQUEST_TIMEOUT_MS = 30000;
