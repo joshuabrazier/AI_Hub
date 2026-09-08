@@ -628,6 +628,47 @@ export type TranscriptionSegment = {
 // through Microsoft Graph, so `storageKey`, `mediaType` and `speechJobId`
 // are all null on it and `sourceRef` says where it came from.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// A standing intent to import ONE meeting when it ends.
+//
+// Written when somebody confirms they have started transcription in Teams;
+// read by the sweep, which imports on their behalf and on their own token.
+// See migration 018 for why this is a row rather than "import everything
+// recent".
+// -------------------------------------------------------------------
+export const TEAMS_AUTO_IMPORT_STATUSES = {
+  PENDING: "pending",
+  IMPORTED: "imported",
+  // No transcript ever appeared. Almost always means nobody started one,
+  // which is an ordinary outcome rather than a failure - the prompt asks, it
+  // does not compel - so it is told apart from FAILED on screen.
+  NO_TRANSCRIPT: "no_transcript",
+  FAILED: "failed",
+  CANCELLED: "cancelled",
+} as const;
+
+export type TeamsAutoImportStatus =
+  (typeof TEAMS_AUTO_IMPORT_STATUSES)[keyof typeof TEAMS_AUTO_IMPORT_STATUSES];
+
+export interface TeamsAutoImports {
+  id: string;
+  userId: string;
+  eventId: string;
+  subject: string | null;
+  endsAt: Date;
+  status: Generated<TeamsAutoImportStatus>;
+  attempts: Generated<number>;
+  lastAttemptAt: Date | null;
+  transcriptionId: string | null;
+  error: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type TeamsAutoImport = Selectable<TeamsAutoImports>;
+export type NewTeamsAutoImport = Insertable<TeamsAutoImports>;
+export type TeamsAutoImportUpdate = Updateable<TeamsAutoImports>;
+
 export interface Transcriptions {
   id: string;
   userId: string;
@@ -1244,6 +1285,7 @@ export interface Database {
   aiChatMessages: AiChatMessages;
   aiChatAttachments: AiChatAttachments;
   aiChatRequestLogs: AiChatRequestLogs;
+  teamsAutoImport: TeamsAutoImports;
   transcriptions: Transcriptions;
   pushSubscriptions: PushSubscriptions;
   sessionTwoFactor: SessionTwoFactors;

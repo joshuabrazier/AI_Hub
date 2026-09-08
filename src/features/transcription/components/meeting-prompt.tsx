@@ -1,14 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AudioLines, ExternalLink, PictureInPicture2, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-
-import { getMeetingNowAction } from "../transcription.actions";
+import { armTeamsAutoImportAction, getMeetingNowAction } from "../transcription.actions";
 import type { MeetingNowDTO } from "../meeting-now.service";
+import { MeetingPromptPanel } from "./meeting-prompt-panel";
 
 // -------------------------------------------------------------------
 // "You are in a meeting - want it transcribed?"
@@ -141,99 +138,16 @@ function useMeetingNow(): MeetingNowDTO | null {
   return state;
 }
 
-// -------------------------------------------------------------------
-// The panel itself, rendered either in the page or inside the floating
-// window. One component for both so the two cannot drift apart.
-// -------------------------------------------------------------------
-function PromptPanel({
-  data,
-  onDismiss,
-  onPopOut,
-  canPopOut,
-  floating,
-}: {
-  data: MeetingNowDTO;
-  onDismiss: () => void;
-  onPopOut: () => void;
-  canPopOut: boolean;
-  floating: boolean;
-}) {
-  const subject = data.meeting?.subject ?? null;
-
-  return (
-    <div className="flex flex-col gap-3 rounded-xl border border-border bg-background p-4 shadow-lg">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <AudioLines className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <p className="text-sm font-medium">
-            {data.certain ? "You are in a meeting" : "A meeting looks like it is on"}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-1">
-          {!floating && canPopOut && (
-            <Button variant="ghost" size="icon" onClick={onPopOut} aria-label="Keep this on top">
-              <PictureInPicture2 className="size-4" aria-hidden />
-            </Button>
-          )}
-          <Button variant="ghost" size="icon" onClick={onDismiss} aria-label="Dismiss">
-            <X className="size-4" aria-hidden />
-          </Button>
-        </div>
-      </div>
-
-      {subject && <p className="text-sm text-muted-foreground">{subject}</p>}
-
-      {data.ambiguous.length > 0 && (
-        // Named rather than picked. Announcing a recording of the wrong
-        // meeting to a room of people is worse than admitting we cannot tell
-        // which of two overlapping entries this is.
-        <p className="text-sm text-muted-foreground">
-          Two meetings overlap right now - {data.ambiguous.map((entry) => entry.subject).join(" and ")} - so this
-          cannot say which one you are in.
-        </p>
-      )}
-
-      {/* ---------------------------------------------------------------
-          THE INSTRUCTION, and why it is an instruction rather than a
-          button. Nothing here can start transcription for you: Graph has
-          no such API. And Teams starting it is the point, not a
-          workaround - it is what tells everyone else in the meeting.
-          --------------------------------------------------------------- */}
-      <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
-        <p className="font-medium">In Teams: More actions, then Record and transcribe, then Start transcription.</p>
-        <p className="mt-1 text-muted-foreground">
-          Teams announces it to everyone in the meeting, which is what makes it lawful to keep, and it labels each
-          speaker by name. Nothing is recorded until you do this.
-        </p>
-      </div>
-
-      {data.meeting ? (
-        <p className="text-xs text-muted-foreground">
-          When the meeting ends, import the transcript and this app will summarise it.
-        </p>
-      ) : (
-        // No calendar entry behind it. Say so plainly: there will be nothing
-        // to import afterwards, and finding that out later is worse.
-        <p className="text-xs text-muted-foreground">
-          This call is not in your calendar, so there will be nothing here to import afterwards. Teams still keeps the
-          transcript if you start one.
-        </p>
-      )}
-
-      <Button asChild variant="outline" size="sm" className="self-start">
-        <Link href={data.transcriptionHref} target={floating ? "_blank" : undefined}>
-          Open transcription
-          <ExternalLink className="size-3.5" aria-hidden />
-        </Link>
-      </Button>
-    </div>
-  );
-}
-
 export function MeetingPrompt() {
   const data = useMeetingNow();
   const [pipWindow, setPipWindow] = useState<Window | null>(null);
+
+  // Which meetings this person has already asked us to collect, so the panel
+  // flips to its confirmed state and stays there for the rest of the meeting
+  // rather than asking again on the next poll.
+  const [armedKeys, setArmedKeys] = useState<Set<string>>(new Set());
+  const [arming, setArming] = useState(false);
+  const [armError, setArmError] = useState<string | null>(null);
 
   // The same window as the state, reachable from an effect without making
   // that effect depend on it.
@@ -262,7 +176,7 @@ export function MeetingPrompt() {
     try {
       // Requires a user gesture, which is why this is a button and the
       // window cannot open itself.
-      const win = await window.documentPictureInPicture!.requestWindow({ width: 380, height: 340 });
+      const win = await window.documentPictureInPicture!.requestWindow({ width: 440, height: 560 });
 
       copyStyles(win);
       win.document.body.style.margin = "0";
@@ -296,9 +210,34 @@ export function MeetingPrompt() {
     closePip();
   };
 
+  const arm = async () => {
+    if (!data.meeting) return;
+
+    setArming(true);
+    setArmError(null);
+
+    const result = await armTeamsAutoImportAction({ eventId: data.meeting.eventId });
+
+    setArming(false);
+
+    if (!result.success) {
+      // Shown in the panel rather than thrown. This is a live meeting and an
+      // error boundary over the page somebody is working in would be a worse
+      // interruption than the one it is reporting.
+      setArmError(result.formError ?? "That could not be set up just now.");
+      return;
+    }
+
+    setArmedKeys((current) => new Set(current).add(data.meeting!.eventId));
+  };
+
   const panel = (
-    <PromptPanel
+    <MeetingPromptPanel
       data={data}
+      armed={data.meeting !== null && armedKeys.has(data.meeting.eventId)}
+      arming={arming}
+      armError={armError}
+      onArm={() => void arm()}
       onDismiss={dismiss}
       onPopOut={popOut}
       canPopOut={supportsFloatingWindow()}
@@ -306,10 +245,25 @@ export function MeetingPrompt() {
     />
   );
 
-  if (pipWindow) return createPortal(<div className="p-2">{panel}</div>, pipWindow.document.body);
+  if (pipWindow) return createPortal(<div className="p-3">{panel}</div>, pipWindow.document.body);
 
+  // -----------------------------------------------------------------
+  // BOTTOM CENTRE AND WIDE, not a corner card.
+  //
+  // The corner version was missed through a whole meeting, and a meeting is
+  // not recoverable afterwards - so this sits where the eye goes, takes real
+  // width, and floats above the app chrome.
+  //
+  // role="alert" rather than "status": this is time-critical and interrupts
+  // deliberately. A screen reader should announce it rather than wait to be
+  // asked, for the same reason it is loud visually.
+  // -----------------------------------------------------------------
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-[22rem] max-w-[calc(100vw-2rem)]" role="status" aria-live="polite">
+    <div
+      className="fixed inset-x-0 bottom-6 z-[100] mx-auto w-[30rem] max-w-[calc(100vw-2rem)] px-2"
+      role="alert"
+      aria-live="assertive"
+    >
       {panel}
     </div>
   );

@@ -1,3 +1,12 @@
+import { FIRST_TRY_AFTER_MINUTES, isAutoImportWindowClosed } from "./auto-import-window";
+import { randomUUID } from "node:crypto";
+import {
+  armTeamsAutoImportRepo,
+  cancelTeamsAutoImportRepo,
+  getDueTeamsAutoImportsRepo,
+  recordTeamsAutoImportAttemptRepo,
+  settleTeamsAutoImportRepo,
+} from "@/lib/data/repositories/teams-auto-import.repository";
 import "server-only";
 
 import { ConverseStreamCommand, type Message, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
@@ -18,6 +27,7 @@ import {
   AI_CHAT_REQUEST_KINDS,
   TRANSCRIPTION_SOURCES,
   TRANSCRIPTION_SOURCE_DESCRIPTIONS,
+  TEAMS_AUTO_IMPORT_STATUSES,
   TRANSCRIPTION_STATUSES,
   USER_ROLES,
   type Transcription,
@@ -1079,11 +1089,46 @@ export async function listTeamsMeetingsService(): Promise<TeamsMeetingsDTO> {
 // meeting - and every call is delegated, so an id belonging to somebody
 // else's meeting resolves to nothing rather than to their transcript.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// The import, for the SIGNED-IN person.
+//
+// A thin wrapper. Everything below it is in importTeamsMeetingForUser, which
+// the background sweep also calls - see the note there about why the actor is
+// a parameter in one and a session lookup in the other.
+// -------------------------------------------------------------------
 export async function importTeamsMeetingService(
   requestDTO: ImportTeamsMeetingRequestDTO,
 ): Promise<TranscriptionDetailDTO> {
   try {
     const user = await requireUser();
+
+    return await importTeamsMeetingForUser(user.id, requestDTO.eventId);
+  } catch (error) {
+    throw handleError("importTeamsMeetingService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The import itself, for a NAMED user.
+//
+// THE USER ID IS A PARAMETER HERE AND THAT IS A REAL DECISION, because
+// everywhere else in this app the actor comes from the session and a
+// parameter naming somebody else is the shape of a privilege escalation.
+//
+// It is safe for exactly one reason: this is not exported beyond the module
+// and its only two callers are the wrapper above, which passes the session
+// user, and the auto-import sweep, which passes the user_id off a row that
+// person armed themselves. Nothing takes a user id from a request.
+//
+// The Graph calls remain DELEGATED - they run on that person's own refresh
+// token - so Microsoft still enforces that they were in the meeting. This
+// function cannot reach a transcript its user could not open by hand.
+// -------------------------------------------------------------------
+async function importTeamsMeetingForUser(
+  userId: string,
+  eventId: string,
+): Promise<TranscriptionDetailDTO> {
+  try {
 
     if (!isTeamsImportConfigured()) {
       throw new DisplayErrorMessage(
@@ -1096,13 +1141,13 @@ export async function importTeamsMeetingService(
     let transcripts;
 
     try {
-      meeting = await getTeamsMeeting(user.id, requestDTO.eventId);
+      meeting = await getTeamsMeeting(userId, eventId);
 
       if (!meeting) {
         throw new DisplayErrorMessage("That meeting is no longer in your calendar.");
       }
 
-      onlineMeetingId = await findOnlineMeetingId(user.id, meeting.joinUrl);
+      onlineMeetingId = await findOnlineMeetingId(userId, meeting.joinUrl);
 
       if (!onlineMeetingId) {
         // The signature of a meeting somebody else's organisation hosted.
@@ -1114,7 +1159,7 @@ export async function importTeamsMeetingService(
         );
       }
 
-      transcripts = await listMeetingTranscripts(user.id, onlineMeetingId);
+      transcripts = await listMeetingTranscripts(userId, onlineMeetingId);
     } catch (error) {
       // A DisplayErrorMessage above is already the sentence to show. Only a
       // Graph fault needs translating. isDisplayError rather than instanceof,
@@ -1170,14 +1215,14 @@ export async function importTeamsMeetingService(
     // Already imported. Answered with the row that exists rather than
     // refused: somebody who clicks Import on a meeting they did last week
     // wants to READ it, and opening it is what they meant.
-    const existing = await getTranscriptionBySourceRefRepo(user.id, TRANSCRIPTION_SOURCES.TEAMS, sourceRef);
+    const existing = await getTranscriptionBySourceRefRepo(userId, TRANSCRIPTION_SOURCES.TEAMS, sourceRef);
 
     if (existing) return mapDBTranscriptionToDetailDTO(existing);
 
     let vtt: string;
 
     try {
-      vtt = await fetchTranscriptVtt(user.id, onlineMeetingId, transcript.id);
+      vtt = await fetchTranscriptVtt(userId, onlineMeetingId, transcript.id);
     } catch (error) {
       throw teamsGraphFailure(error);
     }
@@ -1206,7 +1251,7 @@ export async function importTeamsMeetingService(
     try {
       created = await addTranscriptionRepo({
         id: generateId(),
-        userId: user.id,
+        userId: userId,
         // The meeting's own subject. Renameable like any other title, and it
         // is what the person will look for in the list.
         title: meeting.subject.slice(0, TITLE_MAX_CHARS),
@@ -1239,7 +1284,7 @@ export async function importTeamsMeetingService(
       // Two clicks, or two tabs. The unique index on (user_id, source_ref) is
       // what stops the second becoming a duplicate; this is what stops it
       // becoming an error message about a constraint.
-      const raced = await getTranscriptionBySourceRefRepo(user.id, TRANSCRIPTION_SOURCES.TEAMS, sourceRef);
+      const raced = await getTranscriptionBySourceRefRepo(userId, TRANSCRIPTION_SOURCES.TEAMS, sourceRef);
 
       if (!raced) throw error;
 
@@ -1250,7 +1295,7 @@ export async function importTeamsMeetingService(
 
     return mapDBTranscriptionToDetailDTO(created);
   } catch (error) {
-    throw handleError("importTeamsMeetingService", error);
+    throw handleError("importTeamsMeetingForUser", error);
   }
 }
 
@@ -1649,5 +1694,166 @@ export async function getTranscriptTextService(
     };
   } catch (error) {
     throw handleError("getTranscriptTextService", error);
+  }
+}
+
+// ===================================================================
+// AUTO-IMPORT: collecting the meeting somebody asked us to collect
+// ===================================================================
+//
+// The in-meeting prompt asks you to start transcription in Teams. Confirming
+// that you have arms a row here, and the sweep collects the transcript once
+// the meeting is over. Nothing is imported that nobody armed - see migration
+// 018 for why that is a row rather than "import everything recent".
+// -------------------------------------------------------------------
+
+// The window rules live in auto-import-window.ts, pure and tested: they are
+// the one judgement in this loop and the failure they prevent is invisible.
+const AUTO_IMPORT_SWEEP_BATCH = 20;
+
+// -------------------------------------------------------------------
+// "I have started transcription - collect this one for me."
+//
+// The subject and end time come from GRAPH, never from the browser. The
+// browser sends an event id and nothing else, exactly as the manual import
+// does: a title from a client would name a row after something the meeting
+// is not, and an end time from a client would decide when we start asking
+// Microsoft for somebody's transcript.
+// -------------------------------------------------------------------
+export async function armTeamsAutoImportService(
+  requestDTO: ImportTeamsMeetingRequestDTO,
+): Promise<{ armed: boolean; subject: string | null }> {
+  try {
+    const user = await requireUser();
+
+    if (!isTeamsImportConfigured()) {
+      throw new DisplayErrorMessage(
+        "Importing from Teams needs Microsoft sign-in, which is not configured on this environment.",
+      );
+    }
+
+    const meeting = await getTeamsMeeting(user.id, requestDTO.eventId);
+
+    if (!meeting) {
+      throw new DisplayErrorMessage("That meeting is no longer in your calendar.");
+    }
+
+    await armTeamsAutoImportRepo({
+      id: randomUUID(),
+      userId: user.id,
+      eventId: meeting.eventId,
+      subject: meeting.subject,
+      endsAt: meeting.endsAt,
+    });
+
+    return { armed: true, subject: meeting.subject };
+  } catch (error) {
+    throw handleError("armTeamsAutoImportService", error);
+  }
+}
+
+export async function cancelTeamsAutoImportService(
+  requestDTO: ImportTeamsMeetingRequestDTO,
+): Promise<void> {
+  try {
+    const user = await requireUser();
+
+    await cancelTeamsAutoImportRepo(user.id, requestDTO.eventId);
+  } catch (error) {
+    throw handleError("cancelTeamsAutoImportService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The sweep. Runs unauthenticated on the job route's bearer token, like the
+// transcription sweep beside it, and acts for each row's OWN user.
+//
+// THREE OUTCOMES, AND THEY ARE DELIBERATELY NOT ALL "FAILED":
+//
+//   imported       a transcript existed and is now a transcription row, which
+//                  the ordinary sweep will summarise
+//   no_transcript  the window closed and nothing appeared. Almost always
+//                  means nobody started transcription, which is an ordinary
+//                  outcome and reads as one
+//   failed         Graph refused in a way that will not fix itself - another
+//                  tenant's meeting, the transcript API switched off, consent
+//                  missing
+//
+// Collapsing the middle one into "failed" would make the commonest, most
+// innocent case look like a broken feature every time.
+// -------------------------------------------------------------------
+export async function sweepTeamsAutoImportsService(): Promise<{
+  examined: number;
+  imported: number;
+  gaveUp: number;
+}> {
+  try {
+    if (!isTeamsImportConfigured()) return { examined: 0, imported: 0, gaveUp: 0 };
+
+    const now = Date.now();
+    const readyBefore = new Date(now - FIRST_TRY_AFTER_MINUTES * 60 * 1000);
+
+    const due = await getDueTeamsAutoImportsRepo(readyBefore, AUTO_IMPORT_SWEEP_BATCH);
+
+    let imported = 0;
+    let gaveUp = 0;
+
+    // Sequential, for the same reason the transcription sweep is: each of
+    // these is several Graph calls and a successful one becomes a model call
+    // as well. Fanning out would turn one scheduled run into a burst against
+    // a throttle shared with the SharePoint crawl.
+    for (const row of due) {
+      const expired = isAutoImportWindowClosed({
+        attempts: row.attempts,
+        endsAt: new Date(row.endsAt),
+        now: new Date(now),
+      });
+
+      try {
+        const created = await importTeamsMeetingForUser(row.userId, row.eventId);
+
+        await settleTeamsAutoImportRepo({
+          id: row.id,
+          userId: row.userId,
+          status: TEAMS_AUTO_IMPORT_STATUSES.IMPORTED,
+          transcriptionId: created.id,
+        });
+
+        imported += 1;
+      } catch (error) {
+        // "No transcript yet" is the expected answer for most of a row's
+        // life, so it is a retry rather than a failure - until the window
+        // closes, at which point it becomes the no_transcript outcome rather
+        // than an error nobody can act on.
+        const message = isDisplayError(error) ? error.message : "The transcript could not be collected.";
+        const noTranscriptYet = isDisplayError(error) && /no transcript/i.test(error.message);
+
+        if (noTranscriptYet && !expired) {
+          await recordTeamsAutoImportAttemptRepo({ id: row.id, userId: row.userId, error: null });
+          continue;
+        }
+
+        await settleTeamsAutoImportRepo({
+          id: row.id,
+          userId: row.userId,
+          status: noTranscriptYet
+            ? TEAMS_AUTO_IMPORT_STATUSES.NO_TRANSCRIPT
+            : TEAMS_AUTO_IMPORT_STATUSES.FAILED,
+          error: noTranscriptYet ? null : message,
+        });
+
+        gaveUp += 1;
+
+        if (!noTranscriptYet) {
+          console.error(`sweepTeamsAutoImportsService: giving up on ${row.eventId}`, error);
+        }
+      }
+    }
+
+    if (imported > 0) revalidateTranscriptionViews();
+
+    return { examined: due.length, imported, gaveUp };
+  } catch (error) {
+    throw handleError("sweepTeamsAutoImportsService", error);
   }
 }
