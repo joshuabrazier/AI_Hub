@@ -1176,6 +1176,339 @@ export type SharepointItem = Selectable<SharepointItems>;
 export type NewSharepointItem = Insertable<SharepointItems>;
 export type UpdateSharepointItem = Updateable<SharepointItems>;
 
+// -------------------------------------------------------------------
+// ===================================================================
+// DELIVERY: clients, projects, phases, tasks, time
+// ===================================================================
+//
+// The app's own delivery model, which REPLACES Jira as the source of truth
+// for what work exists and how long it took. Migration 016 has the full
+// reasoning; the three things worth knowing before writing a query:
+//
+//   TIME IS INTEGER MINUTES. Never a float of hours. Somebody types 1.5
+//   and 90 is stored, because totalling a month of floating-point hours
+//   drifts and a billing figure that is quietly out by a cent is worse
+//   than one that is obviously wrong.
+//
+//   MONEY IS INTEGER CENTS, matching the Jira-era staff_rate.
+//
+//   `workDate` AND `effectiveFrom` ARE STRINGS. They are Postgres DATE
+//   columns, and the type parser maps DATE to 'YYYY-MM-DD' on purpose -
+//   timezone-safe and React-renderable. Compare them lexicographically and
+//   never turn one into a Date.
+// -------------------------------------------------------------------
+
+export const PROJECT_STATUSES = {
+  ACTIVE: "active",
+  ON_HOLD: "on_hold",
+  COMPLETED: "completed",
+  // The soft delete. Time entries reference tasks, so a project is never
+  // actually removed - archiving is how it leaves the screen.
+  ARCHIVED: "archived",
+} as const;
+
+export type ProjectStatus = (typeof PROJECT_STATUSES)[keyof typeof PROJECT_STATUSES];
+
+export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
+  [PROJECT_STATUSES.ACTIVE]: "Active",
+  [PROJECT_STATUSES.ON_HOLD]: "On hold",
+  [PROJECT_STATUSES.COMPLETED]: "Completed",
+  [PROJECT_STATUSES.ARCHIVED]: "Archived",
+};
+
+// -------------------------------------------------------------------
+// The three rates a person can be charged at.
+//
+// Which one applies is decided PER PROJECT MEMBER, not per person: the
+// same consultant can be discounted for one client and standard for
+// another, and the band lives on `project_members` for that reason.
+// -------------------------------------------------------------------
+export const RATE_BANDS = {
+  DISCOUNTED: "discounted",
+  STANDARD: "standard",
+  HIGH: "high",
+} as const;
+
+export type RateBand = (typeof RATE_BANDS)[keyof typeof RATE_BANDS];
+
+export const RATE_BAND_LABELS: Record<RateBand, string> = {
+  [RATE_BANDS.DISCOUNTED]: "Discounted",
+  [RATE_BANDS.STANDARD]: "Standard",
+  [RATE_BANDS.HIGH]: "High",
+};
+
+// -------------------------------------------------------------------
+// The four columns of every board.
+//
+// Fixed rather than configurable, and deliberately: a board whose columns
+// differ per project cannot be reported on across projects, and having
+// `blocked` as a real column rather than a flag is most of the point of
+// looking at a board at all.
+// -------------------------------------------------------------------
+export const TASK_COLUMNS = {
+  TODO: "todo",
+  IN_PROGRESS: "in_progress",
+  BLOCKED: "blocked",
+  DONE: "done",
+} as const;
+
+export type TaskColumn = (typeof TASK_COLUMNS)[keyof typeof TASK_COLUMNS];
+
+export const TASK_COLUMN_LABELS: Record<TaskColumn, string> = {
+  [TASK_COLUMNS.TODO]: "To do",
+  [TASK_COLUMNS.IN_PROGRESS]: "In progress",
+  [TASK_COLUMNS.BLOCKED]: "Blocked",
+  [TASK_COLUMNS.DONE]: "Done",
+};
+
+// Left to right on the board. Exported so the UI cannot invent its own
+// ordering and disagree with a report.
+export const TASK_COLUMN_ORDER: readonly TaskColumn[] = [
+  TASK_COLUMNS.TODO,
+  TASK_COLUMNS.IN_PROGRESS,
+  TASK_COLUMNS.BLOCKED,
+  TASK_COLUMNS.DONE,
+];
+
+export interface Clients {
+  id: string;
+  name: string;
+  notes: string | null;
+  isActive: Generated<boolean>;
+  createdBy: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type Client = Selectable<Clients>;
+export type NewClient = Insertable<Clients>;
+export type UpdateClient = Updateable<Clients>;
+
+export interface Projects {
+  id: string;
+  clientId: string;
+  title: string;
+  description: string | null;
+  isBillable: Generated<boolean>;
+  status: Generated<ProjectStatus>;
+  // Set the first time the project's budget has been allocated to tasks,
+  // and never cleared. It is what stops the setup progress bar coming back
+  // if an estimate is later reduced - a one-time nudge, not a rule.
+  budgetAssignedAt: Date | null;
+  createdBy: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type Project = Selectable<Projects>;
+export type NewProject = Insertable<Projects>;
+export type UpdateProject = Updateable<Projects>;
+
+// -------------------------------------------------------------------
+// Project membership - THE SECURITY BOUNDARY OF THIS MODULE.
+//
+// Only somebody with a row here can see a project, its board or its tasks;
+// an admin sees everything. Every read carries a predicate against it, the
+// same arrangement team membership uses elsewhere.
+//
+// `isLead` is the second gate: only a lead may create or edit tasks.
+// -------------------------------------------------------------------
+export interface ProjectMembers {
+  projectId: string;
+  userId: string;
+  isLead: Generated<boolean>;
+  rateBand: Generated<RateBand>;
+  createdAt: Generated<Date>;
+}
+
+export type ProjectMember = Selectable<ProjectMembers>;
+export type NewProjectMember = Insertable<ProjectMembers>;
+export type UpdateProjectMember = Updateable<ProjectMembers>;
+
+// -------------------------------------------------------------------
+// A named bundle of specific people sharing a pooled budget - "these two
+// interns have 400 hours between them".
+//
+// Per project rather than a global seniority band, because the split that
+// makes sense differs from one engagement to the next. A person may be in
+// at most one group per project, and the database enforces that rather
+// than trusting a service to remember.
+// -------------------------------------------------------------------
+export interface ProjectBudgetGroups {
+  id: string;
+  projectId: string;
+  name: string;
+  budgetMinutes: Generated<number>;
+  position: Generated<number>;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type ProjectBudgetGroup = Selectable<ProjectBudgetGroups>;
+export type NewProjectBudgetGroup = Insertable<ProjectBudgetGroups>;
+export type UpdateProjectBudgetGroup = Updateable<ProjectBudgetGroups>;
+
+export interface ProjectBudgetGroupMembers {
+  groupId: string;
+  // Carried so a unique index can cover (projectId, userId) and hold the
+  // one-group-per-person rule. A composite foreign key stops it
+  // disagreeing with the group's own project.
+  projectId: string;
+  userId: string;
+  createdAt: Generated<Date>;
+}
+
+export type ProjectBudgetGroupMember = Selectable<ProjectBudgetGroupMembers>;
+export type NewProjectBudgetGroupMember = Insertable<ProjectBudgetGroupMembers>;
+
+// The level Jira did not have. A board is split into one board per phase,
+// so a phase is a heading with an order rather than a status.
+export interface Phases {
+  id: string;
+  projectId: string;
+  name: string;
+  position: Generated<number>;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type Phase = Selectable<Phases>;
+export type NewPhase = Insertable<Phases>;
+export type UpdatePhase = Updateable<Phases>;
+
+// -------------------------------------------------------------------
+// `projectId` is DENORMALISED here on purpose: every board read, every
+// authorization check and every timesheet row needs it, and joining
+// through phases to find out would put a join in front of the most common
+// query in the feature. A composite foreign key keeps it honest.
+// -------------------------------------------------------------------
+export interface Tasks {
+  id: string;
+  phaseId: string;
+  projectId: string;
+  title: string;
+  description: string | null;
+  estimateMinutes: Generated<number>;
+  boardColumn: Generated<TaskColumn>;
+  position: Generated<number>;
+  assigneeId: string | null;
+  createdBy: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type Task = Selectable<Tasks>;
+export type NewTask = Insertable<Tasks>;
+export type UpdateTask = Updateable<Tasks>;
+
+// -------------------------------------------------------------------
+// Metadata only. THE FILE LIVES IN AZURE BLOB, addressed by `storageKey`,
+// like chat attachments and transcription media - and it carries the same
+// sharp edge: a Postgres cascade CANNOT delete a blob. Every path that
+// removes these rows clears storage FIRST, and the monthly job needs a
+// reconciliation pass for whatever a cascade removed behind its back.
+// -------------------------------------------------------------------
+export interface TaskAttachments {
+  id: string;
+  taskId: string;
+  storageKey: string;
+  fileName: string;
+  // Server-derived from the bytes, never taken from the browser.
+  mediaType: string;
+  byteSize: number;
+  uploadedBy: string | null;
+  createdAt: Generated<Date>;
+}
+
+export type TaskAttachment = Selectable<TaskAttachments>;
+export type NewTaskAttachment = Insertable<TaskAttachments>;
+
+// -------------------------------------------------------------------
+// Three named bands per person, EFFECTIVE-DATED.
+//
+// The dating keeps history honest: raising a rate in July must not restate
+// June's margin. A rate is the latest `effectiveFrom` on or before the work
+// date. Keyed on users(id), unlike the Jira-era staff_rate which keyed on
+// an Atlassian account id.
+//
+// Admin-only, enforced in the service. Nothing in the schema stops a read.
+// -------------------------------------------------------------------
+export interface UserRates {
+  id: string;
+  userId: string;
+  band: RateBand;
+  chargeRateCents: number;
+  // Nullable because charge rates are known long before anybody models
+  // cost, and a project is reportable on revenue alone until then.
+  costRateCents: number | null;
+  // A DATE column: 'YYYY-MM-DD', compared lexicographically.
+  effectiveFrom: string;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type UserRate = Selectable<UserRates>;
+export type NewUserRate = Insertable<UserRates>;
+export type UpdateUserRate = Updateable<UserRates>;
+
+// -------------------------------------------------------------------
+// One person, one task, one day, some minutes.
+//
+// Enterable from a task on the board or from the timesheet grid, with no
+// difference in the row - which is why both screens show the same entry.
+//
+// THE RATES ARE SNAPSHOTS, not derived at report time. An hour is worth
+// what it was worth when it was worked, so a rate change cannot silently
+// restate last quarter. Null on a non-billable project, and cost is null
+// until cost is modelled.
+// -------------------------------------------------------------------
+export interface TimeEntries {
+  id: string;
+  taskId: string;
+  projectId: string;
+  userId: string;
+  // A DATE column: 'YYYY-MM-DD'.
+  workDate: string;
+  minutes: number;
+  notes: string | null;
+  chargeRateCents: number | null;
+  costRateCents: number | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type TimeEntry = Selectable<TimeEntries>;
+export type NewTimeEntry = Insertable<TimeEntries>;
+export type UpdateTimeEntry = Updateable<TimeEntries>;
+
+// -------------------------------------------------------------------
+// Append-only record of every estimate adjustment, kept BESIDE the current
+// value on `tasks` rather than replacing it.
+//
+// It earns a table because an estimate can be increased either by adding
+// to the project's total or by TAKING the minutes from another task,
+// possibly in another phase. That second form is a transfer, and a
+// transfer with no record is indistinguishable from somebody quietly
+// moving budget to hide an overrun. When a project goes over, the first
+// question is what moved and who moved it.
+//
+// `fromTaskId` null means the project's total went up. `minutes` is
+// SIGNED, so the log sums to the difference between the original estimate
+// and the current one.
+// -------------------------------------------------------------------
+export interface EstimateChanges {
+  id: string;
+  taskId: string;
+  fromTaskId: string | null;
+  minutes: number;
+  reason: string | null;
+  changedBy: string | null;
+  createdAt: Generated<Date>;
+}
+
+export type EstimateChange = Selectable<EstimateChanges>;
+export type NewEstimateChange = Insertable<EstimateChanges>;
+
 export interface Database {
   users: Users;
   sessions: Sessions;
@@ -1204,6 +1537,23 @@ export interface Database {
   staffTarget: StaffTargets;
   staffRate: StaffRates;
   manualWorklog: ManualWorklogs;
+  // -----------------------------------------------------------------
+  // Delivery. THE APP'S OWN DATA, and the reason this paragraph reads
+  // differently from the two below it: everything under Jira and
+  // SharePoint is a mirror that can be rebuilt from its source, and none
+  // of this can. It is the record.
+  // -----------------------------------------------------------------
+  clients: Clients;
+  projects: Projects;
+  projectMembers: ProjectMembers;
+  projectBudgetGroups: ProjectBudgetGroups;
+  projectBudgetGroupMembers: ProjectBudgetGroupMembers;
+  phases: Phases;
+  tasks: Tasks;
+  taskAttachments: TaskAttachments;
+  userRates: UserRates;
+  timeEntries: TimeEntries;
+  estimateChanges: EstimateChanges;
   // SharePoint inventory, crawled read-only through Graph. Rebuildable
   // from SharePoint, but not cheaply - a full crawl of a large library is
   // tens of thousands of Graph calls.
