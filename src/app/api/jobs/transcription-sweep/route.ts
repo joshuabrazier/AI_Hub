@@ -2,7 +2,10 @@ import { timingSafeEqual } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
-import { sweepAllTranscriptionsService } from "@/features/transcription/transcription.service";
+import {
+  sweepAllTranscriptionsService,
+  sweepTeamsAutoImportsService,
+} from "@/features/transcription/transcription.service";
 import { envServer } from "@/lib/env-server";
 
 // Talks to the Speech service, blob storage and Bedrock, so Node; and its
@@ -60,12 +63,32 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
+  // -----------------------------------------------------------------
+  // Collect first, then advance.
+  //
+  // Order matters and saves a whole sweep interval: an auto-import lands a
+  // row in `summarising`, and running the advance pass afterwards picks it
+  // up in the same run rather than leaving it until the next one.
+  //
+  // Its failures are its own. A Graph outage must not stop transcriptions
+  // that are already recorded from being summarised, so this is caught here
+  // rather than allowed to abandon the pass below.
+  // -----------------------------------------------------------------
+  let autoImport = { examined: 0, imported: 0, gaveUp: 0 };
+
+  try {
+    autoImport = await sweepTeamsAutoImportsService();
+  } catch (error) {
+    console.error("[transcription-sweep] auto-import pass failed", error);
+  }
+
   const result = await sweepAllTranscriptionsService();
 
   // Counts only - no ids, no titles, no owners - so a scheduler's logs do
   // not become a record of who is recording what.
   console.info(
-    `[transcription-sweep] examined=${result.examined} advanced=${result.advanced}`,
+    `[transcription-sweep] examined=${result.examined} advanced=${result.advanced}` +
+      ` autoImportDue=${autoImport.examined} imported=${autoImport.imported} gaveUp=${autoImport.gaveUp}`,
   );
 
   return NextResponse.json({ ok: true, ...result });

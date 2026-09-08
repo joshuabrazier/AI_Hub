@@ -7,6 +7,8 @@ import { ServerApiResponse } from "@/lib/types";
 
 import { getMeetingNowService, type MeetingNowDTO } from "./meeting-now.service";
 import {
+  armTeamsAutoImportService,
+  cancelTeamsAutoImportService,
   createTranscriptionService,
   deleteTranscriptionService,
   getTranscriptTextService,
@@ -248,5 +250,46 @@ export async function getMeetingNowAction(): Promise<ServerApiResponse<MeetingNo
     return { success: true, data: await getMeetingNowService() };
   } catch (error) {
     return handleServerApiError("getMeetingNowAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// "I have started transcription in Teams - collect this one for me."
+//
+// Takes an EVENT ID and nothing else. The subject and the end time are read
+// back from Graph by the service, for the same reason the manual import does
+// it: a title from a browser would name a row after something the meeting is
+// not, and an end time from a browser would decide when we start asking
+// Microsoft for somebody's transcript.
+// -------------------------------------------------------------------
+export async function armTeamsAutoImportAction(
+  requestDTO: ImportTeamsMeetingRequestDTO,
+): Promise<ServerApiResponse<{ armed: boolean; subject: string | null }>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(ImportTeamsMeetingSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    return { success: true, data: await armTeamsAutoImportService(validatedRequest.data) };
+  } catch (error) {
+    return handleServerApiError("armTeamsAutoImportAction", error);
+  }
+}
+
+export async function cancelTeamsAutoImportAction(
+  requestDTO: ImportTeamsMeetingRequestDTO,
+): Promise<ServerApiResponse<null>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(ImportTeamsMeetingSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    await cancelTeamsAutoImportService(validatedRequest.data);
+
+    return { success: true, data: null };
+  } catch (error) {
+    return handleServerApiError("cancelTeamsAutoImportAction", error);
   }
 }
