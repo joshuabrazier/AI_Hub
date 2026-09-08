@@ -1,0 +1,630 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  DAYS_IN_WEEK,
+  DEFAULT_WEEK_START,
+  WEEK_DAY_NUMBERS,
+  addCalendarDays,
+  budgetProgress,
+  formatMinutesAsClock,
+  formatMinutesAsHours,
+  hoursToMinutes,
+  isCalendarDate,
+  marginCents,
+  minutesToHours,
+  rateValueCents,
+  startOfWeek,
+  weekDates,
+  weekDayOf,
+} from "./delivery.types";
+
+// -------------------------------------------------------------------
+// The pure arithmetic of the delivery module, and the reason it is tested
+// this thoroughly is that NONE of it fails loudly.
+//
+// A rounding rule that truncates, a week that starts a day early, a budget
+// that reads 100% when nobody set one: each produces a full screen of
+// plausible numbers under the wrong headings. Nobody notices until a month
+// is invoiced, and by then the figures have been believed.
+//
+// So every test below states the behaviour in its name and says what breaks
+// if it regresses. Each was also checked against the obvious wrong
+// implementation - truncation instead of rounding, a Date-based week, a
+// division with no guard - and named it where the case exists to catch one.
+// -------------------------------------------------------------------
+
+describe("hoursToMinutes", () => {
+  it("converts the fractions people actually type", () => {
+    expect(hoursToMinutes(0.25)).toBe(15);
+    expect(hoursToMinutes(0.5)).toBe(30);
+    expect(hoursToMinutes(1.5)).toBe(90);
+    expect(hoursToMinutes(8)).toBe(480);
+  });
+
+  it("ROUNDS to the nearest minute rather than truncating", () => {
+    // THE CASE THAT TELLS THE TWO APART. 0.33 hours is 19.8 minutes:
+    // rounding stores 20, truncating stores 19. Truncation costs up to 59
+    // seconds on EVERY entry, so a week of seven never adds up to the day
+    // somebody worked and the shortfall grows the more carefully they fill
+    // the form in.
+    expect(hoursToMinutes(0.33)).toBe(20);
+    expect(hoursToMinutes(0.34)).toBe(20);
+  });
+
+  it("rounds a half minute UP, which is the boundary of the rule", () => {
+    // 0.125 hours is exactly 7.5 minutes, and half-up gives 8. Truncation
+    // gives 7, which is what this catches.
+    expect(hoursToMinutes(0.125)).toBe(8);
+    // The other side of the same boundary: 6.4998 minutes is just under the
+    // half, so it rounds down.
+    expect(hoursToMinutes(0.108_33)).toBe(6);
+    // AND THE CASE THAT SEPARATES HALF-UP FROM BANKER'S ROUNDING, which the
+    // two above do not. 0.375 hours is exactly 22.5 minutes: half-up gives
+    // 23, round-half-to-even gives 22 because 22 is the even neighbour.
+    // Without this, a banker's-rounding implementation passes the whole
+    // block - and it is a plausible thing for somebody to reach for, since
+    // it is what most currency code does.
+    expect(hoursToMinutes(0.375)).toBe(23);
+    // A second such case, and both have to be EXACTLY representable to be
+    // worth anything: 0.875 hours is 52.5 minutes on the nose, whose
+    // neighbours are 52 (even) and 53, so half-up gives 53 and half-even
+    // gives 52. A value like 0.408333 looks like 24.5 minutes and is
+    // actually 24.4999998, which rounds to 24 under every rule and tests
+    // nothing.
+    expect(hoursToMinutes(0.875)).toBe(53);
+  });
+
+  it("rounds a negative half TOWARDS zero, because half up means towards positive", () => {
+    // Reductions are negative hours, so the sign asymmetry is reachable:
+    // -7.5 minutes records as -7, not -8. Pinned rather than fixed - an
+    // implementation that rounded the magnitude instead would answer -8 and
+    // silently change what every existing reduction meant.
+    expect(hoursToMinutes(-0.125)).toBe(-7);
+    expect(hoursToMinutes(-1.5)).toBe(-90);
+  });
+
+  it("rounds a fraction of a minute away to nothing", () => {
+    // 0.004 hours is a quarter of a minute. It stores as 0, which violates
+    // `time_entries_minutes_sane`, and that is exactly why `entryHoursField`
+    // re-checks `minutes >= 1` AFTER the transform rather than bounding the
+    // hours before it.
+    expect(hoursToMinutes(0.004)).toBe(0);
+  });
+});
+
+describe("minutesToHours", () => {
+  it("converts back exactly for the tidy cases", () => {
+    expect(minutesToHours(90)).toBe(1.5);
+    expect(minutesToHours(15)).toBe(0.25);
+    expect(minutesToHours(30)).toBe(0.5);
+  });
+
+  it("keeps the fraction on a value that does not divide evenly", () => {
+    // UNROUNDED on purpose - this is the arithmetic path, for a chart axis or
+    // a utilisation figure. Rounding here would report 50 minutes as an hour,
+    // and it is `formatMinutesAsHours` that decides how a number is shown.
+    expect(minutesToHours(50)).toBeCloseTo(0.833_33, 5);
+    expect(minutesToHours(50)).not.toBe(1);
+    expect(minutesToHours(20)).not.toBe(0.33);
+  });
+
+  it("round-trips minutes through hours and back", () => {
+    // The pair has to compose, because a form loads an existing entry in
+    // hours and posts it back. A drift of a minute per edit is the failure.
+    for (const minutes of [1, 7, 15, 20, 50, 90, 481, 1440]) {
+      expect(hoursToMinutes(minutesToHours(minutes)), `${minutes}`).toBe(minutes);
+    }
+  });
+});
+
+describe("formatMinutesAsClock", () => {
+  it("reads as hours and minutes", () => {
+    expect(formatMinutesAsClock(90)).toBe("1h 30m");
+    expect(formatMinutesAsClock(485)).toBe("8h 5m");
+  });
+
+  it("drops the minutes on a whole hour", () => {
+    // "2h 0m" in a scanned column is noise. An implementation that always
+    // prints both fields passes every other test here.
+    expect(formatMinutesAsClock(60)).toBe("1h");
+    expect(formatMinutesAsClock(120)).toBe("2h");
+  });
+
+  it("drops the hours under one", () => {
+    expect(formatMinutesAsClock(45)).toBe("45m");
+    expect(formatMinutesAsClock(59)).toBe("59m");
+  });
+
+  it("says 0m rather than nothing when there is no time at all", () => {
+    // An empty cell and a cell with no time logged look the same on screen,
+    // and only one of them means the row is there.
+    expect(formatMinutesAsClock(0)).toBe("0m");
+  });
+
+  it("shows under a minute as zero rather than as a fraction", () => {
+    expect(formatMinutesAsClock(0.4)).toBe("0m");
+    expect(formatMinutesAsClock(0.6)).toBe("1m");
+  });
+
+  it("keeps the sign on a negative, and does not sign both halves", () => {
+    // A remaining-budget figure goes negative and "-6h 30m" is the whole
+    // point of showing it. Math.floor on a negative would give "-7h -30m",
+    // which is both wrong and unreadable.
+    expect(formatMinutesAsClock(-390)).toBe("-6h 30m");
+    expect(formatMinutesAsClock(-30)).toBe("-30m");
+    expect(formatMinutesAsClock(-120)).toBe("-2h");
+  });
+});
+
+describe("formatMinutesAsHours", () => {
+  it("is the form somebody can type over in a cell", () => {
+    expect(formatMinutesAsHours(90)).toBe("1.5");
+    expect(formatMinutesAsHours(15)).toBe("0.25");
+  });
+
+  it("trims the trailing zeros", () => {
+    // `toFixed(2)` alone answers "1.00", and a grid of "1.00" is a grid
+    // nobody wants to edit.
+    expect(formatMinutesAsHours(60)).toBe("1");
+    expect(formatMinutesAsHours(30)).toBe("0.5");
+    expect(formatMinutesAsHours(0)).toBe("0");
+  });
+
+  it("shows two decimals for a value that does not divide evenly", () => {
+    // 20 minutes shows as "0.33", which read back literally is 19.8 minutes.
+    // The MINUTES stay the truth, which is why nothing ever sums these
+    // strings.
+    expect(formatMinutesAsHours(20)).toBe("0.33");
+    expect(formatMinutesAsHours(25)).toBe("0.42");
+    expect(formatMinutesAsHours(50)).toBe("0.83");
+  });
+});
+
+// -------------------------------------------------------------------
+// THE WEEK MATHS, which is the reason this file does its calendar
+// arithmetic on integers instead of on Date.
+//
+// Every expected value below was derived independently before the assertion
+// was written, and each case is one a Date-based implementation gets wrong:
+// a month boundary, a year boundary, a leap day, and a pre-epoch date where
+// JavaScript's `%` returns a negative.
+// -------------------------------------------------------------------
+
+describe("isCalendarDate", () => {
+  it("accepts a real date", () => {
+    expect(isCalendarDate("2026-09-08")).toBe(true);
+    expect(isCalendarDate("2026-12-31")).toBe(true);
+  });
+
+  it("refuses a day that does not exist in that month", () => {
+    // The dangerous inputs are the ones that look fine. `new Date` rolls
+    // 2026-02-31 into March and 2026-04-31 into May, so a week built from
+    // either would be seven correct-looking dates for the wrong week.
+    expect(isCalendarDate("2026-02-31")).toBe(false);
+    expect(isCalendarDate("2026-04-31")).toBe(false);
+    expect(isCalendarDate("2026-04-30")).toBe(true);
+  });
+
+  it("refuses a month outside 1-12 and a day of zero", () => {
+    expect(isCalendarDate("2026-13-01")).toBe(false);
+    expect(isCalendarDate("2026-00-10")).toBe(false);
+    expect(isCalendarDate("2026-06-00")).toBe(false);
+  });
+
+  it("applies all three leap-year rules, not just the divisible-by-four one", () => {
+    // 2024 is a leap year; 2100 is not, because centuries are skipped; 2000
+    // is, because every four hundredth is skipped back. A `% 4` check alone
+    // passes the first two tests in this block and accepts 2100-02-29.
+    expect(isCalendarDate("2024-02-29")).toBe(true);
+    expect(isCalendarDate("2026-02-29")).toBe(false);
+    expect(isCalendarDate("2100-02-29")).toBe(false);
+    expect(isCalendarDate("2000-02-29")).toBe(true);
+  });
+
+  it("insists on the exact 'YYYY-MM-DD' shape", () => {
+    // These are compared lexicographically everywhere in the app, which is
+    // only valid while every value is zero-padded and the same length.
+    expect(isCalendarDate("2026-6-01")).toBe(false);
+    expect(isCalendarDate("2026-06-1")).toBe(false);
+    expect(isCalendarDate("20260601")).toBe(false);
+    expect(isCalendarDate("2026-06-01T00:00:00Z")).toBe(false);
+    expect(isCalendarDate("")).toBe(false);
+  });
+});
+
+describe("addCalendarDays", () => {
+  it("crosses a month boundary in both directions", () => {
+    expect(addCalendarDays("2026-08-31", 1)).toBe("2026-09-01");
+    expect(addCalendarDays("2026-09-01", -1)).toBe("2026-08-31");
+    expect(addCalendarDays("2026-06-30", 1)).toBe("2026-07-01");
+  });
+
+  it("crosses a year boundary in both directions", () => {
+    expect(addCalendarDays("2025-12-31", 1)).toBe("2026-01-01");
+    expect(addCalendarDays("2026-01-01", -1)).toBe("2025-12-31");
+  });
+
+  it("lands on 29 February in a leap year and steps over it otherwise", () => {
+    expect(addCalendarDays("2024-02-28", 1)).toBe("2024-02-29");
+    expect(addCalendarDays("2024-02-29", 1)).toBe("2024-03-01");
+    expect(addCalendarDays("2026-02-28", 1)).toBe("2026-03-01");
+    // The two century rules again, this time through the arithmetic rather
+    // than through the validator.
+    expect(addCalendarDays("2100-02-28", 1)).toBe("2100-03-01");
+    expect(addCalendarDays("2000-02-28", 1)).toBe("2000-02-29");
+  });
+
+  it("adds a whole year and a whole leap year", () => {
+    expect(addCalendarDays("2026-09-08", 365)).toBe("2027-09-08");
+    // 2024 contains a 29th of February, so 365 days from March lands a day
+    // early rather than on the anniversary.
+    expect(addCalendarDays("2023-09-08", 365)).toBe("2024-09-07");
+  });
+
+  it("returns the date unchanged for a zero offset", () => {
+    expect(addCalendarDays("2026-09-08", 0)).toBe("2026-09-08");
+  });
+
+  it("works before the epoch, where a day number is negative", () => {
+    expect(addCalendarDays("1970-01-01", -1)).toBe("1969-12-31");
+    expect(addCalendarDays("1969-12-31", 1)).toBe("1970-01-01");
+  });
+
+  it("pads a month and a day back to two digits", () => {
+    // The whole app compares these strings, so "2026-1-5" would sort before
+    // "2026-01-06" and a week query would return nothing.
+    expect(addCalendarDays("2026-01-31", 5)).toBe("2026-02-05");
+    expect(addCalendarDays("2026-12-31", 5)).toBe("2027-01-05");
+  });
+
+  it("throws on a malformed date instead of returning something plausible", () => {
+    // DELIBERATE, and the opposite of what `daily-series.ts` does. A chart
+    // with a missing bar is visible; a grid handed a fallback date renders
+    // seven plausible columns under the wrong headings and looks fine.
+    expect(() => addCalendarDays("2026-02-31", 1)).toThrow(/Not a calendar date/);
+    expect(() => addCalendarDays("not a date", 1)).toThrow(/Not a calendar date/);
+    expect(() => addCalendarDays("", 1)).toThrow(/Not a calendar date/);
+  });
+});
+
+describe("weekDayOf", () => {
+  it("numbers the days from Sunday", () => {
+    expect(weekDayOf("2026-09-06")).toBe(WEEK_DAY_NUMBERS.SUNDAY);
+    expect(weekDayOf("2026-09-07")).toBe(WEEK_DAY_NUMBERS.MONDAY);
+    expect(weekDayOf("2026-09-08")).toBe(WEEK_DAY_NUMBERS.TUESDAY);
+    expect(weekDayOf("2026-09-12")).toBe(WEEK_DAY_NUMBERS.SATURDAY);
+  });
+
+  it("knows the epoch was a Thursday", () => {
+    // The offset in the modulo is anchored on this one fact. Off by one here
+    // moves every column heading in the timesheet by a day.
+    expect(weekDayOf("1970-01-01")).toBe(WEEK_DAY_NUMBERS.THURSDAY);
+  });
+
+  it("answers a real day for a date before the epoch", () => {
+    // 1969-12-25 was a Thursday, and its day number is -7. A plain
+    // `(dayNumber + 4) % 7` returns -3 here, which is not a day of the week
+    // at all and would index past the end of any array built from it.
+    expect(weekDayOf("1969-12-25")).toBe(WEEK_DAY_NUMBERS.THURSDAY);
+    expect(weekDayOf("1969-12-28")).toBe(WEEK_DAY_NUMBERS.SUNDAY);
+  });
+
+  it("throws on a malformed date", () => {
+    expect(() => weekDayOf("2026-13-01")).toThrow(/Not a calendar date/);
+  });
+});
+
+describe("startOfWeek", () => {
+  it("defaults to Monday, matching the reporting engine", () => {
+    expect(DEFAULT_WEEK_START).toBe(WEEK_DAY_NUMBERS.MONDAY);
+    expect(startOfWeek("2026-09-08")).toBe("2026-09-07");
+  });
+
+  it("returns the date itself when it IS the start of the week", () => {
+    // The zero-offset boundary. `-((day - start + 7) % 7 || 7)` reads as a
+    // reasonable way to write this and sends a Monday back to the Monday
+    // before, losing a whole week of entries off the top of the grid.
+    expect(startOfWeek("2026-09-07")).toBe("2026-09-07");
+    expect(startOfWeek("2026-09-06", WEEK_DAY_NUMBERS.SUNDAY)).toBe("2026-09-06");
+  });
+
+  it("treats a Sunday as the END of the Monday week, not the start of the next", () => {
+    // The off-by-one that matters most: with a Monday start, Sunday belongs
+    // to the week that has just finished. Getting this wrong moves one day's
+    // hours into the following week's invoice.
+    expect(startOfWeek("2026-09-13")).toBe("2026-09-07");
+    expect(startOfWeek("2026-09-14")).toBe("2026-09-14");
+  });
+
+  it("honours a Sunday-to-Saturday week", () => {
+    expect(startOfWeek("2026-09-08", WEEK_DAY_NUMBERS.SUNDAY)).toBe("2026-09-06");
+    expect(startOfWeek("2026-09-12", WEEK_DAY_NUMBERS.SUNDAY)).toBe("2026-09-06");
+    expect(startOfWeek("2026-09-13", WEEK_DAY_NUMBERS.SUNDAY)).toBe("2026-09-13");
+  });
+
+  it("throws on a malformed date", () => {
+    expect(() => startOfWeek("2026-02-30")).toThrow(/Not a calendar date/);
+  });
+});
+
+describe("weekDates", () => {
+  it("gives seven ascending dates starting on the week start", () => {
+    const dates = weekDates("2026-09-08");
+
+    expect(dates).toHaveLength(DAYS_IN_WEEK);
+    expect(dates).toEqual([
+      "2026-09-07",
+      "2026-09-08",
+      "2026-09-09",
+      "2026-09-10",
+      "2026-09-11",
+      "2026-09-12",
+      "2026-09-13",
+    ]);
+  });
+
+  it("spans a month boundary without repeating or skipping a day", () => {
+    // Monday 31 August 2026 into September. An implementation that built the
+    // week by holding the month and walking the day number would produce
+    // 2026-08-32.
+    expect(weekDates("2026-09-02")).toEqual([
+      "2026-08-31",
+      "2026-09-01",
+      "2026-09-02",
+      "2026-09-03",
+      "2026-09-04",
+      "2026-09-05",
+      "2026-09-06",
+    ]);
+  });
+
+  it("spans a year boundary, and the year changes mid-week", () => {
+    // 1 January 2026 was a Thursday, so the week it belongs to starts in
+    // 2025. A grid keyed on the year of the week START would file three of
+    // these days under the wrong year.
+    expect(weekDates("2026-01-01")).toEqual([
+      "2025-12-29",
+      "2025-12-30",
+      "2025-12-31",
+      "2026-01-01",
+      "2026-01-02",
+      "2026-01-03",
+      "2026-01-04",
+    ]);
+  });
+
+  it("includes 29 February in a leap week", () => {
+    // 2024-02-29 was a Thursday. This is the case a month-arithmetic
+    // implementation gets wrong in the direction that is hardest to see: it
+    // produces seven valid-looking dates with 1 March where 29 February
+    // should be, and only one year in four.
+    expect(weekDates("2024-02-29")).toEqual([
+      "2024-02-26",
+      "2024-02-27",
+      "2024-02-28",
+      "2024-02-29",
+      "2024-03-01",
+      "2024-03-02",
+      "2024-03-03",
+    ]);
+  });
+
+  it("gives the SAME seven dates for every day of that week", () => {
+    // The property the timesheet relies on: "the week containing this date"
+    // must not depend on which day of it the person clicked. Any drift shows
+    // up here as two different weeks for one week's dates.
+    const expected = weekDates("2026-09-07");
+
+    for (const date of expected) {
+      expect(weekDates(date), date).toEqual(expected);
+    }
+  });
+
+  it("gives the same seven dates for every day of a week that straddles a year", () => {
+    const expected = weekDates("2025-12-29");
+
+    for (const date of expected) {
+      expect(weekDates(date), date).toEqual(expected);
+    }
+  });
+
+  it("stays seven consecutive days for a Sunday-start week", () => {
+    const dates = weekDates("2026-09-08", WEEK_DAY_NUMBERS.SUNDAY);
+
+    expect(dates).toEqual([
+      "2026-09-06",
+      "2026-09-07",
+      "2026-09-08",
+      "2026-09-09",
+      "2026-09-10",
+      "2026-09-11",
+      "2026-09-12",
+    ]);
+    expect(weekDayOf(dates[0])).toBe(WEEK_DAY_NUMBERS.SUNDAY);
+  });
+
+  it("is every weekday exactly once, whichever day the week starts on", () => {
+    // Seven cells, seven distinct days. A duplicate would silently show one
+    // day's hours twice and hide another day's entirely.
+    for (const weekStartsOn of Object.values(WEEK_DAY_NUMBERS)) {
+      const days = weekDates("2026-09-08", weekStartsOn).map(weekDayOf);
+
+      expect(new Set(days).size, `start ${weekStartsOn}`).toBe(DAYS_IN_WEEK);
+      expect(days[0], `start ${weekStartsOn}`).toBe(weekStartsOn);
+    }
+  });
+
+  it("throws on a malformed date rather than returning seven wrong columns", () => {
+    expect(() => weekDates("2026-02-31")).toThrow(/Not a calendar date/);
+  });
+});
+
+describe("budgetProgress", () => {
+  it("reports a budget that is part spent", () => {
+    expect(budgetProgress(600, 300)).toEqual({
+      budgetMinutes: 600,
+      loggedMinutes: 300,
+      remainingMinutes: 300,
+      overMinutes: 0,
+      percentUsed: 50,
+      barPercent: 50,
+      isOverBudget: false,
+    });
+  });
+
+  it("does NOT call a budget spent to the minute an overrun", () => {
+    // The boundary. `remaining <= 0` reads as the same rule and paints a
+    // project that landed exactly on its estimate red, which is the one case
+    // the plan got right.
+    const onBudget = budgetProgress(600, 600);
+
+    expect(onBudget.remainingMinutes).toBe(0);
+    expect(onBudget.overMinutes).toBe(0);
+    expect(onBudget.percentUsed).toBe(100);
+    expect(onBudget.isOverBudget).toBe(false);
+  });
+
+  it("reports an overrun as a positive number, and fills the bar without overflowing it", () => {
+    // `percentUsed` may exceed 100 because the label says 140%; `barPercent`
+    // may not, because it is a width. Collapsing the two either clips the
+    // truth or draws a bar out of its container.
+    const over = budgetProgress(600, 840);
+
+    expect(over.remainingMinutes).toBe(-240);
+    expect(over.overMinutes).toBe(240);
+    expect(over.percentUsed).toBe(140);
+    expect(over.barPercent).toBe(100);
+    expect(over.isOverBudget).toBe(true);
+  });
+
+  it("says nothing rather than everything when there is no budget", () => {
+    // A budget of nought is a group nobody has planned yet, not a group that
+    // has spent all of nothing. Dividing gives Infinity, and guarding that
+    // to 100 gives a full red bar which blames the person who did the work
+    // for the omission of the person who planned it.
+    const unplanned = budgetProgress(0, 120);
+
+    expect(unplanned.remainingMinutes).toBeNull();
+    expect(unplanned.percentUsed).toBeNull();
+    expect(unplanned.barPercent).toBe(0);
+    expect(unplanned.overMinutes).toBe(0);
+    expect(unplanned.isOverBudget).toBe(false);
+    // The logged time is still reported. It is the one true figure there is.
+    expect(unplanned.loggedMinutes).toBe(120);
+  });
+
+  it("shows an EMPTY bar for a zero budget, at every amount logged", () => {
+    // Number.isFinite alone was not enough here, and the gap is worth
+    // naming: the wrong implementation the test above warns about - guarding
+    // the division by zero to 100 - returns a finite 100 and passed. So the
+    // bar is pinned to 0 rather than merely to "a number".
+    //
+    // Which end it pins to is the whole point. A full red bar on an
+    // unplanned project blames whoever did the work for the omission of
+    // whoever planned it, and the figure is not even wrong-but-close: there
+    // is no budget to be a percentage of.
+    for (const logged of [0, 1, 100_000]) {
+      const rollup = budgetProgress(0, logged);
+
+      expect(rollup.barPercent, `${logged} logged`).toBe(0);
+      expect(rollup.percentUsed, `${logged} logged`).toBeNull();
+      expect(rollup.isOverBudget, `${logged} logged`).toBe(false);
+      // Still reported, because it is the one true figure there is.
+      expect(rollup.loggedMinutes, `${logged} logged`).toBe(logged);
+    }
+  });
+
+  it("rounds the percentage to ONE decimal place, in one place", () => {
+    // 1 minute of 7 is 14.285714...%, which renders as 14.285714285714286 in
+    // one component and 14.3 in another unless it is rounded here. Rounding
+    // to a whole number instead would make two groups that differ show the
+    // same figure.
+    expect(budgetProgress(7, 1).percentUsed).toBe(14.3);
+    expect(budgetProgress(900, 600).percentUsed).toBe(66.7);
+    expect(budgetProgress(3, 1).percentUsed).toBe(33.3);
+  });
+
+  it("treats negative minutes as none rather than as credit", () => {
+    // Neither figure can be negative in the database. If one ever arrives
+    // that way, a negative percentage and a negative bar width are worse
+    // than a zero.
+    expect(budgetProgress(600, -30).loggedMinutes).toBe(0);
+    expect(budgetProgress(-600, 30).percentUsed).toBeNull();
+  });
+
+  it("rounds fractional minutes before doing anything with them", () => {
+    expect(budgetProgress(600.4, 300.6).budgetMinutes).toBe(600);
+    expect(budgetProgress(600.4, 300.6).loggedMinutes).toBe(301);
+  });
+});
+
+describe("rateValueCents", () => {
+  it("values an hour at the hourly rate", () => {
+    expect(rateValueCents(60, 15_000)).toBe(15_000);
+    expect(rateValueCents(90, 15_000)).toBe(22_500);
+    expect(rateValueCents(20, 15_000)).toBe(5_000);
+  });
+
+  it("is nought for no time, not null", () => {
+    // Nobody worked, so it is worth nothing - which is a known figure, unlike
+    // an unknown rate.
+    expect(rateValueCents(0, 15_000)).toBe(0);
+  });
+
+  it("rounds to the cent rather than truncating", () => {
+    // 7 minutes at $123.50 an hour is 1440.83 cents. Truncation loses a cent
+    // a line, which is the difference an invoice gets queried over.
+    expect(rateValueCents(7, 12_350)).toBe(1_441);
+    expect(rateValueCents(1, 10_000)).toBe(167);
+  });
+
+  it("answers NULL for a null rate, never nought", () => {
+    // THE ONE WRONG ANSWER THAT LOOKS LIKE GOOD NEWS. A cost of nought makes
+    // the margin 100%, so an unmodelled cost rate has to stay unknown all
+    // the way to the screen.
+    expect(rateValueCents(600, null)).toBeNull();
+    expect(rateValueCents(0, null)).toBeNull();
+  });
+
+  it("values each line separately, which is what an invoice adds up", () => {
+    // Three 1-minute entries at $100 an hour are 167 cents each, 501 in
+    // total, where valuing the 3 minutes together gives 500. The per-line
+    // figure is the one shown, so the total has to be the sum of the lines
+    // or the invoice does not add up on the page.
+    const lines = [1, 1, 1].map((minutes) => rateValueCents(minutes, 10_000));
+
+    expect(lines).toEqual([167, 167, 167]);
+    expect(lines.reduce<number>((total, line) => total + (line ?? 0), 0)).toBe(501);
+    expect(rateValueCents(3, 10_000)).toBe(500);
+  });
+});
+
+describe("marginCents", () => {
+  it("is revenue less cost", () => {
+    expect(marginCents(15_000, 9_000)).toBe(6_000);
+  });
+
+  it("keeps a negative margin negative", () => {
+    // A job sold below cost is the figure most worth seeing. Clamping it at
+    // nought would hide exactly the projects the report exists for.
+    expect(marginCents(9_000, 15_000)).toBe(-6_000);
+  });
+
+  it("is null when either side is unknown", () => {
+    expect(marginCents(15_000, null)).toBeNull();
+    expect(marginCents(null, 9_000)).toBeNull();
+    expect(marginCents(null, null)).toBeNull();
+  });
+
+  it("stays unknown all the way through when a cost rate is not recorded", () => {
+    // The two functions composed, which is how the report actually uses
+    // them: no cost rate means an unvalued cost, and an unvalued cost means
+    // an unknown margin - NOT a margin equal to the whole charge.
+    const charge = rateValueCents(600, 15_000);
+    const cost = rateValueCents(600, null);
+
+    expect(cost).toBeNull();
+    expect(marginCents(charge, cost)).toBeNull();
+    expect(marginCents(charge, cost)).not.toBe(charge);
+  });
+});
