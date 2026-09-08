@@ -113,3 +113,82 @@ describe("createStallGuard", () => {
     expect(String((guard.signal.reason as Error).message)).toContain("150 seconds");
   });
 });
+
+// -------------------------------------------------------------------
+// The first byte has its own, shorter deadline.
+//
+// Measured in production and the reason this exists: Bedrock accepted a
+// five-character prompt, returned 200, and sent nothing. Every token count
+// null. The AWS SDK cannot catch it - NodeHttpHandler clears its own
+// requestTimeout the moment response headers arrive - so a stream that opens
+// and goes quiet is covered by nothing but this guard, and the reader waited
+// two and a half minutes for an answer that was never coming.
+// -------------------------------------------------------------------
+describe("createStallGuard - the first token", () => {
+  it("gives up on a silent stream at the SHORT window", async () => {
+    vi.useFakeTimers();
+
+    const guard = createStallGuard(150_000, undefined, 20_000);
+
+    vi.advanceTimersByTime(19_000);
+    expect(guard.signal.aborted).toBe(false);
+
+    vi.advanceTimersByTime(2_000);
+    expect(guard.signal.aborted).toBe(true);
+
+    guard.dispose();
+    vi.useRealTimers();
+  });
+
+  it("widens to the full window once anything arrives", async () => {
+    // The half that protects a good answer. A long reply is long because it
+    // is saying a lot, and every chunk is evidence it is healthy - so once
+    // the model has proved it is alive it gets the generous window.
+    vi.useFakeTimers();
+
+    const guard = createStallGuard(150_000, undefined, 20_000);
+
+    vi.advanceTimersByTime(10_000);
+    guard.progress();
+
+    // Well past the first-token deadline, and still alive.
+    vi.advanceTimersByTime(60_000);
+    expect(guard.signal.aborted).toBe(false);
+
+    vi.advanceTimersByTime(100_000);
+    expect(guard.signal.aborted).toBe(true);
+
+    guard.dispose();
+    vi.useRealTimers();
+  });
+
+  it("behaves exactly as before when no first-byte window is given", async () => {
+    // Every existing caller passes two arguments and must not change.
+    vi.useFakeTimers();
+
+    const guard = createStallGuard(30_000);
+
+    vi.advanceTimersByTime(29_000);
+    expect(guard.signal.aborted).toBe(false);
+
+    vi.advanceTimersByTime(2_000);
+    expect(guard.signal.aborted).toBe(true);
+
+    guard.dispose();
+    vi.useRealTimers();
+  });
+
+  it("says the model sent nothing, rather than blaming a stall", async () => {
+    // Two different failures deserve two different sentences: "it never
+    // started" points at the model, "it stopped" points at a dropped stream.
+    vi.useFakeTimers();
+
+    const guard = createStallGuard(150_000, undefined, 20_000);
+    vi.advanceTimersByTime(21_000);
+
+    expect((guard.signal.reason as Error).message).toMatch(/model sent nothing for 20 seconds/i);
+
+    guard.dispose();
+    vi.useRealTimers();
+  });
+});
