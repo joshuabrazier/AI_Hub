@@ -802,6 +802,33 @@ export async function retryTranscriptionFilingService(
 
     const existing = await getTranscriptionFilingRepo(transcription.id, user.id);
 
+    // -----------------------------------------------------------------
+    // A NOTE THAT IS ALREADY FILED IS NOT RE-FILED, and refusing is the
+    // honest answer rather than a missing feature.
+    //
+    // Nothing in this app moves or deletes anything in SharePoint - that is
+    // a property of sharepoint-write.ts, not an oversight - so "file it
+    // again" cannot mean "put it somewhere else". It would upload a SECOND
+    // copy at the new destination and leave the first where it was, and the
+    // row would then point at the new one as though the old had gone.
+    //
+    // The case this actually comes up in: notes filed before a change to
+    // where notes go, sitting in the folder above the one they would land in
+    // today. Two copies of a meeting in one client folder is a worse answer
+    // to that than one copy in the wrong place, and moving them is a
+    // SharePoint job where the person doing it can see what is already
+    // there.
+    //
+    // The interface does not offer this - a filed note shows no button - so
+    // this guards the action against being reached another way rather than
+    // duplicating a check the screen already makes.
+    // -----------------------------------------------------------------
+    if (existing?.status === TRANSCRIPTION_FILING_STATUSES.FILED) {
+      throw new DisplayErrorMessage(
+        "These notes are already filed in SharePoint. Filing again would add a second copy rather than move the first, so move it there instead.",
+      );
+    }
+
     // Reset to pending so fileTranscription will act on it. The attempt
     // counter goes back to zero because this is a person deciding to try
     // again, not the sweep spending another of its four - and a row that had
