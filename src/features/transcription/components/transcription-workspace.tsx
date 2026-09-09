@@ -16,6 +16,8 @@ import { Label } from "@/components/ui/label";
 import { MESSAGES } from "@/lib/constants";
 import {
   TRANSCRIPTION_IN_FLIGHT_STATUSES,
+  TRANSCRIPTION_FILING_STATUSES,
+  TRANSCRIPTION_FILING_STATUS_LABELS,
   TRANSCRIPTION_STATUSES,
   TRANSCRIPTION_STATUS_LABELS,
 } from "@/lib/data/kysely-database-types";
@@ -264,6 +266,29 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
                               {TRANSCRIPTION_STATUS_LABELS[transcription.status]}
                             </Badge>
                           )}
+
+                          {/* Filing, and ONLY when it needs somebody. A
+                              "Filed" badge on every row is noise in a list
+                              where filed is the normal state, and the same
+                              argument the status badge above already makes.
+                              What is worth a mark is the pair that will
+                              never resolve on their own: nowhere to put it,
+                              or SharePoint refused. Both are terminal until
+                              a person acts, which is exactly why they have
+                              to be visible from the list rather than only
+                              after opening the row. */}
+                          {transcription.filingStatus === TRANSCRIPTION_FILING_STATUSES.NOWHERE ||
+                          transcription.filingStatus === TRANSCRIPTION_FILING_STATUSES.FAILED ? (
+                            <Badge
+                              variant={
+                                transcription.filingStatus === TRANSCRIPTION_FILING_STATUSES.FAILED
+                                  ? "destructive"
+                                  : "warning"
+                              }
+                            >
+                              {TRANSCRIPTION_FILING_STATUS_LABELS[transcription.filingStatus]}
+                            </Badge>
+                          ) : null}
                         </span>
                       </Link>
 

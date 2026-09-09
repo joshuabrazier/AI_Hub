@@ -1,6 +1,7 @@
 import "server-only";
 
 import { generateId } from "better-auth";
+import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
@@ -12,6 +13,7 @@ import {
   TRANSCRIPTION_STATUSES,
   type Transcription,
   type TranscriptionFiling,
+  type TranscriptionFilingStatus,
 } from "@/lib/data/kysely-database-types";
 import { getClientsRepo } from "@/lib/data/repositories/clients.repository";
 import { listSharepointDrivesRepo } from "@/lib/data/repositories/sharepoint-drive.repository";
@@ -24,6 +26,8 @@ import {
   updateTranscriptionFilingRepo,
 } from "@/lib/data/repositories/transcription-filing.repository";
 import { getTranscriptionForUserRepo } from "@/lib/data/repositories/transcriptions.repository";
+import { requireUser } from "@/lib/auth/session-auth-server";
+import { DisplayErrorMessage } from "@/lib/errors";
 import { envServer } from "@/lib/env-server";
 import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
@@ -41,7 +45,12 @@ import { buildNotesDocument } from "@/lib/sharepoint/notes-document";
 import { ensureFolderPath, uploadTextFile } from "@/lib/sharepoint/sharepoint-write";
 import { dateInAppZone } from "@/lib/timezone";
 
-import { formatTimestamp, speakerLabel } from "./transcription.types";
+import { revalidateTranscriptionViews } from "./transcription.revalidate";
+import {
+  formatTimestamp,
+  speakerLabel,
+  type TranscriptionIdRequestDTO,
+} from "./transcription.types";
 
 // ===================================================================
 // FILING A MEETING'S NOTES INTO SHAREPOINT
@@ -597,5 +606,75 @@ export async function sweepTranscriptionFilingService(): Promise<{
     return { examined: pending.length, filed };
   } catch (error) {
     throw handleError("sweepTranscriptionFilingService", error);
+  }
+}
+
+// ===================================================================
+// FILE THIS ONE NOW
+//
+// The manual path, and it covers two cases that the automatic one cannot
+// reach on its own.
+//
+// A RETRY. A filing that ended 'nowhere' or 'failed' is terminal by design -
+// the sweep does not pick those up, because a folder somebody deleted fails
+// identically every few minutes forever and that is how a log stops being
+// worth reading. So somebody has to say "try again", and until now there was
+// nowhere to say it from.
+//
+// A BACKFILL. Every transcription that finished before this feature existed
+// has no filing row at all, and nothing would ever give it one. That is not
+// a small set - it is every meeting anybody had recorded up to the day this
+// shipped - and without this they stay unfiled forever with no explanation.
+//
+// IT DOES NOT SKIP THE DECISION. This does not take a folder, and there is
+// deliberately no way for a caller to name one: the destination is chosen by
+// the same three tiers as an automatic filing, so a retry cannot put a note
+// somewhere the rules would refuse to. Moving a note that landed in the
+// wrong place is a job for SharePoint, where the person doing it can see
+// what else is in the folder.
+//
+// The guard is the transcription's own owner. The upload runs on their
+// delegated token, so a caller who could retry somebody else's filing would
+// be causing a write to SharePoint as them.
+// ===================================================================
+export async function retryTranscriptionFilingService(
+  requestDTO: TranscriptionIdRequestDTO,
+): Promise<TranscriptionFilingStatus | null> {
+  try {
+    const user = await requireUser();
+
+    const transcription = await getTranscriptionForUserRepo(requestDTO.transcriptionId, user.id);
+
+    // Not theirs, or not there. notFound rather than "forbidden", so a
+    // guessed id cannot be used to discover which ones exist.
+    if (!transcription) notFound();
+
+    if (transcription.status !== TRANSCRIPTION_STATUSES.COMPLETED) {
+      throw new DisplayErrorMessage("This can be filed once the transcription has finished.");
+    }
+
+    const existing = await getTranscriptionFilingRepo(transcription.id, user.id);
+
+    // Reset to pending so fileTranscription will act on it. The attempt
+    // counter goes back to zero because this is a person deciding to try
+    // again, not the sweep spending another of its four - and a row that had
+    // exhausted its attempts is exactly the one somebody is here about.
+    if (existing) {
+      await updateTranscriptionFilingRepo(existing.id, {
+        status: TRANSCRIPTION_FILING_STATUSES.PENDING,
+        attempts: 0,
+        error: null,
+      });
+    }
+
+    // No row at all is the backfill case, and needs nothing: the claim
+    // inside fileTranscription creates one.
+    const filing = await fileTranscription(transcription, user.id);
+
+    revalidateTranscriptionViews();
+
+    return filing?.status ?? null;
+  } catch (error) {
+    throw handleError("retryTranscriptionFilingService", error);
   }
 }

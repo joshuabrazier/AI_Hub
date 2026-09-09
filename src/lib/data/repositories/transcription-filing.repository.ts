@@ -6,6 +6,7 @@ import {
   NewTranscriptionFiling,
   TRANSCRIPTION_FILING_STATUSES,
   TranscriptionFiling,
+  TranscriptionFilingStatus,
   UpdateTranscriptionFiling,
 } from "../kysely-database-types";
 
@@ -177,5 +178,60 @@ export async function getTranscriptionFilingsForUserRepo(
       .execute();
   } catch (error) {
     throw handleError("getTranscriptionFilingsForUserRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// How filing is going, as COUNTS AND NOTHING ELSE.
+//
+// THE ONLY UNSCOPED READ IN THIS FILE, and the shape is the reason it is
+// allowed to be. Every other function here is scoped by owner because a
+// filing row names whose delegated token wrote to SharePoint. This one is
+// for an administrator asking "is filing working", and that question is
+// answerable with four numbers.
+//
+// IT DELIBERATELY RETURNS NO TITLES, NO PATHS AND NO REASONS. A
+// transcription is private from other users - that is the whole access
+// model of the feature - and a meeting title is often the most disclosive
+// thing about it ("Bowhill redundancy consultation"). An admin list of
+// everybody's filings would quietly undo that in a screen nobody thought of
+// as a privacy surface. The counts say whether the configuration is right,
+// which is what an admin can actually act on; the reason for one particular
+// filing is shown to the person whose meeting it was.
+//
+// The split between 'nowhere' and 'failed' is the actionable part: the
+// first means the configuration cannot choose a destination, the second
+// means SharePoint refused. Different people fix those.
+// -------------------------------------------------------------------
+export type TranscriptionFilingCounts = Record<TranscriptionFilingStatus, number>;
+
+export async function countTranscriptionFilingsByStatusRepo(
+  db: DBClient = database,
+): Promise<TranscriptionFilingCounts> {
+  try {
+    const rows = await db
+      .selectFrom("transcriptionFiling")
+      .select(({ fn }) => ["status", fn.countAll<string>().as("count")])
+      .groupBy("status")
+      .execute();
+
+    // Started from zeroes so a status with no rows reads as none rather than
+    // as absent, and the caller never has to decide what a missing key means.
+    const counts: TranscriptionFilingCounts = {
+      [TRANSCRIPTION_FILING_STATUSES.PENDING]: 0,
+      [TRANSCRIPTION_FILING_STATUSES.FILED]: 0,
+      [TRANSCRIPTION_FILING_STATUSES.NOWHERE]: 0,
+      [TRANSCRIPTION_FILING_STATUSES.FAILED]: 0,
+    };
+
+    for (const row of rows) {
+      // count() comes back as a string because Postgres counts in bigint and
+      // node-postgres will not silently narrow one.
+      counts[row.status] = Number(row.count ?? 0);
+    }
+
+    return counts;
+  } catch (error) {
+    throw handleError("countTranscriptionFilingsByStatusRepo", error);
   }
 }

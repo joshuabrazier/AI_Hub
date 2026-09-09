@@ -4,24 +4,46 @@ import PortalPage from "@/features/layout/portal-page";
 import { StandardTablePage } from "@/features/layout/standard-table-page";
 import { envServer } from "@/lib/env-server";
 
+import { FilingPanel } from "./components/filing-panel";
 import { LibraryCard } from "./components/library-card";
 import { NominateLibraryForm } from "./components/nominate-library-form";
-import { getSharepointDrivesAction } from "./sharepoint.actions";
+import { getFilingSettingsAction, getSharepointDrivesAction } from "./sharepoint.actions";
 
 // -------------------------------------------------------------------
-// SharePoint inventory.
+// SharePoint: the catalogue, and what gets written back into it.
 //
-// READ-ONLY AGAINST SHAREPOINT, and the page says so because it is the
-// thing an admin most needs to be sure of before pointing this at a real
-// library. Nothing here moves, renames, deletes or creates anything in
-// SharePoint, and there is no code path in the feature that could.
+// THIS PAGE USED TO PROMISE "Nothing in SharePoint is changed", AND THAT
+// STOPPED BEING TRUE. It was accurate while the feature only crawled, and
+// it survived unchanged when filing was added - so the screen an admin
+// reads before pointing this at a real client library was telling them the
+// app could not write to it, at the same time as the app was writing to it.
+// A stale promise about somebody else's system is worse than no promise,
+// because it is the one they will quote back.
 //
-// What it does is catalogue: names, sizes, folder structure, who last
-// touched what. The names alone are disclosive, which is why removing a
+// What is true now, and what the page says:
+//
+//   THE CRAWL IS READ-ONLY. Names, sizes, folder structure, who last
+//   touched what. Nothing is moved, renamed or deleted by it, and no code
+//   path in the crawl could.
+//
+//   FILING WRITES, and only in two shapes: a new markdown file of meeting
+//   notes into a folder the crawl already found, and - only if a holding
+//   folder is configured - that one path created if it is missing. It never
+//   overwrites: an upload that collides with an existing name is reported
+//   as the file that was already there. Nothing is ever deleted.
+//
+// The catalogued names alone are disclosive, which is why removing a
 // library really removes what we hold about it.
 // -------------------------------------------------------------------
 export default async function SharepointPage() {
   const response = await getSharepointDrivesAction();
+
+  // Read alongside the libraries rather than behind a tab. Whether filing
+  // works depends almost entirely on whether a library is nominated and
+  // crawled, so putting the answer on a different screen from the controls
+  // that decide it is how somebody ends up reading one and acting on the
+  // other.
+  const filing = await getFilingSettingsAction();
 
   // Without the sweep configured, a crawl is queued and then nothing walks
   // it. Saying so on the page is the difference between "this is broken"
@@ -34,7 +56,7 @@ export default async function SharepointPage() {
         <PortalPage
           eyebrow="Admin"
           title="SharePoint"
-          description="Catalogue a document library so its structure can be reviewed. Nothing in SharePoint is changed."
+          description="Catalogue a document library so its structure can be reviewed, and file meeting notes into it. The crawl only reads; filing adds files and, if configured, one holding folder. Nothing is ever renamed, overwritten or deleted."
         >
           <NominateLibraryForm />
 
@@ -66,6 +88,15 @@ export default async function SharepointPage() {
               ))}
             </div>
           )}
+
+          {/* Below the libraries, because filing depends on one being
+              nominated and crawled - the controls that decide the answer
+              come first, then the answer. */}
+          {filing.success && filing.data ? (
+            <div className="mt-8">
+              <FilingPanel settings={filing.data} />
+            </div>
+          ) : null}
         </PortalPage>
       )}
     </StandardTablePage>

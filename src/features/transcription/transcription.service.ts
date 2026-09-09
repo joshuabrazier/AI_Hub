@@ -2,7 +2,6 @@ import "server-only";
 
 import { ConverseStreamCommand, type Message, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
 import { generateId } from "better-auth";
-import { revalidatePath } from "next/cache";
 
 import {
   armTeamsAutoImportRepo,
@@ -97,9 +96,10 @@ import {
 } from "@/lib/speech/speech-client";
 
 import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from "./transcription.mappers";
-import { getTranscriptionFilingRepo } from "@/lib/data/repositories/transcription-filing.repository";
+import { getTranscriptionFilingsForUserRepo } from "@/lib/data/repositories/transcription-filing.repository";
 
 import { fileTranscription } from "./filing.service";
+import { revalidateTranscriptionViews } from "./transcription.revalidate";
 import {
   MAX_MEDIA_BYTES,
   MAX_SUMMARY_ATTEMPTS,
@@ -155,14 +155,6 @@ import {
 // at any realistic volume is pennies a month. It is served by streaming it
 // back through this app, never as a signed URL; see the download route.
 // -------------------------------------------------------------------
-
-// The feature is mounted in all three areas, so a change has to refresh all
-// three: which one the caller is looking at is not knowable here.
-function revalidateTranscriptionViews(): void {
-  revalidatePath(ROUTES.ADMIN_TRANSCRIPTION);
-  revalidatePath(ROUTES.MANAGE_TRANSCRIPTION);
-  revalidatePath(ROUTES.PORTAL_TRANSCRIPTION);
-}
 
 // Said by both guards below, so the two cannot drift apart. Aimed at a
 // developer, because that is the only person who can ever see it - a
@@ -809,7 +801,22 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
     const user = await requireUser();
 
     const rows = await getTranscriptionsForUserRepo(user.id);
-    const transcriptions = rows.map(mapDBTranscriptionToSummaryDTO);
+
+    // ONE QUERY FOR THE WHOLE LIST, not one per row. Filing is the part of
+    // this feature that happens with nobody watching, so its status belongs
+    // on every row rather than only on the one that happens to be open - a
+    // status you have to open something to see is one you only find when you
+    // already suspect it.
+    const filings = await getTranscriptionFilingsForUserRepo(
+      rows.map((row) => row.id),
+      user.id,
+    );
+
+    const filingByTranscription = new Map(filings.map((filing) => [filing.transcriptionId, filing]));
+
+    const transcriptions = rows.map((row) =>
+      mapDBTranscriptionToSummaryDTO(row, filingByTranscription.get(row.id)),
+    );
 
     const requested = transcriptionId
       ? transcriptions.find((item) => item.id === transcriptionId)
@@ -822,12 +829,10 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
     // transcript it can see.
     const activeRow = target ? await getTranscriptionForUserRepo(target.id, user.id) : undefined;
 
-    // Where the notes were filed, if anywhere. A second narrow read rather
-    // than a join, because the list above deliberately does not carry it -
-    // the panel only exists on the row that is open.
-    const activeFiling = activeRow
-      ? await getTranscriptionFilingRepo(activeRow.id, user.id)
-      : undefined;
+    // The open row's filing, taken from the list read above rather than
+    // fetched again: it is the same row, and a second query could disagree
+    // with the first if a sweep landed between them.
+    const activeFiling = activeRow ? filingByTranscription.get(activeRow.id) : undefined;
 
     return {
       isStorageConfigured: isMediaStorageConfigured(),

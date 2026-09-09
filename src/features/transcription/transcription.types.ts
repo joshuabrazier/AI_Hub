@@ -321,6 +321,20 @@ export type TranscriptionSummaryDTO = {
   error: string | null;
   createdAt: Date;
   completedAt: Date | null;
+  // -----------------------------------------------------------------
+  // Whether this one's notes reached SharePoint.
+  //
+  // ON THE LIST ROW, not just on the open one, because filing is the part of
+  // this feature that happens without anybody watching. A status only
+  // visible after opening a transcription is a status nobody sees: you have
+  // to already suspect the thing you are checking for.
+  //
+  // Null covers three ordinary cases and no failure: filing is not
+  // configured, the row predates it, or the transcription has not finished
+  // yet. Which is why the interface shows nothing at all for null rather
+  // than an "unknown" that reads like a fault.
+  // -----------------------------------------------------------------
+  filingStatus: TranscriptionFilingStatus | null;
 };
 
 // -------------------------------------------------------------------
