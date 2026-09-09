@@ -256,7 +256,7 @@ export function isCompletePhaseOrdering(
 // Rewrite the order of a project's phases, all of them, in ONE transaction.
 //
 // A drag moves one card and changes several rows, because positions are
-// plain integers (migration 016 chose that over fractional ordering: a
+// plain integers (migration 020 chose that over fractional ordering: a
 // project has a handful of phases, and rewriting them is cheaper than
 // explaining fractional indices to the next reader). Done row by row on the
 // bare connection, a failure on the second write leaves the board

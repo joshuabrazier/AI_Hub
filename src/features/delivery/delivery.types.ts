@@ -37,7 +37,7 @@ import {
 //   1. HOURS ARE THE INPUT UNIT, MINUTES ARE THE STORED UNIT. Somebody
 //      types 1.5; 90 is written. The conversion happens ONCE, at the schema
 //      boundary, so nothing downstream ever handles a fractional hour - see
-//      migration 016 for why a float of hours is not an option. That is why
+//      migration 020 for why a float of hours is not an option. That is why
 //      several schemas below export both an INPUT type (what the form
 //      holds) and a REQUEST type (what the service receives): conflating
 //      them is how a form ends up posting "1.5" into a field the service
@@ -114,7 +114,7 @@ export const NOTE_MAX_CHARS = 1_000;
 
 // -------------------------------------------------------------------
 // The longest one time entry may be, and it is NOT a number chosen here:
-// `time_entries_minutes_sane` in migration 016 is CHECK (minutes > 0 AND
+// `time_entries_minutes_sane` in migration 020 is CHECK (minutes > 0 AND
 // minutes <= 1440). A day has 1440 minutes and anything beyond it is a typo.
 //
 // The hours figure is DERIVED from it rather than written out, so raising one
@@ -139,7 +139,7 @@ export const MAX_PLANNED_HOURS = 100_000;
 // -------------------------------------------------------------------
 // The board has FOUR columns and the number is fixed, not configurable.
 //
-// From migration 016: a board whose columns differ per project cannot be
+// From migration 020: a board whose columns differ per project cannot be
 // reported on across projects, and having `blocked` as a real column rather
 // than a flag is most of the point of looking at a board. Derived from
 // TASK_COLUMN_ORDER so the count and the order cannot disagree.
@@ -975,7 +975,7 @@ export const UpdateProjectSchema = z.object({
   title: z.string().trim().min(1, "A project needs a title").max(PROJECT_TITLE_MAX_CHARS),
   description: optionalText(DESCRIPTION_MAX_CHARS),
   isBillable: z.boolean(),
-  // `archived` is the soft delete - see migration 016. There is no
+  // `archived` is the soft delete - see migration 020. There is no
   // DeleteProject schema, deliberately.
   status: z.enum(PROJECT_STATUSES),
 });
@@ -1229,7 +1229,7 @@ export type UpdateTaskRequestDTO = z.output<typeof UpdateTaskSchema>;
 // momentarily in a phase-and-column pair nobody dropped it on.
 //
 // `position` is the index the card should end up at. The service rewrites
-// its siblings, which migration 016 chose over fractional ordering: a column
+// its siblings, which migration 020 chose over fractional ordering: a column
 // holds tens of cards, not thousands, and rewriting ten rows is cheaper than
 // explaining fractional ordering to the next reader.
 // -------------------------------------------------------------------

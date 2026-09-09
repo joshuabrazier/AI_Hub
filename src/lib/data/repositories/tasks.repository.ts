@@ -107,7 +107,7 @@ export interface TaskAttachmentCount {
 //
 // `orderedTaskIds` is the DESTINATION COLUMN'S WHOLE ORDERED LIST, moved
 // card included, because plain integer positions mean a drop renumbers
-// every sibling - migration 016 chose that over fractional ordering
+// every sibling - migration 020 chose that over fractional ordering
 // deliberately. Handing over the finished order makes the write one
 // statement and leaves no reachable state where two cards claim position 3.
 // -------------------------------------------------------------------
