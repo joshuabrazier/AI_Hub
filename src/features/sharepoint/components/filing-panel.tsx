@@ -51,6 +51,7 @@ export function FilingPanel({ settings }: { settings: FilingSettingsDTO }) {
   const problems = [
     settings.library.problem,
     settings.fallbackProblem,
+    settings.subfolderProblem,
     // A chosen library with nothing in it is the commonest real failure and
     // does not look like one: everything is configured and every meeting
     // still goes to the holding folder.
@@ -70,7 +71,8 @@ export function FilingPanel({ settings }: { settings: FilingSettingsDTO }) {
           When a transcription finishes, its notes are written into this library as a markdown file. The
           folder is chosen by matching the client named in the meeting title against the catalogued folder
           names, and where that is not certain, either by asking the model to choose from those same folders
-          or by using the holding folder below.
+          or by using the holding folder below. The note then goes into a folder of its own inside that one,
+          so transcripts do not sit among a client&apos;s contracts and drawings.
         </p>
       </div>
 
@@ -111,6 +113,16 @@ export function FilingPanel({ settings }: { settings: FilingSettingsDTO }) {
               ? "More than the model can be shown at once, so it chooses from the first of them. Matching a client by name still searches every folder."
               : null
           }
+        />
+        <Setting
+          label="Notes go into"
+          value={
+            settings.subfolderName !== null
+              ? `a "${settings.subfolderName}" folder inside the folder that was matched`
+              : "the matched folder directly"
+          }
+          ok={settings.subfolderProblem === null}
+          note="Created if it is not there. It is the only folder the app makes inside a client folder, it is only ever one level deep, and its name comes from configuration rather than from the model."
         />
         <Setting
           label="Holding folder"

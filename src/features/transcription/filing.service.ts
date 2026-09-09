@@ -42,7 +42,12 @@ import { buildFilingPrompt, FILING_SYSTEM_PROMPT } from "@/lib/sharepoint/filing
 import { buildNotesFileName, parseFolderPath } from "@/lib/sharepoint/folder-path";
 import { GRAPH_OUTCOMES, graphOutcomeOf, graphStatusOf } from "@/lib/sharepoint/graph-client";
 import { buildNotesDocument } from "@/lib/sharepoint/notes-document";
-import { ensureFolderPath, uploadTextFile } from "@/lib/sharepoint/sharepoint-write";
+import {
+  isAlreadySubfolder,
+  resolveFilingSubfolder,
+  subfolderPath,
+} from "@/lib/sharepoint/filing-subfolder";
+import { ensureChildFolder, ensureFolderPath, uploadTextFile } from "@/lib/sharepoint/sharepoint-write";
 import { dateInAppZone } from "@/lib/timezone";
 
 import { revalidateTranscriptionViews } from "./transcription.revalidate";
@@ -56,7 +61,9 @@ import {
 // FILING A MEETING'S NOTES INTO SHAREPOINT
 //
 // The piece that joins the tested parts: which library, which client, which
-// folder, what the file says, and a record of all four.
+// folder, what the file says, and a record of all four. The note lands in a
+// folder of its own inside whichever folder was matched, so meeting
+// transcripts do not sit among a client's contracts and drawings.
 //
 // THE FAILURE THAT MATTERS IS NOT "UNFILED", IT IS "WRONG CLIENT", and every
 // decision below is shaped by that. A note in a holding folder is untidy and
@@ -380,12 +387,83 @@ function describeError(error: unknown): string {
 }
 
 // -------------------------------------------------------------------
+// Put the note in a folder of its own inside the one that was matched.
+//
+// Returns the folder to upload into, plus a note for the record when it is
+// NOT the subfolder - because "we filed it in the client folder" and "we
+// filed it in the client folder because the subfolder could not be made" are
+// different facts and the second is the one somebody would want to know.
+//
+// THREE WAYS THIS DOES NOTHING, and none of them is a failure:
+//
+//   1. The configured name is invalid. Reported, and the note still gets
+//      filed - a misconfigured tidying step must not cost somebody their
+//      meeting notes.
+//   2. The chosen folder IS the subfolder already. Once these exist and the
+//      library is re-crawled, every client has one and the model is offered
+//      them like any other folder; nesting again would give
+//      ".../Meeting Transcriptions/Meeting Transcriptions".
+//   3. Graph refused to create it. Almost always a permission that allows
+//      writing a file but not creating a folder, which is worth saying
+//      rather than turning into a failed filing.
+// -------------------------------------------------------------------
+async function nestInSubfolder(
+  userId: string,
+  driveId: string,
+  parent: CandidateFolder,
+): Promise<{ folder: CandidateFolder; note: string | null }> {
+  const subfolder = resolveFilingSubfolder(envServer.SHAREPOINT_FILING_SUBFOLDER);
+
+  if (!subfolder.ok) {
+    return { folder: parent, note: `Filed directly in the folder: ${subfolder.reason}` };
+  }
+
+  if (isAlreadySubfolder(parent.name, subfolder.name)) {
+    return { folder: parent, note: null };
+  }
+
+  try {
+    const created = await ensureChildFolder(userId, driveId, parent.itemId, subfolder.name);
+
+    return {
+      folder: {
+        itemId: created.itemId,
+        path: subfolderPath(parent.path, subfolder.name),
+        name: subfolder.name,
+      },
+      note: null,
+    };
+  } catch (error) {
+    console.warn(`nestInSubfolder: could not create "${subfolder.name}" under ${parent.path}`, error);
+
+    return {
+      folder: parent,
+      note: `Filed directly in the folder because "${subfolder.name}" could not be created (${describeError(error)}).`,
+    };
+  }
+}
+
+// Two sentences about one filing, joined without inventing punctuation when
+// either is absent.
+function joinNotes(first: string | null, second: string | null): string | null {
+  return [first, second].filter((part): part is string => Boolean(part)).join(" ") || null;
+}
+
+// -------------------------------------------------------------------
 // The fallback folder, created if it is not already there.
 //
 // THE ONLY PATH THIS APP EVER CREATES, and it comes from configuration -
 // never from model output, never from a client name. A model that could name
 // a path could create one anywhere in the library, so there is deliberately
 // no route from one to the other.
+//
+// "PATH" IS DOING WORK IN THAT SENTENCE and has to keep doing it now that
+// nestInSubfolder also creates a folder. This is the only multi-segment
+// TREE the app builds, walked from the drive root. That one creates exactly
+// one child, by name, inside a folder the crawl already catalogued and
+// addressed by its item id - so a model still cannot name a location, and
+// still cannot express a depth. See filing-subfolder.ts for the full
+// argument.
 //
 // Null when nothing is configured, or when what is configured does not
 // validate, or when the folder could not be made. All three are "there is
@@ -539,6 +617,28 @@ export async function fileTranscription(
       );
     }
 
+    // -----------------------------------------------------------------
+    // ONE FOLDER DEEPER.
+    //
+    // A note used to go straight into the matched folder, which put meeting
+    // transcripts among a client's contracts, drawings and invoices. It
+    // now goes into a folder of its own inside that one.
+    //
+    // NOT UNDER THE HOLDING FOLDER, deliberately. The fallback is already a
+    // place somebody chose specifically for notes nothing matched, and
+    // nesting inside it second-guesses that choice for no benefit - the
+    // whole purpose of that folder is to be the place these land.
+    //
+    // A FAILURE HERE IS NOT A FAILED FILING. If the folder cannot be made,
+    // the note goes into the parent exactly as it used to rather than not
+    // being filed at all: an untidy note in the right client's folder beats
+    // no note anywhere, and the reason is recorded either way.
+    // -----------------------------------------------------------------
+    const nested =
+      destination.via === "fallback"
+        ? { folder: destination.folder, note: null }
+        : await nestInSubfolder(userId, library.driveId, destination.folder);
+
     const document = buildDocument(transcription, participants);
 
     const fileName = buildNotesFileName({
@@ -554,7 +654,7 @@ export async function fileTranscription(
       const uploaded = await uploadTextFile({
         userId,
         driveId: library.driveId,
-        parentItemId: destination.folder.itemId,
+        parentItemId: nested.folder.itemId,
         fileName,
         content: document.text,
       });
@@ -563,12 +663,15 @@ export async function fileTranscription(
         (await updateTranscriptionFilingRepo(filing.id, {
           status: TRANSCRIPTION_FILING_STATUSES.FILED,
           driveId: library.driveId,
-          folderItemId: destination.folder.itemId,
+          // The folder the file is actually IN, which is the subfolder when
+          // one was made. A record pointing one level up is the near-miss
+          // that wastes an afternoon for whoever goes looking.
+          folderItemId: nested.folder.itemId,
           // A SNAPSHOT. Folders get renamed and moved, and "where we put it"
           // has to stay answerable afterwards.
-          folderPath: destination.folder.path,
+          folderPath: nested.folder.path,
           decidedVia: destination.via,
-          reason: withFailure(destination.reason),
+          reason: withFailure(joinNotes(destination.reason, nested.note)),
           fileItemId: uploaded.item.itemId,
           fileWebUrl: uploaded.item.webUrl,
           fileName,
@@ -592,10 +695,10 @@ export async function fileTranscription(
           // The destination is recorded even on a failure. "We could not put
           // it in this folder" is a different problem from "we did not know
           // where to put it", and the remedies differ.
-          folderItemId: destination.folder.itemId,
-          folderPath: destination.folder.path,
+          folderItemId: nested.folder.itemId,
+          folderPath: nested.folder.path,
           decidedVia: destination.via,
-          reason: withFailure(destination.reason),
+          reason: withFailure(joinNotes(destination.reason, nested.note)),
           error: describeError(error),
         })) ?? filing
       );

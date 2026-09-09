@@ -216,3 +216,100 @@ export async function uploadTextFile(input: {
     return { item: ref, alreadyExisted: true };
   }
 }
+
+// -------------------------------------------------------------------
+// Ensure ONE folder exists directly inside another, and return it.
+//
+// HOW THIS DIFFERS FROM ensureFolderPath ABOVE, which matters more than the
+// small amount of shared shape suggests. That one walks a path from the
+// drive ROOT and is fed a value from configuration. This one is addressed at
+// a PARENT ITEM ID - a folder the crawl already catalogued - and creates
+// exactly one child inside it.
+//
+// So the two have different trust stories, and this is the more constrained
+// of them. There is no path to parse, no tree to walk, no depth to bound: a
+// caller can name a parent it was offered and a name, and nothing else is
+// expressible. The name still comes from configuration and never from a
+// model; the parent is an id, so a model cannot name a location either.
+//
+// Same 409-is-success rule as everything else here. Two sweeps reaching the
+// same client on the same afternoon is the ordinary case, not the exotic
+// one, and the loser of that race wants the winner's folder.
+// -------------------------------------------------------------------
+export async function ensureChildFolder(
+  userId: string,
+  driveId: string,
+  parentItemId: string,
+  name: string,
+): Promise<DriveItemRef> {
+  const token = await getDelegatedGraphToken(userId);
+
+  const existing = await findChildFolder(token, driveId, parentItemId, name);
+
+  if (existing) return existing;
+
+  try {
+    const created = await graphRequest(
+      `${GRAPH_BASE}/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentItemId)}/children`,
+      token,
+      {
+        method: "POST",
+        contentType: "application/json",
+        body: JSON.stringify({
+          name,
+          folder: {},
+          // Deliberate rather than default. "rename" would quietly create
+          // "Meeting Transcriptions 1" beside the folder that already
+          // exists, and every later run would find neither.
+          "@microsoft.graph.conflictBehavior": "fail",
+        }),
+      },
+    );
+
+    const ref = toRef(created);
+    if (!ref) throw new Error(`SharePoint did not return the folder it created for "${name}".`);
+
+    return ref;
+  } catch (error) {
+    // Somebody else created it between the lookup and the create - another
+    // sweep, or a person. Their folder is the right answer.
+    if (statusOf(error) === 409) {
+      const raced = await findChildFolder(token, driveId, parentItemId, name);
+      if (!raced) throw error;
+
+      return raced;
+    }
+
+    throw error;
+  }
+}
+
+// -------------------------------------------------------------------
+// Look for one named child of a folder.
+//
+// Addressed by the parent's id with a path-relative suffix, which is how
+// Graph expresses "this thing inside that item" - one request rather than
+// listing every child and filtering, which on a client folder with hundreds
+// of documents would be several pages to answer a yes-or-no question.
+//
+// A 404 is the ANSWER, not a failure. Anything else propagates, because a
+// 403 here means the create that follows would fail too and should say so
+// now.
+// -------------------------------------------------------------------
+async function findChildFolder(
+  token: string,
+  driveId: string,
+  parentItemId: string,
+  name: string,
+): Promise<DriveItemRef | null> {
+  const url =
+    `${GRAPH_BASE}/drives/${encodeURIComponent(driveId)}` +
+    `/items/${encodeURIComponent(parentItemId)}:/${encodeURIComponent(name)}`;
+
+  try {
+    return toRef(await graphRequest(url, token));
+  } catch (error) {
+    if (statusOf(error) === 404) return null;
+    throw error;
+  }
+}
