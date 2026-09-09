@@ -1,7 +1,6 @@
 import "server-only";
 
 import {
-  ConverseCommand,
   ConverseStreamCommand,
   type ContentBlock,
   type DocumentFormat,
@@ -29,6 +28,8 @@ import {
   isBedrockConfigured,
 } from "@/lib/ai/bedrock-client";
 import { buildHouseVoiceBlock } from "@/lib/ai/house-voice";
+import { type StreamEvent } from "@/lib/ai/stream-protocol";
+import { type TurnGuard, type TurnSnapshot } from "@/lib/ai/turn-guard";
 import {
   attachmentStorageKey,
   deleteAttachment,
@@ -89,12 +90,14 @@ import {
   mapDBAiChatSubjectToDTO,
 } from "./ai-chat.mappers";
 import {
+  CHAT_PHASES,
   COMPACT_AT_INPUT_TOKENS,
   KEEP_RECENT_MESSAGES,
   MAX_HISTORY_CHARS,
   SUMMARY_MAX_TOKENS,
   UNTITLED_SUBJECT_TITLE,
   type AiChatAttachmentDTO,
+  type ChatPhase,
   type AiChatPageDTO,
   type AiChatSubjectDetailDTO,
   type DeleteAiChatSubjectRequestDTO,
@@ -858,41 +861,6 @@ function buildConverseRequest(
 // killed - that is a fault worth chasing. A reader who closed the tab is
 // not a fault at all, and chasing it wastes an afternoon.
 // -------------------------------------------------------------------
-export const describeStreamFailureForTests = (error: unknown, signal?: AbortSignal) =>
-  describeStreamFailure(error, signal);
-
-function describeStreamFailure(error: unknown, signal?: AbortSignal): string {
-  const isAbort = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
-
-  if (isAbort && signal?.aborted) {
-    const reason = signal.reason;
-
-    // THE NAME IS WHAT SEPARATES THEM, not whether a reason exists.
-    //
-    // `controller.abort()` with no argument does NOT leave the reason
-    // undefined: the platform substitutes a DOMException named AbortError
-    // reading "This operation was aborted". So a plain reader disconnect
-    // arrives carrying a message, and a check for "is there a reason" says
-    // yes and then reports that sentence - which is no more use than the
-    // one this function exists to replace.
-    //
-    // Our own aborts are plain Errors, so their name is "Error". Anything
-    // named AbortError is the platform's default, which means nobody
-    // supplied a reason, which means the reader went away.
-    const isPlatformDefault =
-      typeof reason === "object" && reason !== null && (reason as { name?: string }).name === "AbortError";
-
-    if (!isPlatformDefault) {
-      if (reason instanceof Error && reason.message) return `Aborted: ${reason.message}`;
-      if (typeof reason === "string" && reason.length > 0) return `Aborted: ${reason}`;
-    }
-
-    return "Aborted: the reader disconnected before the reply finished.";
-  }
-
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-}
-
 // -------------------------------------------------------------------
 // Record what was actually sent.
 //
@@ -937,6 +905,22 @@ async function recordRequest(entry: {
   };
   error: string | null;
   startedAt: number;
+  // -----------------------------------------------------------------
+  // The phase timeline, so the log can answer WHERE the time went rather
+  // than only how much of it there was.
+  //
+  // Stored structured as well as inside the error sentence, because the two
+  // are for different readers: the sentence is for whoever opens one row,
+  // and the column is for asking a question across all of them - "which
+  // phase is slow on the calls that fail" is not answerable by reading
+  // prose one row at a time, and that question is the whole reason this
+  // investigation took as long as it did.
+  //
+  // Null on the paths that have no phases: a compaction call is one request
+  // inside somebody else's turn, and the turn's own row carries the
+  // timeline for both.
+  // -----------------------------------------------------------------
+  phases?: TurnSnapshot | null;
 }): Promise<void> {
   try {
     // Flattened to the things a reader needs - who said it, what they said,
@@ -1057,6 +1041,7 @@ async function recordRequest(entry: {
       cacheWriteTokens: entry.usage.cacheWriteTokens,
       error: entry.error,
       durationMs: Date.now() - entry.startedAt,
+      phases: entry.phases ? JSON.stringify(entry.phases) : null,
       createdAt: new Date(),
     });
   } catch (error) {
@@ -1092,6 +1077,9 @@ async function compactIfNeeded(
   transcript: AiChatMessage[],
   userId: string,
   attachmentsByMessage: Map<string, LoadedAttachment[]>,
+  // The turn's guard, so this call is bounded, cancellable and visible in
+  // the timeline. Optional only so the function stays callable without one.
+  guard?: TurnGuard,
 ): Promise<{ summary: string | null; summaryThroughMessageId: string | null }> {
   const current = {
     summary: subject.summary,
@@ -1174,15 +1162,65 @@ async function compactIfNeeded(
     },
   ];
 
+  let usage = {
+    inputTokens: null as number | null,
+    outputTokens: null as number | null,
+    cacheReadTokens: null as number | null,
+    cacheWriteTokens: null as number | null,
+  };
+
   try {
+    // -----------------------------------------------------------------
+    // STREAMED, THOUGH NOTHING READS THE STREAM, AND THAT IS THE POINT.
+    //
+    // This was a non-streaming ConverseCommand, which holds the socket open
+    // and completely silent for the whole time the model spends generating -
+    // and at SUMMARY_MAX_TOKENS that is comfortably longer than any sane
+    // socket idle timeout. So the request handler's idle timeout could not
+    // be turned on while this call existed in this shape, which meant a
+    // stalled Bedrock stream anywhere in the app had nothing to catch it.
+    //
+    // The same argument already governs transcription summaries; see the
+    // note there. Streaming costs nothing, changes no tokens and no price,
+    // and it is what makes an idle timeout correct everywhere.
+    //
+    // IT ALSO TAKES THE TURN'S SIGNAL NOW. Without one, this call carried on
+    // running after the turn had been abandoned - so a reader who gave up
+    // still paid for a summary nobody would ever read, and the phase that
+    // was actually slow was invisible because nothing was measuring it.
+    // -----------------------------------------------------------------
     const response = await getBedrockClient().send(
-      new ConverseCommand({
+      new ConverseStreamCommand({
         modelId: BEDROCK_MODEL_ID,
         system: summarySystem,
         messages: summaryMessages,
         inferenceConfig: { maxTokens: SUMMARY_MAX_TOKENS },
       }),
+      { abortSignal: guard?.signal },
     );
+
+    if (!response.stream) throw new Error("Bedrock returned no stream for the compaction summary");
+
+    let summaryText = "";
+
+    for await (const event of response.stream) {
+      // Every event, so the phase's idle budget is reset by a call that is
+      // working. Without this a healthy summary of a long thread would look
+      // identical to a dead one.
+      guard?.progress();
+
+      const chunk = event.contentBlockDelta?.delta?.text;
+      if (chunk) summaryText += chunk;
+
+      if (event.metadata?.usage) {
+        usage = {
+          inputTokens: event.metadata.usage.inputTokens ?? null,
+          outputTokens: event.metadata.usage.outputTokens ?? null,
+          cacheReadTokens: event.metadata.usage.cacheReadInputTokens ?? null,
+          cacheWriteTokens: event.metadata.usage.cacheWriteInputTokens ?? null,
+        };
+      }
+    }
 
     // Logged like any other call. The user never sees this request, so
     // without a record it would be spend on their account that nothing
@@ -1193,17 +1231,12 @@ async function compactIfNeeded(
       kind: AI_CHAT_REQUEST_KINDS.SUMMARY,
       system: summarySystem,
       messages: summaryMessages,
-      usage: {
-        inputTokens: response.usage?.inputTokens ?? null,
-        outputTokens: response.usage?.outputTokens ?? null,
-        cacheReadTokens: response.usage?.cacheReadInputTokens ?? null,
-        cacheWriteTokens: response.usage?.cacheWriteInputTokens ?? null,
-      },
+      usage,
       error: null,
       startedAt,
     });
 
-    const summary = response.output?.message?.content?.[0]?.text?.trim();
+    const summary = summaryText.trim();
 
     if (!summary) {
       console.error("compactIfNeeded: the model returned no summary; leaving the thread uncompacted");
@@ -1226,61 +1259,88 @@ async function compactIfNeeded(
       userId,
       subjectId: subject.id,
       kind: AI_CHAT_REQUEST_KINDS.SUMMARY,
+      // Whatever it had reported before it failed, rather than nulls. A
+      // partial stream still costs input tokens, and recording them as
+      // unknown understates the spend of exactly the calls that go wrong.
+      usage,
       system: summarySystem,
       messages: summaryMessages,
-      usage: { inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null },
       error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       startedAt,
     });
 
-    // Logged, not thrown - see the note above.
+    // -----------------------------------------------------------------
+    // Logged, not thrown - see the note above. WITH ONE EXCEPTION: an abort
+    // means the whole turn is over, and carrying on to spend a full model
+    // call on a reply nobody is waiting for is not resilience, it is waste.
+    // Rethrown so the turn ends here and the failure is attributed to this
+    // phase rather than to the reply that never started.
+    // -----------------------------------------------------------------
+    if (guard?.signal.aborted) throw error;
+
     console.error("compactIfNeeded: summarisation failed, continuing uncompacted", error);
     return current;
   }
 }
 
-// -------------------------------------------------------------------
-// Send a message and stream the reply.
+// ===================================================================
+// SEND A MESSAGE AND STREAM THE REPLY
 //
 // An async generator rather than a function returning a string, because the
-// route handler turns it straight into a ReadableStream. Yielding text keeps
-// every Bedrock type inside this file - the route never imports the AWS SDK.
+// route handler turns it straight into a ReadableStream. It yields framed
+// EVENTS rather than raw text so a failure that happens after the 200 has
+// gone out can still reach the reader - see stream-protocol.ts for why that
+// was not possible before and what it cost.
 //
-// Ordering is deliberate:
+// ORDERING IS DELIBERATE:
 //   1. authorize, and resolve the conversation as the caller's
-//   2. persist the USER turn before calling the model, so a send is never lost
-//      to a model failure - the question stays in the transcript and can be
-//      retried
+//   2. persist the USER turn before calling the model, so a send is never
+//      lost to a model failure - the question stays in the transcript and
+//      can be retried
 //   3. compact if the thread has grown expensive, so the send that triggers
 //      compaction is itself cheaper
 //   4. stream the reply, accumulating it as it goes
 //   5. persist the assistant turn in a `finally`, so a reader who closes the
 //      tab or hits stop still keeps the partial answer rather than losing an
 //      expensive reply that was already paid for
-// -------------------------------------------------------------------
+//
+// EVERY STAGE IS A NAMED PHASE, and that is the change that made chat
+// diagnosable. Steps 2, 3 and 4 used to run inside a single twenty-second
+// clock named after the model's first token - so on any thread long enough
+// to compact, the timer fired during step 3 and reported that the model had
+// sent nothing, when the model had not been asked. Each stage now carries its
+// own budget and its own name, and a failure says which one.
+//
+// THE TRY BLOCK STARTS EARLIER THAN IT LOOKS LIKE IT NEEDS TO. It used to
+// begin at the model call, which meant a failure in any of steps 2 or 3 wrote
+// NO request-log row at all: the admin log showed nothing, and the only
+// evidence a turn had ever happened was the orphaned user message. Now
+// everything after authorization is inside it, and a pre-model failure is
+// recorded with an empty payload and a full timeline - which is exactly the
+// row somebody investigating needs.
+// ===================================================================
 export async function* streamAiChatReplyService(
   requestDTO: SendAiChatMessageRequestDTO,
-  // The deadline for the WHOLE turn, and the reader's own disconnect,
-  // combined by the caller. Optional so the service is still callable
-  // without one, but the route always passes it - see the note on
-  // CHAT_TURN_TIMEOUT_MS for what happened when nothing did.
-  signal?: AbortSignal,
-  // -----------------------------------------------------------------
-  // "SOMETHING ARRIVED FROM BEDROCK", which is NOT the same as "a chunk was
-  // yielded" - and conflating the two was a real bug.
-  //
-  // Only TEXT deltas are yielded. A tool round emits a block start, a run of
-  // tool-input deltas and a message stop, and yields nothing at all - so a
-  // caller measuring silence by what comes out of this generator sees a
-  // perfectly healthy stream as a dead one, for as long as the model spends
-  // deciding to call a tool and for the whole round trip that follows.
-  //
-  // With up to MAX_TOOL_ROUNDS of that, each a full model call plus a Jira
-  // and database lookup, the silence can run for minutes. The caller needs to
-  // hear the stream itself, not the filtered output of it.
-  // -----------------------------------------------------------------
-  onActivity?: () => void,
-): AsyncGenerator<string, void, undefined> {
+  // The turn's phases, deadlines and diagnosis, created by the route so it
+  // can also carry the reader's own disconnect. Optional so the service stays
+  // callable without one; the route always passes it.
+  guard?: TurnGuard,
+): AsyncGenerator<StreamEvent, void, undefined> {
+  // Both halves of entering a phase, together: the budget for the guard and
+  // the label for the reader. Kept as one call so the two cannot drift.
+  const enter = (phase: ChatPhase): StreamEvent => {
+    guard?.phase(phase.name, phase.budgetMs, phase.kind);
+
+    return { t: "status", v: phase.status };
+  };
+
+  const turnStartedAt = Date.now();
+
+  // AUTHORIZATION BEFORE ANY YIELD. The route commits to a 200 the moment
+  // this generator produces its first event, so everything that must be able
+  // to answer with a status code has to happen above the first `yield`.
+  guard?.phase(CHAT_PHASES.session.name, CHAT_PHASES.session.budgetMs, CHAT_PHASES.session.kind);
+
   const user = await requireUser();
 
   const subject = await requireOwnedSubject(requestDTO.subjectId, user.id);
@@ -1289,82 +1349,10 @@ export async function* streamAiChatReplyService(
     throw new DisplayErrorMessage("AI chat is not configured on this environment.");
   }
 
-  const askedAt = new Date();
-
-  // The user's turn lands first, and its own text is included in the history
-  // below - so what the model sees is exactly what the transcript shows, with
-  // no separate "current message" path that could drift.
-  const askedMessage = await addAiChatMessageRepo({
-    id: generateId(),
-    subjectId: subject.id,
-    role: AI_CHAT_ROLES.USER,
-    content: requestDTO.content,
-    inputTokens: null,
-    outputTokens: null,
-    cacheReadTokens: null,
-    cacheWriteTokens: null,
-    createdAt: askedAt,
-  });
-
-  // Anything staged on this conversation belongs to the turn just written.
-  // Done before the transcript is read, so the files are already attached
-  // to a message by the time the request is built - there is no separate
-  // "and also these files" path that could disagree with what was stored.
-  const claimed = await claimStagedAiChatAttachmentsRepo(subject.id, user.id, askedMessage.id);
-
-  await touchAiChatSubjectRepo(subject.id, askedAt);
-
-  // Name the conversation from its first question. Done here rather than in the
-  // create path because a conversation is created before anything is known
-  // about it.
-  if (subject.title === UNTITLED_SUBJECT_TITLE) {
-    await updateAiChatSubjectForUserRepo(subject.id, user.id, {
-      title: deriveAiChatSubjectTitle(requestDTO.content),
-    });
-  }
-
-  const transcript = await getAiChatMessagesBySubjectRepo(subject.id);
-
-  // Every file on the conversation, not just the ones claimed above: earlier
-  // turns carry theirs into this request too, and the budget is measured
-  // across all of them. On a thread with no attachments this matches no rows
-  // and costs nothing, which is why it is unconditional.
-  const attachmentsByMessage = await loadAttachmentsByMessage(subject.id, user.id);
-
-  if (claimed > 0) {
-    console.info(`streamAiChatReplyService: attached ${claimed} file(s) to message ${askedMessage.id}`);
-  }
-
-  const { summary, summaryThroughMessageId } = await compactIfNeeded(
-    subject,
-    transcript,
-    user.id,
-    attachmentsByMessage,
-  );
-
-  const { system, messages, trimmed, droppedAttachments } = buildConverseRequest(
-    transcript,
-    summary,
-    summaryThroughMessageId,
-    attachmentsByMessage,
-    { role: user.role, name: user.name ?? null },
-  );
-
-  if (trimmed > 0) {
-    // The backstop fired, which means compaction did not keep up. Not
-    // user-facing - the reply is still correct, just missing distant context.
-    console.warn(`streamAiChatReplyService: backstop trimmed ${trimmed} turn(s) beyond the summary`);
-  }
-
-  if (droppedAttachments > 0) {
-    // Expected on a long thread with many files, and handled - the model is
-    // told which turns lost theirs. Logged because it changes what the
-    // answer can be based on.
-    console.info(
-      `streamAiChatReplyService: subject ${subject.id} exceeded the per-request attachment budget; ` +
-        `${droppedAttachments} older file(s) were not sent`,
-    );
-  }
+  // Declared out here so the `finally` can record what was actually sent even
+  // when the failure happened before there was anything to send.
+  let system: SystemContentBlock[] = [];
+  let messages: Message[] = [];
 
   let reply = "";
   let inputTokens: number | null = null;
@@ -1373,9 +1361,117 @@ export async function* streamAiChatReplyService(
   let cacheWriteTokens: number | null = null;
   let failure: string | null = null;
 
-  const startedAt = Date.now();
-
   try {
+    yield enter(CHAT_PHASES.question);
+
+    const askedAt = new Date();
+
+    // The user's turn lands first, and its own text is included in the
+    // history below - so what the model sees is exactly what the transcript
+    // shows, with no separate "current message" path that could drift.
+    const askedMessage = await addAiChatMessageRepo({
+      id: generateId(),
+      subjectId: subject.id,
+      role: AI_CHAT_ROLES.USER,
+      content: requestDTO.content,
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+      createdAt: askedAt,
+    });
+
+    // Anything staged on this conversation belongs to the turn just written.
+    // Done before the transcript is read, so the files are already attached
+    // to a message by the time the request is built - there is no separate
+    // "and also these files" path that could disagree with what was stored.
+    const claimed = await claimStagedAiChatAttachmentsRepo(subject.id, user.id, askedMessage.id);
+
+    await touchAiChatSubjectRepo(subject.id, askedAt);
+
+    // Name the conversation from its first question. Done here rather than in
+    // the create path because a conversation is created before anything is
+    // known about it.
+    if (subject.title === UNTITLED_SUBJECT_TITLE) {
+      await updateAiChatSubjectForUserRepo(subject.id, user.id, {
+        title: deriveAiChatSubjectTitle(requestDTO.content),
+      });
+    }
+
+    yield enter(CHAT_PHASES.history);
+
+    const transcript = await getAiChatMessagesBySubjectRepo(subject.id);
+
+    guard?.note("turns", transcript.length);
+
+    yield enter(CHAT_PHASES.attachments);
+
+    // Every file on the conversation, not just the ones claimed above:
+    // earlier turns carry theirs into this request too, and the budget is
+    // measured across all of them. On a thread with no attachments this
+    // matches no rows and costs nothing, which is why it is unconditional.
+    const attachmentsByMessage = await loadAttachmentsByMessage(subject.id, user.id);
+
+    if (claimed > 0) {
+      console.info(`streamAiChatReplyService: attached ${claimed} file(s) to message ${askedMessage.id}`);
+    }
+
+    // -----------------------------------------------------------------
+    // THE STATUS IS YIELDED UNCONDITIONALLY, THOUGH THE WORK IS NOT.
+    //
+    // compactIfNeeded decides for itself whether this thread is expensive
+    // enough to summarise, and it usually is not - in which case this label
+    // flashes past in a millisecond and nobody sees it. When it IS needed it
+    // is a full model call, and this is the only thing that tells the reader
+    // why the cursor has not moved for half a minute.
+    //
+    // Asking first and labelling second would need the decision duplicated
+    // out here, which is how the label and the work end up disagreeing.
+    // -----------------------------------------------------------------
+    yield enter(CHAT_PHASES.compaction);
+
+    const { summary, summaryThroughMessageId } = await compactIfNeeded(
+      subject,
+      transcript,
+      user.id,
+      attachmentsByMessage,
+      guard,
+    );
+
+    guard?.note("compacted", summary !== null);
+
+    const built = buildConverseRequest(
+      transcript,
+      summary,
+      summaryThroughMessageId,
+      attachmentsByMessage,
+      { role: user.role, name: user.name ?? null },
+    );
+
+    system = built.system;
+    messages = built.messages;
+
+    if (built.trimmed > 0) {
+      // The backstop fired, which means compaction did not keep up. Not
+      // user-facing - the reply is still correct, just missing distant
+      // context.
+      console.warn(`streamAiChatReplyService: backstop trimmed ${built.trimmed} turn(s) beyond the summary`);
+      guard?.note("trimmedTurns", built.trimmed);
+    }
+
+    if (built.droppedAttachments > 0) {
+      // Expected on a long thread with many files, and handled - the model is
+      // told which turns lost theirs. Logged because it changes what the
+      // answer can be based on.
+      console.info(
+        `streamAiChatReplyService: subject ${subject.id} exceeded the per-request attachment budget; ` +
+          `${built.droppedAttachments} older file(s) were not sent`,
+      );
+      guard?.note("droppedAttachments", built.droppedAttachments);
+    }
+
+    yield enter(CHAT_PHASES.model);
+
     // -----------------------------------------------------------------
     // The tool loop.
     //
@@ -1397,11 +1493,13 @@ export async function* streamAiChatReplyService(
       const isFinalRound = round >= MAX_TOOL_ROUNDS;
 
       // Checked BEFORE the pass rather than only during it. A turn with two
-      // seconds left on its deadline must not open a sixth request to
-      // Bedrock that can only be abandoned - that is a paid call whose
-      // answer is thrown away.
-      if (signal?.aborted) {
-        throw new Error("The reply took too long and was stopped.");
+      // seconds left on its deadline must not open another request to
+      // Bedrock that can only be abandoned - that is a paid call whose answer
+      // is thrown away.
+      if (guard?.signal.aborted) {
+        throw guard.signal.reason instanceof Error
+          ? guard.signal.reason
+          : new Error("The turn was stopped before this pass began.");
       }
 
       const response = await getBedrockClient().send(
@@ -1413,11 +1511,8 @@ export async function* streamAiChatReplyService(
           ...(isFinalRound ? {} : { toolConfig: CHAT_TOOL_CONFIG }),
         }),
         // ONE SIGNAL FOR EVERY PASS, so the deadline bounds the turn rather
-        // than each request within it. It also cuts the SDK's own retry
-        // ladder short: five attempts of two minutes each is a sensible
-        // envelope for a background job and far too long for somebody
-        // watching a cursor.
-        { abortSignal: signal },
+        // than each request within it.
+        { abortSignal: guard?.signal },
       );
 
       if (!response.stream) {
@@ -1432,10 +1527,19 @@ export async function* streamAiChatReplyService(
       let stopReason: string | undefined;
 
       for await (const event of response.stream) {
-        // EVERY event, before anything is inspected. A tool call is as much a
-        // sign of life as a sentence, and the whole point is that the caller
-        // cannot tell the difference from the outside.
-        onActivity?.();
+        // -------------------------------------------------------------
+        // EVERY event, before anything is inspected.
+        //
+        // Only TEXT deltas become output. A tool round emits a block start, a
+        // run of tool-input deltas and a message stop, and produces no text
+        // at all - so a clock measuring silence by what this generator YIELDS
+        // sees a perfectly healthy stream as a dead one, for as long as the
+        // model spends deciding to call a tool. With up to MAX_TOOL_ROUNDS of
+        // that, the apparent silence can run for minutes.
+        //
+        // The phase's budget is idle, so this is what keeps it alive.
+        // -------------------------------------------------------------
+        guard?.progress();
 
         const started = event.contentBlockStart?.start?.toolUse;
         if (started?.toolUseId && started.name) {
@@ -1462,7 +1566,7 @@ export async function* streamAiChatReplyService(
         if (chunk) {
           reply += chunk;
           roundText += chunk;
-          yield chunk;
+          yield { t: "text", v: chunk };
           continue;
         }
 
@@ -1482,6 +1586,10 @@ export async function* streamAiChatReplyService(
       }
 
       if (stopReason !== "tool_use" || toolCalls.size === 0) break;
+
+      guard?.note("toolRounds", round + 1);
+
+      yield enter(CHAT_PHASES.tool);
 
       // The model's turn goes back verbatim - any text it said before asking,
       // then the tool requests themselves. Converse rejects a tool result
@@ -1519,33 +1627,50 @@ export async function* streamAiChatReplyService(
 
       messages.push({ role: "assistant", content: assistantContent });
       messages.push({ role: "user", content: results });
+
+      // Back to waiting on the model for the next pass.
+      yield enter(CHAT_PHASES.model);
     }
   } catch (error) {
-    // Captured for the request log before rethrowing - a failed call is
-    // exactly the one an admin will want the payload for.
+    // -----------------------------------------------------------------
+    // ONE DESCRIPTION, USED IN THREE PLACES.
     //
-    // AN ABORT IS RECORDED BY ITS REASON, NOT BY ITS NAME.
+    // The guard owns it, because only the guard knows which phase was open,
+    // what every earlier phase had already spent, and whether the abort was a
+    // deadline or a reader closing a tab. That sentence goes to the request
+    // log, to the server console and - via the route - to the person who
+    // asked the question. Three separately-written versions of it is how the
+    // screen and the log end up disagreeing about one failure.
     //
-    // The stall guard aborts with a sentence saying what happened, and the
-    // caller's own signal aborts when the reader closes the tab. The AWS SDK
-    // catches either and throws its own "AbortError: Request aborted",
-    // discarding the reason - so both landed in the log as the same four
-    // useless words, and a request that had been dead for 150 seconds was
-    // indistinguishable from somebody navigating away.
-    //
-    // The only way to tell them apart was to notice the duration matched
-    // CHAT_STALL_TIMEOUT_MS, which is not a diagnosis, it is a coincidence
-    // somebody spotted.
-    failure = describeStreamFailure(error, signal);
+    // AN ABORT KEEPS ITS REASON. The AWS SDK catches whichever signal it was
+    // given and throws its own "AbortError: Request aborted", discarding the
+    // reason - so a request dead for two minutes and a reader who navigated
+    // away used to arrive in the log as the same four useless words.
+    // -----------------------------------------------------------------
+    failure = guard ? guard.describe(error) : describeWithoutGuard(error);
 
-    // Logged with context and rethrown. The route turns it into a message for
-    // the reader; anything already streamed is kept by the `finally`.
+    // Structured and on ONE line, because this is read out of a platform log
+    // stream where a multi-line dump is unsearchable and a stack trace has
+    // already been printed by handleError.
+    console.error(
+      `[ai-chat] turn failed ${JSON.stringify({
+        subjectId: subject.id,
+        userId: user.id,
+        reason: failure,
+        ...(guard ? { trace: guard.snapshot() } : {}),
+      })}`,
+    );
+
+    // Rethrown so the route can end the stream. Anything already streamed is
+    // kept by the `finally`.
     throw handleError("streamAiChatReplyService", error);
   } finally {
-    // Runs on success, on failure, AND when the consumer stops iterating early
-    // (a closed tab calls the generator's return()). An empty reply is not
-    // stored - there would be nothing to show, and Converse would reject an
-    // empty turn on the next send.
+    guard?.phase(CHAT_PHASES.persist.name, CHAT_PHASES.persist.budgetMs, CHAT_PHASES.persist.kind);
+
+    // Runs on success, on failure, AND when the consumer stops iterating
+    // early (a closed tab calls the generator's return()). An empty reply is
+    // not stored - there would be nothing to show, and Converse would reject
+    // an empty turn on the next send.
     if (reply.trim().length > 0) {
       const answeredAt = new Date();
 
@@ -1566,8 +1691,12 @@ export async function* streamAiChatReplyService(
 
     // Recorded here rather than in the try, so it runs on success, on
     // failure, AND on an abandoned stream - the three cases an admin
-    // reviewing spend needs to be able to tell apart. The arrays are the
-    // exact ones handed to Converse above.
+    // reviewing spend needs to be able to tell apart.
+    //
+    // startedAt IS THE WHOLE TURN, not just the model call. It used to be set
+    // after compaction, so durationMs excluded every phase that could
+    // actually be slow - which is why the log could not answer "where did
+    // those twenty seconds go" for the failures it was recording.
     await recordRequest({
       userId: user.id,
       subjectId: subject.id,
@@ -1576,11 +1705,18 @@ export async function* streamAiChatReplyService(
       messages,
       usage: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens },
       error: failure,
-      startedAt,
+      startedAt: turnStartedAt,
+      phases: guard?.snapshot() ?? null,
     });
 
     revalidateAiChatViews();
   }
+}
+
+// Only reached when the service is called without a guard, which the route
+// never does. Kept so the function has no path that reports nothing at all.
+function describeWithoutGuard(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
 // -------------------------------------------------------------------

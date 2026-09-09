@@ -159,6 +159,13 @@ export async function getAiChatRequestLogDetailService(
       metadata: { kind: log.kind, messageCount: messages.length, subjectId: log.subjectId },
     });
 
+    // JSONB comes back parsed. Read defensively for the same reason as
+    // `messages` above: an older row has no phases at all, and a row
+    // truncated mid-write should render as a call with no timeline rather
+    // than crash the screen an admin is using to investigate a failure.
+    const trace = log.phases;
+    const phases = Array.isArray(trace?.phases) ? trace.phases : null;
+
     return {
       ...toRow(log),
       modelId: log.modelId,
@@ -167,6 +174,20 @@ export async function getAiChatRequestLogDetailService(
       messages,
       inputTokens: log.inputTokens,
       cacheWriteTokens: log.cacheWriteTokens,
+      phases,
+      phaseSummary:
+        trace && phases
+          ? {
+              totalMs: trace.totalMs,
+              timedOutPhase: trace.timedOutPhase,
+              readerLeft: trace.readerLeft,
+              // Absent on rows written before the ceiling existed, which is
+              // not the same as false - but false is the honest reading of
+              // "this row cannot say", because nothing was bounding it.
+              ceilingHit: trace.ceilingHit ?? false,
+              notes: trace.notes ?? {},
+            }
+          : null,
     };
   } catch (error) {
     throw handleError("getAiChatRequestLogDetailService", error);

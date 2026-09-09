@@ -97,6 +97,9 @@ import {
 } from "@/lib/speech/speech-client";
 
 import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from "./transcription.mappers";
+import { getTranscriptionFilingRepo } from "@/lib/data/repositories/transcription-filing.repository";
+
+import { fileTranscription } from "./filing.service";
 import {
   MAX_MEDIA_BYTES,
   MAX_SUMMARY_ATTEMPTS,
@@ -347,12 +350,17 @@ async function summariseTranscript(
   try {
     // STREAMED, and this is not a preference - it is the fix for a real
     // failure. A non-streaming ConverseCommand sends nothing at all until
-    // the model has finished, and the client is configured to abandon a
-    // stream with no activity for READ_TIMEOUT_MS - 120 seconds, in
-    // bedrock-client.ts. Opus writing up to SUMMARY_MAX_TOKENS from an
-    // hour-long transcript takes longer than that, so every summary of a
-    // real meeting timed out, five times over, because `maxAttempts: 5`
-    // retried a request that was never going to be any faster.
+    // the model has finished, so the entire generation reads as one
+    // uninterrupted silence to anything measuring inactivity. Opus writing
+    // up to SUMMARY_MAX_TOKENS from an hour-long transcript takes minutes,
+    // so every summary of a real meeting timed out and was retried by a
+    // request that was never going to be any faster.
+    //
+    // The inactivity measure is BEDROCK_SOCKET_IDLE_MS in bedrock-client.ts.
+    // An earlier version of this note named READ_TIMEOUT_MS and put it at
+    // 120 seconds; that option was `requestTimeout`, which only logs a
+    // warning and never aborted anything, so for a period there was no
+    // inactivity timeout on Bedrock at all. See that file.
     //
     // Streaming puts a token on the socket every few milliseconds, so the
     // inactivity timer never fires. The text is accumulated here; nothing
@@ -471,6 +479,41 @@ async function notifyFinished(transcription: Transcription, userId: string): Pro
 }
 
 // -------------------------------------------------------------------
+// The two things that happen when a row stops moving: tell the person, and
+// put the notes in SharePoint.
+//
+// ONE HELPER RATHER THAN TWO CALLS AT FOUR SITES. There are four ways a
+// transcription reaches a terminal state - a Speech failure, a summary given
+// up on, the poll finishing one, the sweep finishing one - and filing added
+// at three of them would work perfectly until somebody noticed one kind of
+// meeting never got filed. Working out which of the four it was would then
+// take an afternoon.
+//
+// NEITHER HALF MAY THROW. The transcript is already stored by the time this
+// runs, and losing a finished job over a push service or an unreachable
+// SharePoint would be exactly backwards. notifyFinished is best-effort by
+// construction; fileTranscription catches its own and reports into its own
+// row. The catches here are the third belt, for whatever either of them
+// fails to hold.
+//
+// Filing a FAILED row is a no-op inside fileTranscription rather than a
+// condition here, so the rule lives with the thing that owns it.
+// -------------------------------------------------------------------
+async function finishTranscription(transcription: Transcription, userId: string): Promise<void> {
+  try {
+    await notifyFinished(transcription, userId);
+  } catch (error) {
+    console.error(`finishTranscription: could not notify about ${transcription.id}`, error);
+  }
+
+  try {
+    await fileTranscription(transcription, userId);
+  } catch (error) {
+    console.error(`finishTranscription: could not file ${transcription.id}`, error);
+  }
+}
+
+// -------------------------------------------------------------------
 // Move one in-flight row along.
 //
 // Called for every unfinished row when the page loads, and again while the
@@ -509,7 +552,7 @@ async function advanceTranscription(
       error: message.slice(0, MAX_ERROR_CHARS),
     });
 
-    await notifyFinished(updated ?? transcription, userId);
+    await finishTranscription(updated ?? transcription, userId);
 
     return updated ?? transcription;
   };
@@ -567,7 +610,7 @@ async function advanceTranscription(
         summaryStartedAt: null,
       });
 
-      if (givenUp) await notifyFinished(givenUp, userId);
+      if (givenUp) await finishTranscription(givenUp, userId);
 
       return givenUp ?? current;
     }
@@ -585,7 +628,7 @@ async function advanceTranscription(
 
     // Only the run that WON the claim notifies. Two sweeps arriving together
     // would otherwise send the same person the same notification twice.
-    if (updated) await notifyFinished(updated, userId);
+    if (updated) await finishTranscription(updated, userId);
 
     // The summary failed but attempts remain. The lease is released so the
     // next sweep can try again rather than waiting for it to expire - a
@@ -734,7 +777,7 @@ async function advanceTranscription(
     completedAt: new Date(),
   });
 
-  if (completed) await notifyFinished(completed, userId);
+  if (completed) await finishTranscription(completed, userId);
 
   return completed ?? stored;
 }
@@ -779,6 +822,13 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
     // transcript it can see.
     const activeRow = target ? await getTranscriptionForUserRepo(target.id, user.id) : undefined;
 
+    // Where the notes were filed, if anywhere. A second narrow read rather
+    // than a join, because the list above deliberately does not carry it -
+    // the panel only exists on the row that is open.
+    const activeFiling = activeRow
+      ? await getTranscriptionFilingRepo(activeRow.id, user.id)
+      : undefined;
+
     return {
       isStorageConfigured: isMediaStorageConfigured(),
       isSpeechConfigured: isSpeechConfigured(),
@@ -790,7 +840,7 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
       // one that reports itself as broken.
       isTeamsImportConfigured: isTeamsImportConfigured(),
       transcriptions,
-      active: activeRow ? mapDBTranscriptionToDetailDTO(activeRow) : null,
+      active: activeRow ? mapDBTranscriptionToDetailDTO(activeRow, activeFiling) : null,
     };
   } catch (error) {
     throw handleError("getTranscriptionPageService", error);

@@ -245,81 +245,141 @@ export const RemoveAiChatAttachmentSchema = z.object({
 
 export type RemoveAiChatAttachmentRequestDTO = z.infer<typeof RemoveAiChatAttachmentSchema>;
 
-// -------------------------------------------------------------------
 // ===================================================================
-// HOW LONG ONE REPLY MAY GO QUIET FOR
+// HOW LONG EACH STAGE OF A TURN MAY TAKE
+//
+// A chat turn had no bound of any kind once, and the numbers that produced
+// were not small: two failed replies in the request log ran for 1,081 and
+// 1,441 seconds. A single flat "nothing has arrived for N seconds" clock
+// replaced that, and then caused a worse problem of its own - it was armed
+// before any of the work started, so it timed the database, the attachment
+// downloads and a whole compaction model call under a name that claimed to
+// be about the model's first token. On a long thread it fired every time.
+//
+// So a turn is now a SEQUENCE OF NAMED PHASES, each with its own budget. See
+// src/lib/ai/turn-guard.ts for the mechanism and for why there are two kinds
+// of budget. What lives here is the sizing, because sizing is a judgement
+// about this feature rather than about the mechanism.
+//
+// THE SIZING RULE, and it is the one that was got wrong before: every budget
+// that covers a model call must be LONGER than the SDK's own retry ladder
+// (BEDROCK_LADDER_WORST_CASE_MS). The SDK's socket idle timeout knows the
+// socket went quiet and throws a named TimeoutError saying so; these know
+// only that a phase overran. Whichever fires first decides what the failure
+// is called, and the specific one is worth more than the general one. Set
+// these tighter and every failure arrives as a bare AbortError again.
+//
+// The budgets are therefore GENEROUS, which is safe only because
+// CHAT_FIRST_BYTE_CEILING_MS bounds their sum. A budget that never fires
+// costs nothing; one tight enough to be a real limit eventually kills
+// healthy work.
 // ===================================================================
-//
-// A chat turn had no bound of any kind, and the numbers that produced were
-// not small: two failed replies in the request log ran for 1,081 and 1,441
-// seconds. The stored error says exactly what happened - "Stream timed out
-// because of no activity for 120000 ms" - five times over, with the AWS
-// SDK's adaptive backoff sleeping between the attempts.
-//
-// THE QUANTITY TO BOUND IS SILENCE, NOT DURATION, and the difference is
-// worth being exact about because the obvious fix is wrong.
-//
-// Bounding total duration looks right and costs you the good case. A long
-// reply is long because it is saying a lot, and at this model's observed
-// rate a full MAX_OUTPUT_TOKENS answer streams for over eight minutes. A
-// wall-clock deadline truncates precisely the replies worth waiting for,
-// while a stalled request - which sends nothing at all - is caught just as
-// well by a much shorter clock that resets on every chunk.
-//
-// So there is no total ceiling here, deliberately. There is a limit on how
-// long the model may say nothing.
-// -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
 // Azure App Service's load balancer, and the reason it belongs in this
 // comparison at all: it is an IDLE timeout. A reply that keeps streaming
 // bytes never trips it, however long it runs - so it does not cap a long
 // answer, and treating it as though it did is what produced the wall-clock
-// deadline this replaces.
+// deadline that had to be undone.
 //
-// What it does cap is silence, which is the same thing the guard below
-// measures. That makes the two comparable, and the app has to give up
-// first: if the platform wins, the connection is severed mid-stream and the
-// app never learns it happened.
+// What it does cap is silence, and the app has to give up first: if the
+// platform wins, the connection is severed mid-stream and the app never
+// learns it happened - no log row, no error, nothing to investigate.
 // -------------------------------------------------------------------
 export const CHAT_PLATFORM_IDLE_CEILING_MS = 230_000;
 
 // -------------------------------------------------------------------
-// How long the model may send nothing before the turn is abandoned.
+// The whole of a turn up to the moment the reader is sent something.
 //
-// SIZED AGAINST THE SDK'S OWN RETRY LADDER, which is what actually did the
-// damage. One Bedrock attempt gives up after 120 seconds of inactivity and
-// the SDK then tries again, up to five times, sleeping in between. This sits
-// above one attempt and below two, so:
+// This is the number that actually has to beat the platform, because it
+// covers the only period when the connection is genuinely idle. Once bytes
+// are flowing, every one of them resets the platform's clock and a long
+// answer may run as long as it likes.
 //
-//   - a request that stalls once and succeeds on the retry still gets
-//     through, because the first chunk resets the clock
-//   - a request that stalls twice is abandoned, instead of stalling five
-//     times over twenty-four minutes
-//
-// It also has to cover the legitimate quiet gaps: the wait before the model
-// starts talking, and the pause while a tool runs between passes. Both are
-// seconds, not minutes.
+// It exists so the phase budgets below can be generous without their sum
+// becoming a way to lose a connection silently.
 // -------------------------------------------------------------------
-export const CHAT_STALL_TIMEOUT_MS = 150_000;
+export const CHAT_FIRST_BYTE_CEILING_MS = 200_000;
+
+export type ChatPhase = {
+  // Written into a message a reader sees, so it is short and hyphenated.
+  name: string;
+  budgetMs: number;
+  // "idle" resets on every sign of life; "duration" is a hard ceiling. See
+  // turn-guard.ts.
+  kind: "duration" | "idle";
+  // -----------------------------------------------------------------
+  // What the reader is told is happening, while it is happening.
+  //
+  // KEPT BESIDE THE BUDGET ON PURPOSE. The two answer the same question for
+  // two audiences - "what is this waiting on" - and a label that drifts out
+  // of step with the phase it describes is worse than none, because it
+  // reports the wrong stage confidently.
+  //
+  // This is also the cheapest reliability fix in the whole feature. A
+  // thirty-second silence reads as broken; the same thirty seconds labelled
+  // "summarising earlier turns" reads as working. Most of what was reported
+  // as unreliability was a wait nobody could see the reason for.
+  // -----------------------------------------------------------------
+  status: string;
+};
 
 // -------------------------------------------------------------------
-// How long to wait for the model's FIRST token.
+// The stages of a turn, in the order they run.
 //
-// Much shorter than the stall window above, because the two protect
-// different things. Once a reply has started there is a partial answer worth
-// keeping and the model has proved it is alive; before that, silence is just
-// silence.
+// NAMED AS A RECORD RATHER THAN AS LOOSE CONSTANTS so the phase name and its
+// budget cannot drift apart, and so the service cannot invent a sixth phase
+// that nothing has sized.
 //
-// Measured in production: Bedrock accepted "hi", returned 200 and sent
-// nothing at all - every token count null - and the reader waited the full
-// stall window for an answer that was never coming. The AWS SDK cannot catch
-// this: NodeHttpHandler clears its own requestTimeout as soon as the response
-// headers arrive, so a stream that opens and goes quiet is covered by nothing
-// but our guard.
+// Why each is what it is:
 //
-// Twenty seconds is well past a normal first token, which is seconds even on
-// a large cached prompt, and far short of making somebody wonder whether the
-// page is broken.
+//   session         Two indexed reads. Anything slower is a database
+//                   problem, and 15s is long enough to say so rather than
+//                   to blame the model.
+//   record-question The user's turn is written before the model is called,
+//                   so a send is never lost to a model failure. Three small
+//                   writes.
+//   history         The transcript. Grows with the thread, still one query.
+//   attachments     Metadata AND BYTES: every file on the conversation is
+//                   fetched from blob storage. A thread at the attachment
+//                   cap is megabytes over the network, which is why this is
+//                   the largest of the non-model budgets.
+//   compaction      A model call, so idle rather than duration, and above
+//                   the SDK ladder. It streams: see the constraint in
+//                   bedrock-client.ts.
+//   model-reply     The reply itself. Idle, so a long answer runs as long as
+//                   it keeps talking - and reset by EVERY stream event, not
+//                   just text, because a tool round yields nothing for its
+//                   whole duration.
+//   tool-call       One Jira or database lookup between passes. Duration:
+//                   there is no partial progress to protect.
+//   persist-reply   Writing the answer down. Included for the timeline
+//                   rather than as a real limit - abandoning this would
+//                   throw away a reply that has already been paid for.
 // -------------------------------------------------------------------
-export const CHAT_FIRST_TOKEN_TIMEOUT_MS = 20_000;
+export const CHAT_PHASES = {
+  session: { name: "session", budgetMs: 15_000, kind: "duration", status: "Checking your access" },
+  question: {
+    name: "record-question",
+    budgetMs: 20_000,
+    kind: "duration",
+    status: "Saving your message",
+  },
+  history: { name: "history", budgetMs: 30_000, kind: "duration", status: "Reading the conversation" },
+  attachments: {
+    name: "attachments",
+    budgetMs: 60_000,
+    kind: "duration",
+    status: "Loading attached files",
+  },
+  compaction: {
+    name: "compaction",
+    budgetMs: 75_000,
+    kind: "idle",
+    status: "Summarising earlier turns to keep this thread affordable",
+  },
+  model: { name: "model-reply", budgetMs: 75_000, kind: "idle", status: "Thinking" },
+  tool: { name: "tool-call", budgetMs: 45_000, kind: "duration", status: "Looking up timesheet figures" },
+  persist: { name: "persist-reply", budgetMs: 30_000, kind: "duration", status: "Saving the reply" },
+} as const satisfies Record<string, ChatPhase>;
+

@@ -45,46 +45,97 @@ import { envServer } from "@/lib/env-server";
 export const BEDROCK_REGION = "ap-southeast-2";
 export const BEDROCK_MODEL_ID = "au.anthropic.claude-opus-4-6-v1";
 
-// -------------------------------------------------------------------
-// THE RETRY LADDER HAS TO FIT INSIDE THE CALLER'S PATIENCE, and for a long
-// time it did not.
+// ===================================================================
+// TIMEOUTS, AND THE OPTION THAT DOES NOT DO WHAT ITS NAME SAYS
 //
-// These were 120_000 and maxAttempts 5, chosen on the reasonable-sounding
-// ground that a long answer legitimately takes a while. But this is a
-// SOCKET IDLE timeout, not a total duration: a streamed reply resets it on
-// every chunk, so 120s only ever elapses when nothing is coming back at
-// all. Sizing it for long answers sized it for the wrong thing.
+// THIS BLOCK IS A CORRECTION. It previously set `requestTimeout` and
+// explained at length how the SDK would therefore give up first and throw
+// something with a name, leaving our own stall guard as a backstop that
+// rarely fired. Every word of that was wrong, and it is why chat failures
+// were unreadable for weeks.
 //
-// The consequence was measured in production. Chat bounds silence at
-// CHAT_STALL_TIMEOUT_MS (150s), and a single stalled attempt burned 120 of
-// those 150 seconds inside the SDK. The stall guard then fired 30 seconds
-// into attempt two, so the five-attempt ladder could never finish, and its
-// only real effect was to convert a fast nameable failure into 150 seconds
-// of nothing. A real reply failed exactly that way at 149,946ms with every
-// token count null and "AbortError: Request aborted" as its whole
-// explanation.
+// In @smithy/node-http-handler, from its own type documentation:
 //
-// So the numbers are now chosen together:
+//   requestTimeout          "The maximum number of milliseconds request &
+//                           response should take. If exceeded, A WARNING
+//                           WILL BE EMITTED unless throwOnRequestTimeout=
+//                           true, in which case a TimeoutError will be
+//                           thrown."
 //
-//   45s x 2 attempts, plus adaptive backoff, lands near 95-100s
-//   comfortably inside the 150s stall budget
+//   throwOnRequestTimeout   "Because requestTimeout was for a long time
+//                           incorrectly being set as a socket idle timeout,
+//                           users must also opt-in for request timeout
+//                           thrown errors."
 //
-// which means the SDK gives up FIRST and throws something with a name -
-// ThrottlingException, a timeout - instead of the stall guard aborting
-// anonymously. The guard goes back to being the backstop it was meant to
-// be rather than the thing that always fires.
+//   socketTimeout           "The maximum time in milliseconds that a socket
+//                           may remain idle before it is closed. Defaults to
+//                           0, which means no maximum."
 //
-// 45 seconds without a single byte is already pathological: time to first
-// token is normally a few seconds, and mid-stream gaps are smaller still.
-// One retry survives a genuine transient blip; more than that is just
-// spending the caller's budget on hope.
+// So the old configuration had TWO faults compounding:
 //
-// bedrock-retry-budget.test.ts asserts the arithmetic still holds, because
-// the failure mode of getting it wrong is invisible - everything works
-// until a call stalls, and then it stalls for the maximum.
-// -------------------------------------------------------------------
-export const READ_TIMEOUT_MS = 45_000;
+//   1. `requestTimeout` alone never aborts anything. It printed a line into
+//      the log and let the request run. There was therefore NO inactivity
+//      timeout on Bedrock at all, the retry ladder never engaged for a
+//      stalled stream, and the only thing that ever stopped one was our own
+//      guard - which is exactly why every failure arrived anonymous.
+//
+//   2. It is a TOTAL DURATION, not an idle measure. Sizing it for "a long
+//      answer legitimately takes a while" was sizing the wrong quantity in
+//      the wrong direction. Worse, it is a loaded gun: anybody who reads the
+//      warning in the log and dutifully adds throwOnRequestTimeout: true
+//      would kill EVERY reply longer than 45 seconds, which is most of the
+//      good ones.
+//
+// WHAT IS SET NOW. `socketTimeout` is the idle timeout the old comment
+// believed `requestTimeout` was. It rejects with a named TimeoutError
+// saying how long the socket was quiet, which is a real diagnosis arriving
+// from the layer that knows it. `requestTimeout` is deliberately NOT set:
+// a streamed reply has no meaningful total duration, and a warn-only timer
+// that fires on every healthy long answer is log noise that trains people
+// to ignore the log.
+//
+// TWENTY-FIVE SECONDS OF SILENCE IS ALREADY PATHOLOGICAL. Time to first
+// token is a few seconds even on a large cached prompt, and mid-stream gaps
+// are smaller still. One retry survives a genuine blip; more than that
+// spends the reader's patience on hope.
+//
+// EVERY CALL MUST STREAM FOR THIS TO BE CORRECT, and that is not a caveat,
+// it is a constraint this file imposes on its callers. A non-streaming
+// ConverseCommand holds the socket open and silent for the entire time the
+// model is generating, so an idle timeout would abort every one of them -
+// which is precisely what a 2,000-token compaction call looked like. Both
+// non-streaming call sites were converted to ConverseStreamCommand when
+// this landed. Do not add a third.
+// ===================================================================
+export const BEDROCK_SOCKET_IDLE_MS = 25_000;
 export const MAX_ATTEMPTS = 2;
+
+// The SDK's own ceiling on one backoff sleep. Read from the source rather
+// than assumed: @smithy/core/dist-cjs/submodules/retry declares
+// MAXIMUM_RETRY_DELAY = 20 * 1000 and DEFAULT_RETRY_DELAY_BASE = 100, and
+// the decider is
+//
+//   Math.floor(Math.min(MAXIMUM_RETRY_DELAY, Math.random() * 2 ** attempts * base))
+//
+// so with two attempts the REAL sleep is a fraction of a second and this is
+// a deliberately pessimistic bound. Copied here because a caller cannot read
+// a constant private to another package, and the previous version of this
+// arithmetic used a made-up allowance that then drifted from the client it
+// claimed to describe.
+export const BEDROCK_RETRY_BACKOFF_CEILING_MS = 20_000;
+
+// The longest the SDK can spend before it hands back a named failure:
+// every attempt going silent for its full window, with a maximum backoff
+// between them.
+//
+// A CALLER'S DEADLINE MUST BE LONGER THAN THIS. Set one tighter and the
+// caller aborts mid-ladder, the SDK's named TimeoutError is never thrown,
+// and the failure arrives as a bare AbortError with no cause - the exact
+// trap the old configuration fell into. bedrock-retry-budget.test.ts holds
+// the line.
+export const BEDROCK_LADDER_WORST_CASE_MS =
+  BEDROCK_SOCKET_IDLE_MS * MAX_ATTEMPTS + BEDROCK_RETRY_BACKOFF_CEILING_MS * (MAX_ATTEMPTS - 1);
+
 const CONNECT_TIMEOUT_MS = 10_000;
 
 // -------------------------------------------------------------------
@@ -116,7 +167,9 @@ export function getBedrockClient(): BedrockRuntimeClient {
     region: BEDROCK_REGION,
     authSchemePreference: ["httpBearerAuth"],
     requestHandler: {
-      requestTimeout: READ_TIMEOUT_MS,
+      // The idle timeout. See the block above for why this is not
+      // `requestTimeout`, which only warns.
+      socketTimeout: BEDROCK_SOCKET_IDLE_MS,
       connectionTimeout: CONNECT_TIMEOUT_MS,
     },
     // Adaptive retries back off with jitter on throttling and transient

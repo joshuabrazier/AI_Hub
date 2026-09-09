@@ -5,6 +5,7 @@ import { SummariseTextSchema } from "@/features/summaries/summaries.types";
 import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
 import { getVerifiedApiSession } from "@/lib/auth/session-auth-server";
 import { MESSAGES } from "@/lib/constants";
+import { encodeStreamEvent, STREAM_CONTENT_TYPE } from "@/lib/ai/stream-protocol";
 import { isDisplayError } from "@/lib/errors";
 import { validateRequest } from "@/lib/server-requests";
 
@@ -83,19 +84,43 @@ export async function POST(request: Request): Promise<Response> {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const send = (event: Parameters<typeof encodeStreamEvent>[0]) => {
+        controller.enqueue(encoder.encode(encodeStreamEvent(event)));
+      };
+
       try {
         if (!first.done && first.value) {
-          controller.enqueue(encoder.encode(first.value));
+          send({ t: "text", v: first.value });
         }
 
         for await (const chunk of summary) {
-          controller.enqueue(encoder.encode(chunk));
+          send({ t: "text", v: chunk });
         }
       } catch (error) {
+        // -------------------------------------------------------------
         // Mid-stream failure. The client has a 200 and part of a summary, so
-        // there is no status left to change - the connection simply ends and
-        // the reader keeps what arrived. Logged rather than swallowed.
-        console.error("[POST /api/summaries/stream] stream failed after starting", error);
+        // there is no status left to change.
+        //
+        // THIS USED TO JUST END THE CONNECTION, on the reasoning that the
+        // reader keeps what arrived. What the reader actually keeps is a
+        // summary that stops mid-sentence and looks finished, with nothing
+        // to say it is not - and a truncated summary of somebody's contract
+        // presented as a whole one is a worse outcome than no summary. The
+        // reason goes down the wire now, exactly as it does for chat.
+        // -------------------------------------------------------------
+        const reason = isDisplayError(error)
+          ? error.message
+          : error instanceof Error
+            ? `${error.name}: ${error.message}`
+            : String(error);
+
+        console.error(`[POST /api/summaries/stream] stream failed after starting: ${reason}`);
+
+        try {
+          send({ t: "error", v: reason });
+        } catch {
+          // Nobody left to tell. The service has recorded it either way.
+        }
       } finally {
         controller.close();
       }
@@ -111,7 +136,9 @@ export async function POST(request: Request): Promise<Response> {
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "text/plain; charset=utf-8",
+      // Newline-delimited JSON, so a failure that happens after the status
+      // code has gone out can still be reported. See stream-protocol.ts.
+      "Content-Type": STREAM_CONTENT_TYPE,
       "Cache-Control": "no-store",
       // Stops a proxy buffering the whole response and defeating the point
       // of streaming it.

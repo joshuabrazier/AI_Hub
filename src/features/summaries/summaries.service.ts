@@ -214,6 +214,12 @@ async function recordRequest(entry: {
   }
 }
 
+// The longest a summary may take in total, however lively its stream. A
+// detailed summary of a long document is minutes of generation; three of
+// those is not a summary that is nearly ready, it is one that will not
+// arrive.
+const SUMMARY_TOTAL_TIMEOUT_MS = 300_000;
+
 // -------------------------------------------------------------------
 // Produce the summary, streamed.
 //
@@ -221,12 +227,13 @@ async function recordRequest(entry: {
 // response body. Yielding text keeps every Bedrock type inside this file -
 // the route never imports the AWS SDK.
 //
-// STREAMED, and not as a nicety. A detailed summary of a long report can
-// run for a minute or more, and the client is configured to abandon a
-// stream that goes quiet for READ_TIMEOUT_MS. A single non-streaming call
-// sends nothing until it has finished, which is exactly how the meeting
-// summariser managed to time out and retry five times over. It also means
-// the reader watches it arrive instead of a spinner.
+// STREAMED, and not as a nicety. A detailed summary of a long report can run
+// for a minute or more, and the Bedrock client abandons a stream that goes
+// quiet for BEDROCK_SOCKET_IDLE_MS. A single non-streaming call sends
+// nothing until it has finished, so the whole generation reads as one long
+// silence - which is exactly how the meeting summariser managed to time out
+// and retry. It also means the reader watches it arrive instead of a
+// spinner.
 //
 // Authorization happens BEFORE anything is yielded, so a signed-out caller
 // fails as a status code rather than mid-stream after a 200.
@@ -258,6 +265,19 @@ export async function* streamTextSummaryService(
         messages,
         inferenceConfig: { maxTokens: SUMMARY_MAX_TOKENS[requestDTO.style] },
       }),
+      // -----------------------------------------------------------------
+      // A TOTAL CEILING, which this call had none of.
+      //
+      // The socket idle timeout in bedrock-client.ts catches a stream that
+      // goes quiet. It cannot catch one that trickles: a stream emitting a
+      // token every twenty seconds is technically alive and would have held
+      // this request open until Azure severed the connection, at which point
+      // the reader gets nothing and the app records nothing.
+      //
+      // Sized above the longest style's own budget with room to spare - see
+      // SUMMARY_MAX_TOKENS, which is ordered detailed > summary > executive.
+      // -----------------------------------------------------------------
+      { abortSignal: AbortSignal.timeout(SUMMARY_TOTAL_TIMEOUT_MS) },
     );
 
     if (!response.stream) throw new Error("Bedrock returned no stream");
@@ -281,7 +301,14 @@ export async function* streamTextSummaryService(
       }
     }
   } catch (error) {
-    failure = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    // Named rather than left as the SDK's bare AbortError, which says
+    // neither which of the two clocks fired nor that either did.
+    failure =
+      error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")
+        ? `TimeoutError: the summary ran past its ${SUMMARY_TOTAL_TIMEOUT_MS / 1000}s ceiling, or the reader left, and was stopped.`
+        : error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : String(error);
 
     throw handleError("streamTextSummaryService", error);
   } finally {

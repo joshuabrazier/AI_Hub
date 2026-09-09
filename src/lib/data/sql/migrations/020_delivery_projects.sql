@@ -413,6 +413,6 @@ CREATE TABLE estimate_changes (
 
 CREATE INDEX idx_estimate_changes_task ON estimate_changes (task_id, created_at DESC);
 
-INSERT INTO schema_migrations (filename) VALUES ('016_delivery_projects.sql');
+INSERT INTO schema_migrations (filename) VALUES ('020_delivery_projects.sql');
 
 COMMIT;
