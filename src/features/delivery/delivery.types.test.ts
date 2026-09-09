@@ -20,7 +20,9 @@ import {
   weekDayOf,
   CreateClientSchema,
   SetUserRateSchema,
+  chargedProgress,
   SetUserRatesSchema,
+  sumChargedMinutes,
   UpdateClientSchema,
   UpdateProjectSchema,
   UpdateTaskSchema,
@@ -1194,5 +1196,139 @@ describe("a money field refuses every spelling of nothing", () => {
       expect(result.data.bands.standard?.costRate).toBeNull();
       expect(result.data.bands.standard?.costRate).not.toBe(0);
     }
+  });
+});
+
+// ===================================================================
+// CHARGED, SPENT, AND WHAT IT NOW LOOKS LIKE IT WILL TAKE.
+//
+// The third figure is what this type exists for, so most of these are about
+// the FORECAST rather than the fill. A bar drawn against charged time alone
+// says "66% spent" on a project already forecast to overrun by a fortnight,
+// and keeps saying it right up until it does.
+// ===================================================================
+describe("chargedProgress", () => {
+  it("reports spent and forecast against the charged figure", () => {
+    // 240h charged, 262h spent... no: 240h charged (14400), 160h spent, and
+    // the estimates now add up to 280h. Over on the forecast, not yet on
+    // the clock - which is the state worth catching.
+    const rollup = chargedProgress(14_400, 9_600, 16_800);
+
+    expect(rollup.percentUsed).toBe(66.7);
+    expect(rollup.isOverBudget).toBe(false);
+    expect(rollup.forecastPercent).toBe(116.7);
+    expect(rollup.forecastVarianceMinutes).toBe(2_400);
+    expect(rollup.isForecastOverBudget).toBe(true);
+  });
+
+  it("flags nothing when the forecast lands inside what was charged", () => {
+    const rollup = chargedProgress(14_400, 6_000, 13_000);
+
+    expect(rollup.isForecastOverBudget).toBe(false);
+    expect(rollup.forecastVarianceMinutes).toBe(-1_400);
+  });
+
+  it("does NOT flag a forecast equal to the charged figure", () => {
+    // The ideal case the user described: charged and estimated agree.
+    // Strictly greater, so landing exactly on the quote is not an overrun.
+    const rollup = chargedProgress(14_400, 0, 14_400);
+
+    expect(rollup.forecastVarianceMinutes).toBe(0);
+    expect(rollup.isForecastOverBudget).toBe(false);
+    expect(rollup.forecastPercent).toBe(100);
+  });
+
+  it("keeps the fill and the marker separate, so the bar can be full while the label is not", () => {
+    // Both past 100. The fill clamps for the width; the true figures stay
+    // readable for the label - the same split budgetProgress makes.
+    const rollup = chargedProgress(600, 900, 1_200);
+
+    expect(rollup.percentUsed).toBe(150);
+    expect(rollup.barPercent).toBe(100);
+    expect(rollup.forecastPercent).toBe(200);
+    expect(rollup.forecastBarPercent).toBe(100);
+    expect(rollup.overMinutes).toBe(300);
+  });
+
+  it("answers NULL throughout when nothing has been charged", () => {
+    // Nobody has recorded what this was sold for, which is not the same as
+    // it having been sold for nothing. A percentage against nought is
+    // Infinity, or a full bar if guarded, and both read as "all spent".
+    const rollup = chargedProgress(null, 9_600, 16_800);
+
+    expect(rollup.chargedMinutes).toBeNull();
+    expect(rollup.percentUsed).toBeNull();
+    expect(rollup.forecastPercent).toBeNull();
+    expect(rollup.forecastVarianceMinutes).toBeNull();
+    expect(rollup.isOverBudget).toBe(false);
+    // And NOT flagged as a forecast overrun: there is nothing to overrun,
+    // and painting it red blames whoever estimated the work for the
+    // omission of whoever was meant to record the quote.
+    expect(rollup.isForecastOverBudget).toBe(false);
+    // The two real figures still come through - they are facts.
+    expect(rollup.loggedMinutes).toBe(9_600);
+    expect(rollup.forecastMinutes).toBe(16_800);
+  });
+
+  it("treats a charged figure of NOUGHT as unassigned, not as a quote of no time", () => {
+    // Nobody sells a project for no hours, and the alternative is a bar
+    // that reads as fully spent the moment the project is created.
+    const rollup = chargedProgress(0, 600, 1_200);
+
+    expect(rollup.chargedMinutes).toBeNull();
+    expect(rollup.percentUsed).toBeNull();
+    expect(rollup.isForecastOverBudget).toBe(false);
+  });
+
+  it("carries a zero forecast as a real zero, not as unknown", () => {
+    // A project with no tasks genuinely has no forecast, rather than one
+    // nobody has recorded - so this stays 0 and reads as "nothing estimated
+    // yet" against a real quote.
+    const rollup = chargedProgress(14_400, 0, 0);
+
+    expect(rollup.forecastMinutes).toBe(0);
+    expect(rollup.forecastPercent).toBe(0);
+    expect(rollup.forecastVarianceMinutes).toBe(-14_400);
+    expect(rollup.isForecastOverBudget).toBe(false);
+  });
+
+  it("refuses negative inputs rather than propagating them", () => {
+    const rollup = chargedProgress(-100, -50, -200);
+
+    expect(rollup.chargedMinutes).toBeNull();
+    expect(rollup.loggedMinutes).toBe(0);
+    expect(rollup.forecastMinutes).toBe(0);
+  });
+});
+
+// -------------------------------------------------------------------
+// A PHASE-BUDGETED PROJECT'S TOTAL.
+//
+// The asymmetry is the whole content: part-way filled in is a real partial
+// total, none filled in is no quote at all.
+// -------------------------------------------------------------------
+describe("sumChargedMinutes", () => {
+  it("adds up the phases that have an amount", () => {
+    expect(sumChargedMinutes([4_800, 14_400, 4_800])).toBe(24_000);
+  });
+
+  it("totals what IS assigned when only some phases are", () => {
+    // A project part-way through being budgeted has a real partial total
+    // worth showing. The phases without one are named separately on screen,
+    // because a total that silently omits three of them is exactly the
+    // plausible wrong number this module refuses.
+    expect(sumChargedMinutes([4_800, null, 4_800])).toBe(9_600);
+  });
+
+  it("answers NULL when NOT ONE phase has an amount", () => {
+    // A total of nought would read as "sold for nothing" rather than "not
+    // filled in yet", which is the distinction the whole null convention in
+    // this file exists for.
+    expect(sumChargedMinutes([null, null, null])).toBeNull();
+    expect(sumChargedMinutes([])).toBeNull();
+  });
+
+  it("does not let a negative phase reduce the total", () => {
+    expect(sumChargedMinutes([4_800, -1_000])).toBe(4_800);
   });
 });
