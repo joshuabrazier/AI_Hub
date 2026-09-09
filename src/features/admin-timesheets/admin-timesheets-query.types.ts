@@ -28,6 +28,22 @@ export const QUERY_MEASURES = [
   "projectedCost",
   "projectedValue",
   "remainingCapacity",
+  // WORK STILL TO DO, which is a different question from all of the above and
+  // was mistaken for remainingCapacity before these existed.
+  //
+  // "How much time is left on Phase 2" was answered with 300h of contracted
+  // staff hours remaining in the month, when the work outstanding on that
+  // project was 84.5h. Both figures are real, both are "time left", and the
+  // wrong one was quotable and completely misleading - so they are named
+  // apart and the prompt spells out the difference.
+  //
+  // NEITHER IS PERIOD SCOPED. Both describe now, so their caveats say so.
+  "outstandingWork",
+  // Committed less spent. Different from outstandingWork whenever an
+  // estimate was wrong: work finished under its estimate gives the time
+  // back to the project, so there can be budget left with no work left.
+  "budgetLeft",
+  "unsizedWork",
 ] as const;
 
 export type QueryMeasure = (typeof QUERY_MEASURES)[number];
@@ -75,6 +91,11 @@ export const ResolvedQuerySchema = z.object({
   // 'all', or a value from the options offered. Checked against them in the
   // service - see the note above.
   category: z.string().max(120).nullable(),
+  // WHO THE WORK IS FOR - a Jira project key like "TSSS". Added because
+  // without it "how much is left for Trainer Suzie" had nowhere to go: the
+  // model read the client's name as a person, found no such person, and
+  // dropped the only filter in the question.
+  client: z.string().max(120).nullable(),
   project: z.string().max(120).nullable(),
   // SEVERAL people, because "Louis and Josh" is a normal thing to ask for.
   // Each id is checked against the offered options independently, so one

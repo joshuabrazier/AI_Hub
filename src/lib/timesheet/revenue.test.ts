@@ -41,6 +41,7 @@ function fact(over: Partial<WorklogFactRow> = {}): WorklogFactRow {
     billable: BILLABLE_YES,
     billableSource: "issue",
     hasNarrative: true,
+    rndClass: null,
     isOrphan: false,
     ...over,
   };

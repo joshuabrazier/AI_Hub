@@ -847,6 +847,53 @@ function buildConverseRequest(
 }
 
 // -------------------------------------------------------------------
+// Say why a streamed reply stopped, in the request log.
+//
+// An abort carries its reason on the SIGNAL, not on the error: the AWS SDK
+// throws a generic "AbortError: Request aborted" whatever the cause, so the
+// reason has to be read from the signal that caused it.
+//
+// The two causes need completely different responses and must never look
+// alike in the log. A stall means the model sent nothing and the call was
+// killed - that is a fault worth chasing. A reader who closed the tab is
+// not a fault at all, and chasing it wastes an afternoon.
+// -------------------------------------------------------------------
+export const describeStreamFailureForTests = (error: unknown, signal?: AbortSignal) =>
+  describeStreamFailure(error, signal);
+
+function describeStreamFailure(error: unknown, signal?: AbortSignal): string {
+  const isAbort = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+
+  if (isAbort && signal?.aborted) {
+    const reason = signal.reason;
+
+    // THE NAME IS WHAT SEPARATES THEM, not whether a reason exists.
+    //
+    // `controller.abort()` with no argument does NOT leave the reason
+    // undefined: the platform substitutes a DOMException named AbortError
+    // reading "This operation was aborted". So a plain reader disconnect
+    // arrives carrying a message, and a check for "is there a reason" says
+    // yes and then reports that sentence - which is no more use than the
+    // one this function exists to replace.
+    //
+    // Our own aborts are plain Errors, so their name is "Error". Anything
+    // named AbortError is the platform's default, which means nobody
+    // supplied a reason, which means the reader went away.
+    const isPlatformDefault =
+      typeof reason === "object" && reason !== null && (reason as { name?: string }).name === "AbortError";
+
+    if (!isPlatformDefault) {
+      if (reason instanceof Error && reason.message) return `Aborted: ${reason.message}`;
+      if (typeof reason === "string" && reason.length > 0) return `Aborted: ${reason}`;
+    }
+
+    return "Aborted: the reader disconnected before the reply finished.";
+  }
+
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
+// -------------------------------------------------------------------
 // Record what was actually sent.
 //
 // Called after every model request, successful or not - a failed call is
@@ -1218,6 +1265,21 @@ export async function* streamAiChatReplyService(
   // without one, but the route always passes it - see the note on
   // CHAT_TURN_TIMEOUT_MS for what happened when nothing did.
   signal?: AbortSignal,
+  // -----------------------------------------------------------------
+  // "SOMETHING ARRIVED FROM BEDROCK", which is NOT the same as "a chunk was
+  // yielded" - and conflating the two was a real bug.
+  //
+  // Only TEXT deltas are yielded. A tool round emits a block start, a run of
+  // tool-input deltas and a message stop, and yields nothing at all - so a
+  // caller measuring silence by what comes out of this generator sees a
+  // perfectly healthy stream as a dead one, for as long as the model spends
+  // deciding to call a tool and for the whole round trip that follows.
+  //
+  // With up to MAX_TOOL_ROUNDS of that, each a full model call plus a Jira
+  // and database lookup, the silence can run for minutes. The caller needs to
+  // hear the stream itself, not the filtered output of it.
+  // -----------------------------------------------------------------
+  onActivity?: () => void,
 ): AsyncGenerator<string, void, undefined> {
   const user = await requireUser();
 
@@ -1370,6 +1432,11 @@ export async function* streamAiChatReplyService(
       let stopReason: string | undefined;
 
       for await (const event of response.stream) {
+        // EVERY event, before anything is inspected. A tool call is as much a
+        // sign of life as a sentence, and the whole point is that the caller
+        // cannot tell the difference from the outside.
+        onActivity?.();
+
         const started = event.contentBlockStart?.start?.toolUse;
         if (started?.toolUseId && started.name) {
           toolCalls.set(event.contentBlockStart?.contentBlockIndex ?? 0, {
@@ -1456,7 +1523,20 @@ export async function* streamAiChatReplyService(
   } catch (error) {
     // Captured for the request log before rethrowing - a failed call is
     // exactly the one an admin will want the payload for.
-    failure = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    //
+    // AN ABORT IS RECORDED BY ITS REASON, NOT BY ITS NAME.
+    //
+    // The stall guard aborts with a sentence saying what happened, and the
+    // caller's own signal aborts when the reader closes the tab. The AWS SDK
+    // catches either and throws its own "AbortError: Request aborted",
+    // discarding the reason - so both landed in the log as the same four
+    // useless words, and a request that had been dead for 150 seconds was
+    // indistinguishable from somebody navigating away.
+    //
+    // The only way to tell them apart was to notice the duration matched
+    // CHAT_STALL_TIMEOUT_MS, which is not a diagnosis, it is a coincidence
+    // somebody spotted.
+    failure = describeStreamFailure(error, signal);
 
     // Logged with context and rethrown. The route turns it into a message for
     // the reader; anything already streamed is kept by the `finally`.

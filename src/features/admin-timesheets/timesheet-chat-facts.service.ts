@@ -6,6 +6,8 @@ import { getUserByUserIdRepo } from "@/lib/data/repositories/users.repository";
 import { getWorklogFactsInRangeRepo } from "@/lib/data/repositories/timesheet.repository";
 import { envServer } from "@/lib/env-server";
 import { handleError } from "@/lib/handle-errors";
+import { secondsToHours, type OutstandingSummary } from "@/lib/timesheet/outstanding";
+import { getOutstandingEffortService } from "./admin-timesheets-outstanding.service";
 import { buildReport } from "@/lib/timesheet/aggregate";
 import { Granularity, isGranularity, resolvePeriod } from "@/lib/timesheet/period";
 import { capacityHoursForRange, measureAgainstCapacity, toStaffCapacity } from "@/lib/timesheet/staff-capacity";
@@ -59,6 +61,10 @@ export interface TimesheetChatFactsRequest {
   client?: string;
   category?: string;
   billable?: string;
+  // A piece of work to narrow to, by name. Matched against the period's own
+  // projects the same way a client name is - exact, then case-insensitive,
+  // then a unique prefix - and dropped and NAMED when it misses.
+  project?: string;
 }
 
 export interface TimesheetChatFacts {
@@ -72,6 +78,7 @@ export interface TimesheetChatFacts {
     viewer: "admin" | "self";
     person: string | null;
     client: string | null;
+    project: string | null;
     category: string | null;
     billable: string | null;
     // Set when something asked for could not be honoured, so the model can
@@ -101,11 +108,51 @@ export interface TimesheetChatFacts {
     marginPercent: number | null;
     effectiveRatePerHour: string;
   };
+  // WORK STILL TO DO. Admin only, and absent entirely otherwise - estimates
+  // are a client's budget, which is the same reasoning that keeps money out of
+  // a member's payload.
+  //
+  // NOT PERIOD SCOPED, unlike everything else here, which is why it carries
+  // its own note rather than relying on the scope block above it. A model
+  // handed "84.5" inside a payload headed "September 2026" will say
+  // "84.5 hours outstanding in September" unless told otherwise.
+  outstanding?: {
+    // null when nothing in scope is sized. Never 0 - "no work left" and "we
+    // have not estimated it" are opposite answers.
+    workLeftHours: number | null;
+    // BUDGET LEFT, which is a different question from work left and usually
+    // the one meant by "how much have we got left on this".
+    //
+    // Work left is what the open tasks are estimated at. Budget left is
+    // everything committed less everything spent, so coming in under on
+    // finished work gives that time back. Measured live on Phase 2: 39h of
+    // work left, 84.5h of budget left, because its finished items were
+    // estimated at 51h and took 5.5h.
+    //
+    // null when nothing is committed - there is nothing to measure against,
+    // and zero would read as "no budget left" rather than "no budget set".
+    budgetLeftHours: number | null;
+    committedHours: number;
+    spentHours: number;
+    overBudgetHours: number;
+    openItems: number;
+    sizedItems: number;
+    unsizedItems: number;
+    unsizedHoursLogged: number;
+    // FINISHED WORK, and what it actually took. The evidence for whether the
+    // estimates behind workLeftHours are worth anything - measured live, Phase
+    // 2's finished items were estimated at 51h and took 5.5h, which is exactly
+    // the sort of thing a reader should be told when they ask what is left.
+    finishedItems: number;
+    finishedEstimatedHours: number;
+    finishedActualHours: number;
+    note: string;
+  };
   people?: { name: string; hours: number; billableSharePercent: number | null; utilisationPercent: number | null }[];
   clients?: { name: string; hours: number; projects: number }[];
   // The vocabulary that WAS available, so a name the model got wrong can be
   // corrected on its next call rather than guessed at.
-  available?: { people: string[]; clients: string[] };
+  available?: { people: string[]; clients: string[]; projects: string[] };
 }
 
 function round(value: number, places = 2): number {
@@ -128,7 +175,7 @@ function percent(ratio: number | null): number | null {
 export function resolveNamed(
   wanted: string,
   options: { value: string; label: string }[],
-  kind: "person" | "client",
+  kind: "person" | "client" | "project",
 ): { id: string | null; note: string | null } {
   const trimmed = wanted.trim();
   if (!trimmed) return { id: null, note: null };
@@ -212,11 +259,27 @@ async function adminFacts(request: TimesheetChatFactsRequest): Promise<Timesheet
     if (resolved.note) notes.push(resolved.note);
   }
 
+  let projectKey: string | undefined;
+  if (request.project) {
+    const resolved = resolveNamed(
+      request.project,
+      // Matched on the SUMMARY, because that is what a person calls a project:
+      // "Phase 2", not "TSSS-88". The value stays the key.
+      base.projectOptions
+        .filter((option) => option.value !== "all")
+        .map((option) => ({ value: option.value, label: option.summary ?? option.label })),
+      "project",
+    );
+    if (resolved.id) projectKey = resolved.id;
+    if (resolved.note) notes.push(resolved.note);
+  }
+
   const scopeRequest = {
     granularity: request.granularity,
     start: request.start,
     category: request.category,
     client: clientKey,
+    project: projectKey,
     billable: request.billable,
   };
 
@@ -242,6 +305,14 @@ async function adminFacts(request: TimesheetChatFactsRequest): Promise<Timesheet
 
   const revenue = await getRevenueForFactsService(report.facts);
 
+  // Scoped by client and project only. Deliberately NOT by person or period:
+  // an estimate is not owned by anybody, and work left to do is a fact about
+  // now rather than about the month being reported.
+  const outstanding = await getOutstandingEffortService({
+    clientKey: clientKey ?? null,
+    projectKey: projectKey ?? null,
+  });
+
   const personLabel = personId ? (personOptions.find((o) => o.value === personId)?.label ?? null) : null;
 
   const daysWorked = new Set(report.facts.map((fact) => fact.workDate)).size;
@@ -254,6 +325,10 @@ async function adminFacts(request: TimesheetChatFactsRequest): Promise<Timesheet
       viewer: "admin",
       person: personLabel,
       client: filters.client === "all" ? null : (clientOptions.find((o) => o.value === filters.client)?.label ?? null),
+      project:
+        filters.project === "all"
+          ? null
+          : (data.projectOptions.find((o) => o.value === filters.project)?.summary ?? filters.project),
       category: filters.category === "all" ? null : filters.category,
       billable: filters.billable === "all" ? null : filters.billable,
       notes,
@@ -281,6 +356,7 @@ async function adminFacts(request: TimesheetChatFactsRequest): Promise<Timesheet
           effectiveRatePerHour: formatMoney(revenue.effectiveRatePerLoggedHourCents),
         }
       : undefined,
+    outstanding: outstandingFacts(outstanding),
     people: personId
       ? undefined
       : personOptions
@@ -297,6 +373,9 @@ async function adminFacts(request: TimesheetChatFactsRequest): Promise<Timesheet
     available: {
       people: personOptions.filter((o) => o.value !== "all").map((o) => o.label),
       clients: clientOptions.filter((o) => o.value !== "all").map((o) => o.label),
+      projects: data.projectOptions
+        .filter((o) => o.value !== "all")
+        .map((o) => o.summary ?? o.label),
     },
   };
 }
@@ -336,6 +415,7 @@ async function ownFacts(request: TimesheetChatFactsRequest, userId: string): Pro
         viewer: "self",
         person: null,
         client: null,
+        project: null,
         category: null,
         billable: null,
         notes: [
@@ -392,6 +472,7 @@ async function ownFacts(request: TimesheetChatFactsRequest, userId: string): Pro
       viewer: "self",
       person: row?.name ?? null,
       client: null,
+      project: null,
       category: null,
       billable: null,
       notes,
@@ -416,4 +497,49 @@ async function ownFacts(request: TimesheetChatFactsRequest, userId: string): Pro
 function formatMoney(cents: number | null): string {
   if (cents === null) return "not available";
   return `$${(cents / 100).toLocaleString("en-AU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+// -------------------------------------------------------------------
+// The outstanding block, and the note that has to travel with it.
+//
+// Everything else in this payload is about a period. This is not, and a model
+// given "84.5" inside a result headed "September 2026" will report it as
+// September's number unless the payload itself says otherwise. So the note is
+// part of the data rather than left to the system prompt.
+//
+// workLeftHours is null rather than 0 when nothing is sized, because "no work
+// left" and "nobody has estimated it" are opposite answers and a model handed
+// 0 will give the first one.
+// -------------------------------------------------------------------
+function outstandingFacts(summary: OutstandingSummary): TimesheetChatFacts["outstanding"] {
+  const sized = summary.estimatedCount + summary.coveredCount;
+
+  const note =
+    summary.openCount === 0
+      ? "Nothing is open here; every item is in a finished status. This is a live figure, not a figure for the period above."
+      : summary.estimatedCount === 0
+        ? `Not known: none of the ${summary.openCount} open items carries an estimate, so there is no total to give. Say that rather than reporting zero. This is a live figure, not a figure for the period above.`
+        : summary.committedSeconds > 0 &&
+            Math.abs(summary.budgetRemainingSeconds - summary.remainingSeconds) > 3600
+          ? `workLeftHours (${round(secondsToHours(summary.remainingSeconds))}) and budgetLeftHours (${round(secondsToHours(summary.budgetRemainingSeconds))}) DIFFER and both are correct: the first is what the open tasks are estimated at, the second is the commitment less everything spent, and finished work that came in under gives its time back. Say which one you are quoting.${summary.unestimatedCount > 0 ? ` Also a floor: ${summary.unestimatedCount} open items are unsized.` : ""} This is a live figure as at today, NOT a figure for the period above.`
+        : summary.unestimatedCount > 0
+          ? `A FLOOR, NOT A FORECAST: ${sized} of ${summary.openCount} open items are sized, so ${summary.unestimatedCount} more could add to this. Say so when you report it. This is a live figure as at today, NOT a figure for the period above.`
+          : "Every open item is sized. This is a live figure as at today, NOT a figure for the period above.";
+
+  return {
+    workLeftHours: summary.estimatedCount > 0 ? round(secondsToHours(summary.remainingSeconds)) : null,
+    budgetLeftHours:
+      summary.committedSeconds > 0 ? round(secondsToHours(summary.budgetRemainingSeconds)) : null,
+    committedHours: round(secondsToHours(summary.committedSeconds)),
+    spentHours: round(secondsToHours(summary.spentSeconds)),
+    overBudgetHours: round(secondsToHours(summary.overBudgetSeconds)),
+    openItems: summary.openCount,
+    sizedItems: sized,
+    unsizedItems: summary.unestimatedCount,
+    unsizedHoursLogged: round(secondsToHours(summary.unestimatedLoggedSeconds)),
+    finishedItems: summary.completedCount,
+    finishedEstimatedHours: round(secondsToHours(summary.completedEstimateSeconds)),
+    finishedActualHours: round(secondsToHours(summary.completedLoggedSeconds)),
+    note,
+  };
 }

@@ -3,7 +3,12 @@ import { GRANULARITIES } from "@/lib/timesheet/period";
 import { QUERY_MEASURES } from "./admin-timesheets-query.types";
 import { BILLABLE_FILTERS } from "./admin-timesheets.types";
 
-import type { CategoryOptionDTO, PersonOptionDTO, ProjectOptionDTO } from "./admin-timesheets.types";
+import type {
+  CategoryOptionDTO,
+  ClientOptionDTO,
+  PersonOptionDTO,
+  ProjectOptionDTO,
+} from "./admin-timesheets.types";
 
 // -------------------------------------------------------------------
 // The prompt that turns a question into filters.
@@ -28,6 +33,7 @@ import type { CategoryOptionDTO, PersonOptionDTO, ProjectOptionDTO } from "./adm
 // not turn one question into a very large prompt. The options are already
 // ordered by hours by the service that builds them, so what survives the cut
 // is what the period is actually made of.
+const MAX_CLIENT_OPTIONS = 40;
 const MAX_PROJECT_OPTIONS = 60;
 const MAX_PERSON_OPTIONS = 60;
 const MAX_CATEGORY_OPTIONS = 20;
@@ -42,6 +48,7 @@ export const QUERY_SYSTEM_PROMPT = [
   `  "granularity": ${GRANULARITIES.map((value) => `"${value}"`).join(" | ")} | null,`,
   '  "start": "YYYY-MM-DD" | null,',
   '  "category": string | null,',
+  '  "client": string | null,',
   '  "project": string | null,',
   '  "people": string[] | null,',
   `  "billable": ${BILLABLE_FILTERS.map((value) => `"${value}"`).join(" | ")} | null,`,
@@ -50,12 +57,17 @@ export const QUERY_SYSTEM_PROMPT = [
   "}",
   "",
   "RULES",
-  "- category, project and every entry in people MUST be a `value` copied exactly from the OPTIONS below, or the string \"all\", or null. Never invent one, never use a display name where a value is given, and never guess at a person who is not listed.",
+  "- category, client, project and every entry in people MUST be a `value` copied exactly from the OPTIONS below, or the string \"all\", or null. Never invent one, never use a display name where a value is given, and never guess at a person who is not listed.",
+  "- A CLIENT IS NOT A PERSON. \"Trainer Suzie Swim School\", \"Bowhill Engineering\", \"Perks\" are clients - organisations the work is for - and belong in `client`. People are staff who log time. A name in the clients list is a client even when it sounds like somebody's name, and hunting for it in the people list instead is how the only filter in a question gets dropped.",
+  "- client narrows to who the work is FOR; project narrows to the piece of work. A project already belongs to one client, so naming a project is usually enough - also set client when the question named both, or when it named a client and no project.",
   "- people is a LIST. \"Louis and Josh\" is two entries. One person is a list of one. Everyone is null or an empty list.",
   "- billable narrows time by its billable flag. \"Billable work\" is \"Billable\". \"unset\" is time nobody has flagged either way, which is NOT the same as non-billable.",
   "- measures is what the question asked you to QUANTIFY, and it decides whether the reader gets a view or an answer. \"Show me X\" wants a view, so leave measures null. \"How much\", \"how many\", \"what did it cost\" want figures, so list them. You are NOT calculating anything - the application computes every figure from its own data - you are naming which ones were asked about.",
   "- Cost and value are different questions. \"What has it cost us\" is \"cost\". \"What is it worth\" or \"what can we bill\" is \"value\". When the wording is genuinely ambiguous, ask for both rather than picking one.",
-  "- PAST AND FUTURE ARE DIFFERENT MEASURES. \"What has it cost\" is \"cost\". \"What WILL it cost\", \"by the end of the week\", \"are we going to\" is \"projectedCost\" - and ask for \"cost\" alongside it, because a projection is only readable next to the actual it builds on. Same for projectedValue. \"remainingCapacity\" is the contracted hours still to come.",
+  "- PAST AND FUTURE ARE DIFFERENT MEASURES. \"What has it cost\" is \"cost\". \"What WILL it cost\", \"by the end of the week\", \"are we going to\" is \"projectedCost\" - and ask for \"cost\" alongside it, because a projection is only readable next to the actual it builds on. Same for projectedValue.",
+  "- \"TIME LEFT\" IS TWO DIFFERENT MEASURES AND CONFUSING THEM IS THE WORST MISTAKE YOU CAN MAKE HERE. `remainingCapacity` is how many contracted hours the PEOPLE have left in the period - a staffing figure. `outstandingWork` is how much work is left to do on the JOB, from its estimates minus what has been logged - a delivery figure, and not tied to any period. \"How much time is left on Phase 2\", \"how much is left to do\", \"how much work remains\", \"how much is still outstanding\" all mean `outstandingWork`. Ask for `remainingCapacity` only when the question is about the team's availability - \"how many hours has Louis got left this month\". When a question could genuinely be either, ask for both: the reader can tell them apart, and a single wrong one cannot be told apart from a right one.",
+  "- THERE ARE ALSO TWO KINDS OF WORK LEFT AND BOTH ARE CORRECT. `outstandingWork` is what the open tasks are estimated at. `budgetLeft` is everything committed less everything spent, so a task estimated at 10 hours that took 2 gives 8 hours back to the project. \"How much work is left to do\" is `outstandingWork`; \"how much budget have we got left\", \"how much can we still spend\", \"how much time have we got left on this project\" is `budgetLeft`. When a question could be either, ask for BOTH - they differ whenever an estimate was wrong, which is usually.",
+  "- `unsizedWork` is how many open items carry no estimate. Ask for it alongside `outstandingWork` whenever the question wants a total of work remaining, because most work is not estimated and an outstanding figure alone reads as complete when it is only a floor.",
   "- A forecast needs the period it is forecasting. \"By the end of the week\" means the week containing TODAY, so set granularity to week and start to today's date - not to next week.",
   "- If the question names somebody or something you cannot find in OPTIONS, leave it out and say so in `interpretation`. Do not substitute the nearest match. Naming three people of whom two are listed means returning those two, not giving up on all three.",
   "- `start` is any date inside the period wanted. It is snapped to the start of its own period afterwards, so any day in the right month is correct for a month.",
@@ -86,6 +98,7 @@ export function buildQueryPrompt(input: {
   currentGranularity: string;
   currentPeriodLabel: string;
   categories: CategoryOptionDTO[];
+  clients: ClientOptionDTO[];
   projects: ProjectOptionDTO[];
   people: PersonOptionDTO[];
 }): string {
@@ -95,6 +108,8 @@ export function buildQueryPrompt(input: {
   const categories = input.categories
     .slice(0, MAX_CATEGORY_OPTIONS)
     .map((option) => optionLine(option.value, option.label));
+
+  const clients = input.clients.slice(0, MAX_CLIENT_OPTIONS).map((option) => optionLine(option.value, option.label));
 
   const projects = input.projects
     .slice(0, MAX_PROJECT_OPTIONS)
@@ -111,6 +126,9 @@ export function buildQueryPrompt(input: {
     "",
     "OPTIONS - categories:",
     ...categories,
+    "",
+    "OPTIONS - clients (organisations the work is FOR, never people):",
+    ...(clients.length > 0 ? clients : ["  (none in this period)"]),
     "",
     "OPTIONS - projects:",
     ...(projects.length > 0 ? projects : ["  (none in this period)"]),

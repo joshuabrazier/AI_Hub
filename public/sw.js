@@ -47,6 +47,17 @@ self.addEventListener("push", (event) => {
       // Groups related notifications so a newer one about the same thing
       // replaces the older rather than stacking up on the lock screen.
       tag: payload.tag || undefined,
+      // STAYS ON SCREEN UNTIL IT IS ACTED ON, when the sender asks for it.
+      //
+      // A notification about a meeting you are IN has to survive being
+      // ignored for a minute: the default auto-dismisses after a few seconds,
+      // which for a prompt whose whole job is to be seen during a meeting is
+      // the same as never having sent it. The meeting cannot be recovered
+      // afterwards, so this is the one place the interruption is worth it.
+      //
+      // Not the default for everything - "your transcription is ready" does
+      // not deserve to sit on somebody's screen until they deal with it.
+      requireInteraction: payload.requireInteraction === true,
       // The path to open, carried through to the click handler below.
       data: { url: payload.url || "/" },
     }),

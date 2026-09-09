@@ -5,7 +5,9 @@ import { handleServerApiError } from "@/lib/handle-errors";
 import { validateRequest } from "@/lib/server-requests";
 import { ServerApiResponse } from "@/lib/types";
 
+import { getMeetingNowService, type MeetingNowDTO } from "./meeting-now.service";
 import {
+  cancelTeamsAutoImportService,
   createTranscriptionService,
   deleteTranscriptionService,
   getTranscriptTextService,
@@ -225,5 +227,52 @@ export async function downloadTranscriptAction(
     return { success: true, data: file } satisfies ServerApiResponse<{ fileName: string; text: string }>;
   } catch (error) {
     return handleServerApiError("downloadTranscriptAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Am I in a meeting right now?
+//
+// POLLED, so it is written to be cheap and quiet. It takes no arguments -
+// deliberately: the person whose presence is read comes from the session,
+// and adding a parameter here would be the first step towards being able to
+// ask about somebody else.
+//
+// A failure is returned rather than thrown. This backs a prompt nobody
+// asked for, so a Graph hiccup must show no prompt, not an error boundary
+// over the page somebody was actually using.
+// -------------------------------------------------------------------
+export async function getMeetingNowAction(): Promise<ServerApiResponse<MeetingNowDTO>> {
+  try {
+    await requireUser();
+
+    return { success: true, data: await getMeetingNowService() };
+  } catch (error) {
+    return handleServerApiError("getMeetingNowAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// "Do not collect this one."
+//
+// The only manual control there is. Collection is armed automatically the
+// moment a meeting is detected - see ensureAutoImportArmed - so this exists
+// for the meeting somebody would rather was not kept, and a cancelled row is
+// never re-armed by a later poll.
+// -------------------------------------------------------------------
+export async function cancelTeamsAutoImportAction(
+  requestDTO: ImportTeamsMeetingRequestDTO,
+): Promise<ServerApiResponse<null>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(ImportTeamsMeetingSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    await cancelTeamsAutoImportService(validatedRequest.data);
+
+    return { success: true, data: null };
+  } catch (error) {
+    return handleServerApiError("cancelTeamsAutoImportAction", error);
   }
 }

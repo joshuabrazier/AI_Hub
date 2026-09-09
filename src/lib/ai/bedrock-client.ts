@@ -45,10 +45,46 @@ import { envServer } from "@/lib/env-server";
 export const BEDROCK_REGION = "ap-southeast-2";
 export const BEDROCK_MODEL_ID = "au.anthropic.claude-opus-4-6-v1";
 
-// How long one model response may take before the request is abandoned.
-// Generous because a long answer legitimately takes a while, and the reply
-// is streamed so the reader sees progress throughout.
-const READ_TIMEOUT_MS = 120_000;
+// -------------------------------------------------------------------
+// THE RETRY LADDER HAS TO FIT INSIDE THE CALLER'S PATIENCE, and for a long
+// time it did not.
+//
+// These were 120_000 and maxAttempts 5, chosen on the reasonable-sounding
+// ground that a long answer legitimately takes a while. But this is a
+// SOCKET IDLE timeout, not a total duration: a streamed reply resets it on
+// every chunk, so 120s only ever elapses when nothing is coming back at
+// all. Sizing it for long answers sized it for the wrong thing.
+//
+// The consequence was measured in production. Chat bounds silence at
+// CHAT_STALL_TIMEOUT_MS (150s), and a single stalled attempt burned 120 of
+// those 150 seconds inside the SDK. The stall guard then fired 30 seconds
+// into attempt two, so the five-attempt ladder could never finish, and its
+// only real effect was to convert a fast nameable failure into 150 seconds
+// of nothing. A real reply failed exactly that way at 149,946ms with every
+// token count null and "AbortError: Request aborted" as its whole
+// explanation.
+//
+// So the numbers are now chosen together:
+//
+//   45s x 2 attempts, plus adaptive backoff, lands near 95-100s
+//   comfortably inside the 150s stall budget
+//
+// which means the SDK gives up FIRST and throws something with a name -
+// ThrottlingException, a timeout - instead of the stall guard aborting
+// anonymously. The guard goes back to being the backstop it was meant to
+// be rather than the thing that always fires.
+//
+// 45 seconds without a single byte is already pathological: time to first
+// token is normally a few seconds, and mid-stream gaps are smaller still.
+// One retry survives a genuine transient blip; more than that is just
+// spending the caller's budget on hope.
+//
+// bedrock-retry-budget.test.ts asserts the arithmetic still holds, because
+// the failure mode of getting it wrong is invisible - everything works
+// until a call stalls, and then it stalls for the maximum.
+// -------------------------------------------------------------------
+export const READ_TIMEOUT_MS = 45_000;
+export const MAX_ATTEMPTS = 2;
 const CONNECT_TIMEOUT_MS = 10_000;
 
 // -------------------------------------------------------------------
@@ -88,7 +124,7 @@ export function getBedrockClient(): BedrockRuntimeClient {
     // the first means the key is wrong, revoked, or pointed at the wrong
     // region, and the second means the request is malformed. Retrying
     // either just burns time.
-    maxAttempts: 5,
+    maxAttempts: MAX_ATTEMPTS,
     retryMode: "adaptive",
   });
 

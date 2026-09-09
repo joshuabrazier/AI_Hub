@@ -9,6 +9,7 @@ import {
   NewJiraProject,
   NewStaffTarget,
   NewWorklogFact,
+  NewWorklogRndHistory,
   StaffTarget,
   SyncWatermark,
   WorklogFact,
@@ -69,6 +70,13 @@ export async function upsertWorklogFactsRepo(rows: NewWorklogFact[], db: DBClien
             billableSource: eb.ref("excluded.billableSource"),
             narrative: eb.ref("excluded.narrative"),
             jiraUpdatedAt: eb.ref("excluded.jiraUpdatedAt"),
+            // Re-frozen on every write, exactly like billable above it. The
+            // caller has already recorded any change to rndClass in
+            // worklog_rnd_history, so overwriting here loses nothing.
+            labelsSnapshot: eb.ref("excluded.labelsSnapshot"),
+            rndClass: eb.ref("excluded.rndClass"),
+            rndSource: eb.ref("excluded.rndSource"),
+            classifiedAt: eb.ref("excluded.classifiedAt"),
             syncedAt: new Date(),
           })),
         )
@@ -215,6 +223,48 @@ export async function getJiraIssuesRepo(): Promise<JiraIssue[]> {
     return await database.selectFrom("jiraIssue").selectAll().orderBy("issueKey").execute();
   } catch (error) {
     throw handleError("getJiraIssuesRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Every issue with the hours logged against it, all time.
+//
+// For the outstanding-effort view, which is the one timesheet screen that is
+// NOT period scoped: "what is left" is a fact about now, and an estimate set
+// in July and worked in September belongs to both months.
+//
+// It is a LEFT JOIN so an issue nobody has booked time to comes back with
+// zero rather than vanishing. Those are exactly the rows the view exists to
+// show - work planned and not yet started - and an inner join would quietly
+// drop the entire backlog.
+//
+// worklog_fact is the only source of logged time. manual_worklog exists in
+// the schema but has no consumers anywhere in the app, so joining it here
+// would invent a second definition of "hours logged" that no other screen
+// shares.
+// -------------------------------------------------------------------
+export interface IssueWithLoggedTime extends JiraIssue {
+  loggedSeconds: number;
+}
+
+export async function getIssuesWithLoggedTimeRepo(): Promise<IssueWithLoggedTime[]> {
+  try {
+    const rows = await database
+      .selectFrom("jiraIssue")
+      .leftJoin("worklogFact", "worklogFact.issueKey", "jiraIssue.issueKey")
+      .selectAll("jiraIssue")
+      .select((eb) => eb.fn.sum<string | null>("worklogFact.timeSpentSeconds").as("loggedSeconds"))
+      .groupBy("jiraIssue.issueKey")
+      .orderBy("jiraIssue.issueKey")
+      .execute();
+
+    // sum() comes back from Postgres as a numeric, which node-postgres hands
+    // over as a string, and as NULL for an issue with no worklogs. Both are
+    // resolved exactly once, here, so nothing downstream ever sees a string
+    // where it expects seconds.
+    return rows.map((row) => ({ ...row, loggedSeconds: Number(row.loggedSeconds ?? 0) }));
+  } catch (error) {
+    throw handleError("getIssuesWithLoggedTimeRepo", error);
   }
 }
 
@@ -377,5 +427,118 @@ export async function upsertStaffTargetRepo(row: NewStaffTarget, db: DBClient = 
       .executeTakeFirstOrThrow();
   } catch (error) {
     throw handleError("upsertStaffTargetRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// R&D classification: reading what is already frozen, and recording moves
+// -------------------------------------------------------------------
+
+// What a worklog is currently classified as, for the worklogs about to be
+// rewritten. Read BEFORE the upsert so a change can be detected and
+// recorded; after it the previous value is gone.
+export interface WorklogRndState {
+  worklogId: string;
+  rndClass: string | null;
+  rndSource: string | null;
+  labelsSnapshot: string | null;
+}
+
+export async function getWorklogRndStatesRepo(
+  worklogIds: string[],
+  db: DBClient = database,
+): Promise<WorklogRndState[]> {
+  try {
+    if (worklogIds.length === 0) return [];
+
+    const states: WorklogRndState[] = [];
+
+    // Chunked for the same reason the inserts are: Postgres caps bound
+    // parameters, and a busy sync window can carry thousands of ids.
+    for (const batch of chunk(worklogIds, INSERT_CHUNK_SIZE)) {
+      const rows = await db
+        .selectFrom("worklogFact")
+        .select(["worklogId", "rndClass", "rndSource", "labelsSnapshot"])
+        .where("worklogId", "in", batch)
+        .execute();
+
+      states.push(...rows);
+    }
+
+    return states;
+  } catch (error) {
+    throw handleError("getWorklogRndStatesRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Append reclassifications.
+//
+// Append-only and never updated, so a classification that moved twice
+// leaves two rows rather than one that has forgotten the middle. An R&D
+// claim is defended with the sequence, not the latest value.
+// -------------------------------------------------------------------
+export async function addWorklogRndHistoryRepo(
+  rows: NewWorklogRndHistory[],
+  db: DBClient = database,
+): Promise<number> {
+  try {
+    if (rows.length === 0) return 0;
+
+    let written = 0;
+
+    for (const batch of chunk(rows, INSERT_CHUNK_SIZE)) {
+      await db.insertInto("worklogRndHistory").values(batch).execute();
+      written += batch.length;
+    }
+
+    return written;
+  } catch (error) {
+    throw handleError("addWorklogRndHistoryRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The distinct issues already referenced by stored worklogs.
+//
+// The backfill's starting point: it needs today's labels for exactly these
+// and nothing else, so it does not walk the whole book of work.
+// -------------------------------------------------------------------
+export async function getDistinctWorklogIssueKeysRepo(db: DBClient = database): Promise<string[]> {
+  try {
+    const rows = await db.selectFrom("worklogFact").select("issueKey").distinct().execute();
+
+    return rows.map((row) => row.issueKey);
+  } catch (error) {
+    throw handleError("getDistinctWorklogIssueKeysRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Freeze a classification onto every worklog of one issue.
+//
+// The backfill's write. Scoped by issue key because that is what labels
+// belong to, and it keeps the statement count proportional to issues
+// rather than to worklogs.
+// -------------------------------------------------------------------
+export async function setWorklogRndClassForIssueRepo(
+  issueKey: string,
+  values: { labelsSnapshot: string | null; rndClass: string | null; classifiedAt: Date },
+  db: DBClient = database,
+): Promise<number> {
+  try {
+    const result = await db
+      .updateTable("worklogFact")
+      .set({
+        labelsSnapshot: values.labelsSnapshot,
+        rndClass: values.rndClass,
+        classifiedAt: values.classifiedAt,
+      })
+      .where("issueKey", "=", issueKey)
+      .executeTakeFirst();
+
+    return Number(result.numUpdatedRows ?? 0);
+  } catch (error) {
+    throw handleError("setWorklogRndClassForIssueRepo", error);
   }
 }

@@ -90,6 +90,12 @@ export const ISSUE_FIELDS = [
   "status",
   "updated",
   "timeoriginalestimate",
+  // R&D classification. Added here rather than fetched separately: the sync
+  // already sweeps every Project and Deliverable in one search, so asking
+  // for labels on that call costs no extra round trip. A second pass over
+  // the same issues - bulkfetch or otherwise - would be one more Jira
+  // contract to depend on for data we are already being handed.
+  "labels",
 ];
 
 // The page size for JQL search. Jira caps this server-side anyway; asking for

@@ -247,11 +247,12 @@ export function ReadinessCard({ readiness, index }: { readiness: InvoiceReadines
             </div>
           </dl>
 
-          {blocked && (
-            <Link href={ROUTES.ADMIN_TIMESHEETS_REVIEW}>
-              <Badge variant="destructive">Fix these in Review</Badge>
-            </Link>
-          )}
+          {/* Was a link to a Review tab that no longer exists. The numbers
+              above still say WHAT is wrong; the drill-down naming which
+              entries went with the tab. Every one of these is fixed in Jira
+              rather than here, so the badge states that instead of linking
+              somewhere that cannot help. */}
+          {blocked && <Badge variant="destructive">Fix these in Jira</Badge>}
         </CardContent>
       </Card>
     </Reveal>

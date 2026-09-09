@@ -2,8 +2,10 @@ import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
 import { ROUTES } from "@/lib/routes";
 
 import { getForecastFromReportService } from "../admin-timesheets-forecast.service";
+import { getOutstandingEffortService } from "../admin-timesheets-outstanding.service";
 import { getRevenueForFactsService } from "../admin-timesheets-revenue.service";
 import { ForecastChart } from "../forecast-chart";
+import { OutstandingCard } from "../outstanding-card";
 import { ConcentrationCard, RevenueTiles } from "../revenue-panels";
 import { TimesheetAskBox } from "../timesheet-ask-box";
 import { getOverviewService, TimesheetRequest } from "../admin-timesheets.service";
@@ -49,6 +51,32 @@ export default async function OverviewView(request: TimesheetRequest) {
 
   const hasData = report.totals.worklogCount > 0;
 
+  // -----------------------------------------------------------------
+  // WHAT IS LEFT, once the screen is narrowed to somebody's work.
+  //
+  // Only fetched when a client is chosen. Unfiltered it would be the whole
+  // company's backlog dropped into a page about one month, which is what the
+  // Outstanding screen is for - and it would cost a query on every render of
+  // the default view to show something nobody asked this screen for.
+  //
+  // A project narrows it further. Both come straight off the filters, so the
+  // card describes exactly what the dropdowns say.
+  // -----------------------------------------------------------------
+  const isFiltered = filters.client !== "all";
+
+  const outstanding = isFiltered
+    ? await getOutstandingEffortService({ clientKey: filters.client, projectKey: filters.project })
+    : null;
+
+  // What the card calls the thing it is describing. The project's own summary
+  // where one is chosen, otherwise the client - matching how the dropdowns
+  // read, rather than making the reader hold the filter state in their head.
+  const selectedProject =
+    filters.project === "all" ? null : data.projectOptions.find((option) => option.value === filters.project);
+  const selectedClient = data.clientOptions.find((option) => option.value === filters.client);
+
+  const scopeLabel = selectedProject?.label ?? selectedClient?.label ?? filters.client;
+
   return (
     <TimesheetShell
       data={data}
@@ -59,6 +87,20 @@ export default async function OverviewView(request: TimesheetRequest) {
       {!hasData ? (
         <>
           <EmptyState syncStatus={syncStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
+
+          {/* Shown here TOO, and this is the case it matters most in: no time
+              logged against this client in the period, but work still open on
+              them. Those two facts together are the whole point of the card,
+              and hiding it behind "there is nothing to show" would suppress
+              the more interesting half of the answer. It is not period data,
+              so an empty period does not make it empty. */}
+          {outstanding && <OutstandingCard
+              summary={outstanding}
+              scopeLabel={scopeLabel}
+              clientKey={filters.client}
+              projectKey={filters.project}
+            />}
+
           <SyncStatusLine syncStatus={syncStatus} />
         </>
       ) : (
@@ -119,6 +161,14 @@ export default async function OverviewView(request: TimesheetRequest) {
               index={3}
             />
           </div>
+
+          {outstanding && <OutstandingCard
+              summary={outstanding}
+              scopeLabel={scopeLabel}
+              clientKey={filters.client}
+              projectKey={filters.project}
+              index={4}
+            />}
 
           {/* The week, day by day. The company shape at the grain people
               actually think in - a quarter of weekly bars answered a question

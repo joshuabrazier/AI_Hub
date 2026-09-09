@@ -364,6 +364,37 @@ const serverEnvSchema = z.object({
         .map((domain) => domain.trim().toLowerCase().replace(/^@/, ""))
         .filter(Boolean),
     ),
+
+  // -------------------------------------------------------------------
+  // Jira project keys whose work is CORE R&D by default.
+  //
+  // Comma separated, eg "RDP". A space that exists solely to hold the R&D
+  // programme should not need every item in it labelled by hand, and an
+  // unlabelled one there is far more likely to be an oversight than a
+  // deliberate statement that the work is not R&D.
+  //
+  // A LABEL STILL WINS. This only decides items carrying neither label, so
+  // an item in one of these spaces deliberately marked RnD-supporting stays
+  // supporting. The default fills a gap; it does not overrule anybody.
+  //
+  // Which rule applied is recorded per worklog in rnd_source, because a
+  // claim has to be able to answer "why is this core" with something better
+  // than "the code said so".
+  //
+  // CASE SENSITIVE, matching Jira project keys, which are upper case by
+  // convention. Unset means labels are the only mechanism - the right
+  // default for a base repo, which has no idea what anybody's spaces are
+  // called.
+  // -------------------------------------------------------------------
+  RND_CORE_PROJECT_KEYS: z
+    .string()
+    .optional()
+    .transform((value) =>
+      (value ?? "")
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean),
+    ),
 });
 
 export const envServer = serverEnvSchema.parse({
@@ -415,6 +446,7 @@ export const envServer = serverEnvSchema.parse({
   DEV_PASSWORD_SIGN_IN: process.env.DEV_PASSWORD_SIGN_IN,
   APP_TWO_FACTOR_ENABLED: process.env.APP_TWO_FACTOR_ENABLED,
   AUTH_ALLOWED_EMAIL_DOMAINS: process.env.AUTH_ALLOWED_EMAIL_DOMAINS,
+  RND_CORE_PROJECT_KEYS: process.env.RND_CORE_PROJECT_KEYS,
   // Every key the schema declares must be listed here too. Zod only ever sees
   // this object, so a variable declared above and omitted below is silently
   // undefined at runtime - which for an optional() field means no error and no

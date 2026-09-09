@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { buildFacts, buildReport, hoursFromSeconds, rollUpByPerson, rollUpByPersonDay, summariseSplit } from "./aggregate";
+import {
+  buildFacts,
+  buildReport,
+  hoursFromSeconds,
+  rollUpByPerson,
+  rollUpByPersonDay,
+  rollUpRndByIssue,
+  rollUpRndByMonth,
+  rollUpRndByPerson,
+  rollUpRndBySpace,
+  summariseRnd,
+  summariseSplit,
+} from "./aggregate";
 import { formatDuration } from "./audit-rules";
-import { FINDING_CODES, SnapshotIssue, SnapshotWorklog, TimesheetSnapshot } from "./timesheet.types";
+import {
+  FINDING_CODES,
+  SnapshotIssue,
+  SnapshotWorklog,
+  TimesheetSnapshot,
+  WorklogFactRow,
+} from "./timesheet.types";
 
 // -------------------------------------------------------------------
 // Verification suite
@@ -857,5 +875,122 @@ describe("formatDuration", () => {
     expect(formatDuration(3180)).toBe("53m");
     expect(formatDuration(7200)).toBe("2h");
     expect(formatDuration(0)).toBe("0m");
+  });
+});
+
+// -------------------------------------------------------------------
+// The R&D split.
+//
+// These figures may support a tax claim, so the properties that matter are
+// the ones about what does NOT get counted: no bucket absorbs another, and
+// nothing is silently dropped.
+// -------------------------------------------------------------------
+function rndFact(overrides: Partial<WorklogFactRow> = {}): WorklogFactRow {
+  return {
+    worklogId: "w1",
+    issueKey: "RDP-1",
+    issueSummary: "An item",
+    parentKey: null,
+    parentSummary: null,
+    projectKey: "RDP",
+    category: "Internal",
+    personId: "acc-1",
+    personName: "Ada",
+    workDate: "2026-07-15",
+    startSecond: null,
+    timeSpentSeconds: 3600,
+    billable: null,
+    billableSource: "unset",
+    hasNarrative: true,
+    rndClass: null,
+    isOrphan: false,
+    ...overrides,
+  };
+}
+
+describe("summariseRnd", () => {
+  it("keeps the three buckets separate and sums to the total", () => {
+    const totals = summariseRnd([
+      rndFact({ worklogId: "a", rndClass: "core", timeSpentSeconds: 3600 }),
+      rndFact({ worklogId: "b", rndClass: "supporting", timeSpentSeconds: 1800 }),
+      rndFact({ worklogId: "c", rndClass: null, timeSpentSeconds: 900 }),
+    ]);
+
+    expect(totals.coreSeconds).toBe(3600);
+    expect(totals.supportingSeconds).toBe(1800);
+    expect(totals.nonRndSeconds).toBe(900);
+    expect(totals.totalSeconds).toBe(6300);
+    expect(totals.coreHours).toBe(1);
+  });
+
+  it("never folds unclassified hours into an R&D bucket", () => {
+    // Folding them in would inflate a claim with hours nobody classified.
+    const totals = summariseRnd([rndFact({ rndClass: null, timeSpentSeconds: 7200 })]);
+
+    expect(totals.coreSeconds).toBe(0);
+    expect(totals.supportingSeconds).toBe(0);
+    expect(totals.nonRndSeconds).toBe(7200);
+  });
+});
+
+describe("the R&D roll-ups", () => {
+  it("counts a labelled CLIENT-space item alongside the R&D space", () => {
+    // The whole point of classifying per work item: R&D is not a property
+    // of the space, so TSSS work carrying the label belongs in the totals.
+    const bySpace = rollUpRndBySpace([
+      rndFact({ worklogId: "a", projectKey: "RDP", rndClass: "core", timeSpentSeconds: 3600 }),
+      rndFact({ worklogId: "b", projectKey: "TSSS", rndClass: "core", timeSpentSeconds: 1800 }),
+      rndFact({ worklogId: "c", projectKey: "TSSS", rndClass: null, timeSpentSeconds: 900 }),
+    ]);
+
+    const tsss = bySpace.find((row) => row.key === "TSSS");
+
+    expect(tsss?.coreSeconds).toBe(1800);
+    expect(tsss?.nonRndSeconds).toBe(900);
+    expect(summariseRnd([]).coreSeconds).toBe(0);
+    // And the two spaces together are the whole core figure.
+    expect(bySpace.reduce((sum, row) => sum + row.coreSeconds, 0)).toBe(5400);
+  });
+
+  it("keys people on accountId and labels them by name", () => {
+    // Two people can share a display name and one person can change theirs,
+    // so the identity has to be the key.
+    const byPerson = rollUpRndByPerson([
+      rndFact({ worklogId: "a", personId: "acc-1", personName: "Ada", rndClass: "core" }),
+      rndFact({ worklogId: "b", personId: "acc-2", personName: "Ada", rndClass: "core" }),
+    ]);
+
+    expect(byPerson).toHaveLength(2);
+    expect(byPerson.map((row) => row.key).sort()).toEqual(["acc-1", "acc-2"]);
+  });
+
+  it("groups months from the work date without parsing it", () => {
+    const byMonth = rollUpRndByMonth([
+      rndFact({ worklogId: "a", workDate: "2026-06-30", rndClass: "core" }),
+      rndFact({ worklogId: "b", workDate: "2026-07-01", rndClass: "core" }),
+    ]);
+
+    // A Date round trip is how the 30th becomes the 1st of the next month.
+    expect(byMonth.map((row) => row.key)).toEqual(["2026-06", "2026-07"]);
+  });
+
+  it("collects hours that cannot be placed rather than dropping them", () => {
+    // A report whose totals shrink between two views of the same period is
+    // one nobody trusts.
+    const bySpace = rollUpRndBySpace([rndFact({ projectKey: null, rndClass: "core", timeSpentSeconds: 3600 })]);
+
+    expect(bySpace).toHaveLength(1);
+    expect(bySpace[0].key).toBe("(none)");
+    expect(bySpace[0].coreSeconds).toBe(3600);
+  });
+
+  it("groups by issue too", () => {
+    const byIssue = rollUpRndByIssue([
+      rndFact({ worklogId: "a", issueKey: "RDP-25", rndClass: "core", timeSpentSeconds: 3600 }),
+      rndFact({ worklogId: "b", issueKey: "RDP-25", rndClass: "core", timeSpentSeconds: 1800 }),
+    ]);
+
+    expect(byIssue).toHaveLength(1);
+    expect(byIssue[0].coreSeconds).toBe(5400);
   });
 });
