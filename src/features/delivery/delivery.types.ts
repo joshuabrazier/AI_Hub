@@ -970,14 +970,43 @@ export type CreateProjectRequestDTO = z.output<typeof CreateProjectSchema>;
 // silently re-attribute every time entry already logged against it, which is
 // billing history and belongs behind a deliberate, audited act rather than a
 // dropdown on the edit form.
+// -------------------------------------------------------------------
+// A PATCH, NOT A WHOLE ROW - the same shape UpdateTask, UpdateTimeEntry and
+// UpdateClient settled on, and it was the last of the four still replacing.
+//
+//   title        absent leaves it; present, it must still be a real title.
+//   description  absent leaves it; '' clears it; text replaces it.
+//   isBillable   absent leaves it.
+//   status       absent leaves it. `archived` is the soft delete - see
+//                migration 020. There is no DeleteProject schema.
+//
+// WHY IT CHANGED, AND WHAT IT SETTLES. Every field was required, so nothing
+// could edit a project without posting all four back. That had two
+// consequences and the second is the interesting one.
+//
+// The first: there was NO project edit screen at all. updateProjectAction
+// existed with no caller in the app, which is a capability nobody could
+// reach - a project's title, description and billable flag were fixed at
+// creation.
+//
+// The second: it forced ArchiveProjectSchema into existence. The note over
+// that schema says exactly why - archiving through a whole-row update means
+// "posting a whole form back, and a stale one quietly reverts somebody
+// else's edit". That hazard was real and it was a property of THIS shape,
+// not of archiving. A patch cannot revert a field it does not mention, so
+// the hazard is gone from every path rather than routed around by one.
+//
+// Archiving stays its own act anyway, and now for the reason that actually
+// justifies it: it is this module's delete, it deserves a confirmation and
+// its own audit line, and neither belongs in a form somebody opened to fix
+// a typo.
+// -------------------------------------------------------------------
 export const UpdateProjectSchema = z.object({
   projectId: projectIdSchema,
-  title: z.string().trim().min(1, "A project needs a title").max(PROJECT_TITLE_MAX_CHARS),
-  description: optionalText(DESCRIPTION_MAX_CHARS),
-  isBillable: z.boolean(),
-  // `archived` is the soft delete - see migration 020. There is no
-  // DeleteProject schema, deliberately.
-  status: z.enum(PROJECT_STATUSES),
+  title: z.string().trim().min(1, "A project needs a title").max(PROJECT_TITLE_MAX_CHARS).optional(),
+  description: patchText(DESCRIPTION_MAX_CHARS),
+  isBillable: z.boolean().optional(),
+  status: z.enum(PROJECT_STATUSES).optional(),
 });
 
 export type UpdateProjectInputDTO = z.input<typeof UpdateProjectSchema>;
@@ -996,12 +1025,21 @@ export type MarkProjectBudgetAssignedRequestDTO = z.infer<typeof MarkProjectBudg
 // -------------------------------------------------------------------
 // Archive a project: the module's soft delete, as an act of its own.
 //
-// UpdateProjectSchema carries `status` and can already set it, which is why
-// nothing was ever blocked for want of this - but it also carries the title,
-// the description and the billable flag, so archiving through it means
-// posting a whole form back, and a stale one quietly reverts somebody else's
-// edit. There is no DeleteProject schema, deliberately: time entries hold
-// tasks ON DELETE RESTRICT, so archiving is what removal means here.
+// THIS NOTE USED TO GIVE A DIFFERENT REASON, and the reason has been fixed
+// rather than restated. It said archiving through UpdateProjectSchema meant
+// posting a whole form back, where a stale one quietly reverts somebody
+// else's edit. True at the time, and a property of that schema being
+// replace-shaped; it is a patch now, so no path carries that hazard and
+// this schema is not what protects anybody from it.
+//
+// It stays because the reason that always mattered is the other one: this is
+// the module's DELETE. There is no DeleteProject schema and there will not
+// be - time entries hold tasks ON DELETE RESTRICT, and "we did not end up
+// doing this" is part of the record - so archiving is what removal means
+// here. A delete deserves a confirmation and an audit line of its own, and
+// neither belongs behind a status dropdown in a form somebody opened to fix
+// a typo. One field, so there is nothing to post back and nothing to
+// revert.
 // -------------------------------------------------------------------
 export const ArchiveProjectSchema = z.object({
   projectId: projectIdSchema,
@@ -1023,6 +1061,19 @@ export type ArchiveProjectRequest = z.infer<typeof ArchiveProjectSchema>;
 // always act on any project, and admins are who assign membership. The
 // screen warns; the validator does not refuse.
 // -------------------------------------------------------------------
+// UNUSED BY THE APP, AND KEPT KNOWINGLY. setup-members-panel.tsx saves PER
+// ROW - one addProjectMemberAction per person added, one
+// updateProjectMemberAction per band changed, one removeProjectMemberAction
+// behind a confirmation - so every interaction is already a single atomic
+// request and the failure mode above cannot arise there. There is no batch
+// to drop one request of.
+//
+// It stays rather than being deleted because the argument above is still
+// right for the UI it was written for: anything that ever edits the whole
+// team on one screen and saves once should post the SET, not a queue of
+// deltas. Wiring both at the same time is the mistake to avoid - two paths
+// writing the security boundary of this module, one of which the other's
+// audit trail does not explain.
 export const SetProjectMembersSchema = z.object({
   projectId: projectIdSchema,
   members: z

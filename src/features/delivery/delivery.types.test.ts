@@ -21,6 +21,7 @@ import {
   CreateClientSchema,
   SetUserRateSchema,
   UpdateClientSchema,
+  UpdateProjectSchema,
   UpdateTaskSchema,
   UpdateTimeEntrySchema,
   type TimesheetCellDTO,
@@ -957,5 +958,87 @@ describe("TimesheetCellDTO carries enough to edit an entry", () => {
     const withRate: TimesheetCellEntryDTO = { id: "entry-1", minutes: 60, notes: null, chargeRateCents: 15_000 };
 
     expect(withRate.id).toBe("entry-1");
+  });
+});
+
+// -------------------------------------------------------------------
+// THE FOURTH AND LAST OF THE UPDATE SCHEMAS TO STOP REPLACING.
+//
+// It was the only one still requiring every field, and that had two
+// consequences worth separating.
+//
+// The obvious one: nothing could edit a project. updateProjectAction existed
+// with no caller anywhere in the app, so a title, description and billable
+// flag were whatever the create form was given, permanently.
+//
+// The less obvious one: it forced ArchiveProjectSchema into existence. That
+// schema's own note said archiving through a whole-row update meant "posting
+// a whole form back, and a stale one quietly reverts somebody else's edit" -
+// which was true, and was a property of THIS shape rather than of archiving.
+// A patch cannot revert a field it does not mention.
+//
+// Every absent case asserts the KEY with Object.hasOwn rather than the
+// value, because a toBeNull() assertion on the cleared case passes against
+// the very bug it is meant to catch: undefined and null both read as
+// "nothing there" to an equality check, and only one of them stops the
+// column reaching the UPDATE.
+// -------------------------------------------------------------------
+describe("UpdateProjectSchema is a patch", () => {
+  const PROJECT_ID = "p".repeat(32);
+
+  it("leaves out every field the payload left out", () => {
+    const parsed = UpdateProjectSchema.parse({ projectId: PROJECT_ID });
+
+    expect(parsed).toEqual({ projectId: PROJECT_ID });
+    expect(Object.hasOwn(parsed, "title")).toBe(false);
+    expect(Object.hasOwn(parsed, "description")).toBe(false);
+    expect(Object.hasOwn(parsed, "isBillable")).toBe(false);
+    expect(Object.hasOwn(parsed, "status")).toBe(false);
+  });
+
+  it("tells an absent description from a cleared one", () => {
+    // The pair side by side, because neither half proves anything alone.
+    // Absent must not reach the UPDATE at all; cleared must reach it as
+    // NULL. One assertion on either would pass with both behaving the same.
+    const untouched = UpdateProjectSchema.parse({ projectId: PROJECT_ID, title: "Data platform" });
+    const cleared = UpdateProjectSchema.parse({
+      projectId: PROJECT_ID,
+      title: "Data platform",
+      description: "",
+    });
+
+    expect(Object.hasOwn(untouched, "description")).toBe(false);
+    expect(Object.hasOwn(cleared, "description")).toBe(true);
+    expect(cleared.description).toBeNull();
+  });
+
+  it("takes a status on its own, which is what un-archiving is", () => {
+    // Restoring an archived project is an edit rather than an act of its
+    // own, and this is the payload the edit dialog sends for it: one field,
+    // so nothing else about the project can be reverted on the way.
+    const parsed = UpdateProjectSchema.parse({ projectId: PROJECT_ID, status: "active" });
+
+    expect(parsed.status).toBe("active");
+    expect(Object.hasOwn(parsed, "title")).toBe(false);
+    expect(Object.hasOwn(parsed, "isBillable")).toBe(false);
+  });
+
+  it("takes the billable flag on its own, false included", () => {
+    // `false` is the value most likely to be lost by a careless truthiness
+    // check somewhere between here and the repository.
+    const parsed = UpdateProjectSchema.parse({ projectId: PROJECT_ID, isBillable: false });
+
+    expect(parsed.isBillable).toBe(false);
+    expect(Object.hasOwn(parsed, "status")).toBe(false);
+  });
+
+  it("still refuses an empty title when one IS sent", () => {
+    // Optional means "may be absent", never "may be blank". A project with
+    // no title is unusable in every picker it appears in.
+    expect(UpdateProjectSchema.safeParse({ projectId: PROJECT_ID, title: "   " }).success).toBe(false);
+  });
+
+  it("refuses a status it does not recognise", () => {
+    expect(UpdateProjectSchema.safeParse({ projectId: PROJECT_ID, status: "paused" }).success).toBe(false);
   });
 });
