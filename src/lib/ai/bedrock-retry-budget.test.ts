@@ -3,7 +3,16 @@ import { describe, expect, it } from "vitest";
 import { CHAT_FIRST_BYTE_CEILING_MS, CHAT_PHASES, CHAT_PLATFORM_IDLE_CEILING_MS } from "@/features/ai-chat/ai-chat.types";
 import { MAX_TOOL_ROUNDS } from "@/features/ai-chat/ai-chat-tools";
 
-import { BEDROCK_LADDER_WORST_CASE_MS, BEDROCK_SOCKET_IDLE_MS, MAX_ATTEMPTS } from "./bedrock-client";
+import {
+  AZURE_OUTBOUND_IDLE_MS,
+  BEDROCK_KEEP_ALIVE_MS,
+  BEDROCK_LADDER_WORST_CASE_MS,
+  BEDROCK_MAX_FREE_SOCKETS,
+  BEDROCK_MAX_SOCKETS,
+  BEDROCK_SOCKET_IDLE_MS,
+  MAX_ATTEMPTS,
+  SMITHY_DEFAULT_MAX_SOCKETS,
+} from "./bedrock-client";
 import { converseCeilingFor } from "./converse";
 
 // ===================================================================
@@ -200,5 +209,60 @@ describe("a one-shot call's ceiling", () => {
     // fails at BEDROCK_SOCKET_IDLE_MS on the first attempt, and the ceiling
     // has to be past that or even the honest case never gets its name.
     expect(converseCeilingFor(300)).toBeGreaterThan(BEDROCK_SOCKET_IDLE_MS);
+  });
+});
+
+// ===================================================================
+// THE CONNECTION POOL.
+//
+// The one failure in this file that only ever happened in production, and
+// the asymmetry is the evidence: the same key, region and model served a
+// working dev portal while production was dead for everybody at the same
+// moment. A model-side problem cannot do that; a per-process resource can.
+//
+// The SDK caps concurrent connections at 50 per agent, the agent belongs to
+// the client, the client is a module singleton and the deploy is a single
+// App Service instance - so 50 was the whole application's simultaneous
+// Bedrock capacity. Exhausting it does not fail: Node's Agent QUEUES the
+// next request with no deadline, and a queued request has no socket, so
+// neither connectionTimeout nor socketTimeout can see it. It just waits,
+// which is indistinguishable from a model that answered nothing.
+//
+// These assertions exist because the fix is a set of numbers that look
+// arbitrary and are not. Reverting any of them reintroduces a hang that
+// takes days to attribute.
+// ===================================================================
+describe("the Bedrock connection pool", () => {
+  it("raises the cap above the SDK default that was the whole app's capacity", () => {
+    expect(BEDROCK_MAX_SOCKETS).toBeGreaterThan(SMITHY_DEFAULT_MAX_SOCKETS);
+  });
+
+  it("does NOT go unlimited, which trades a hidden queue for a hidden SNAT pool", () => {
+    // Azure gives an instance a small pool of outbound ports. Unlimited
+    // sockets would let Bedrock consume it and take Graph, blob storage and
+    // email down with it - a worse failure than the one being fixed, and
+    // harder to attribute because it lands somewhere else.
+    expect(Number.isFinite(BEDROCK_MAX_SOCKETS)).toBe(true);
+    expect(BEDROCK_MAX_SOCKETS).toBeLessThanOrEqual(256);
+  });
+
+  it("keeps only a few connections warm, because an idle one still holds a port", () => {
+    expect(BEDROCK_MAX_FREE_SOCKETS).toBeGreaterThan(0);
+    expect(BEDROCK_MAX_FREE_SOCKETS).toBeLessThan(BEDROCK_MAX_SOCKETS);
+  });
+
+  it("releases a kept-alive connection well before Azure severs it", () => {
+    // If the platform tears the connection down first, the teardown arrives
+    // as a socket hang-up in the middle of somebody's reply rather than as a
+    // connection we chose to drop.
+    expect(BEDROCK_KEEP_ALIVE_MS).toBeLessThan(AZURE_OUTBOUND_IDLE_MS / 2);
+  });
+
+  it("leaves the pool bigger than any one turn can hold on its own", () => {
+    // A streaming reply holds its socket for the whole answer, so the cap is
+    // really a limit on concurrent REPLIES, not on requests per second. It
+    // has to be comfortably above the number of people who might be waiting
+    // on one at the same time.
+    expect(BEDROCK_MAX_SOCKETS).toBeGreaterThanOrEqual(64);
   });
 });

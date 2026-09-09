@@ -1,5 +1,7 @@
 import "server-only";
 
+import { Agent } from "node:https";
+
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 
 import { envServer } from "@/lib/env-server";
@@ -167,6 +169,100 @@ export const BEDROCK_LADDER_WORST_CASE_MS =
 
 const CONNECT_TIMEOUT_MS = 10_000;
 
+// ===================================================================
+// THE CONNECTION POOL, AND THE WAIT THAT NO TIMEOUT IN THIS FILE COVERS.
+//
+// THIS IS THE ONE THAT ONLY HAPPENS IN PRODUCTION, and the asymmetry is the
+// evidence: the same Bedrock key, region and model served a working dev
+// portal while production was dead for everybody. A model-side problem
+// cannot do that. A per-process resource can, and this is one.
+//
+// WHAT THE SDK DOES BY DEFAULT. @smithy/node-http-handler's
+// resolveDefaultConfig sets, in its own words:
+//
+//   const keepAlive = true;
+//   const maxSockets = 50;
+//   ...
+//   httpsAgent: new node_https.Agent({ keepAlive, maxSockets, ...httpsAgent })
+//
+// So there is a cap of FIFTY concurrent connections, and it is per AGENT -
+// which means per client, which means per PROCESS, because the client below
+// is a module singleton and the deploy runs a single App Service instance.
+// Fifty is the whole application's simultaneous Bedrock capacity, shared by
+// every user of it.
+//
+// WHY EXHAUSTING IT IS SILENT, which is the actual defect. When every socket
+// is checked out, Node's Agent does not fail the next request - it QUEUES it,
+// with no deadline, until a socket frees. And a queued request has no socket
+// yet, so neither of the timeouts above can see it: connectionTimeout bounds
+// establishing a connection that has not been attempted, and socketTimeout
+// bounds idleness on a socket that has not been assigned. The request simply
+// waits. From the caller's side that is indistinguishable from a model that
+// accepted the question and said nothing, which is exactly how it was
+// reported.
+//
+// AND A STREAMING CALL HOLDS ITS SOCKET FOR THE WHOLE REPLY. This is what
+// makes fifty reachable in a way it would not be for ordinary requests: a
+// chat answer streams for as long as it takes to write, up to
+// MAX_OUTPUT_TOKENS, and every concurrent reply, meeting summary, filing
+// call and transcription summary is holding one the entire time. Dev never
+// gets near it - one person, one question at a time, and the process is
+// restarted constantly - which is precisely why it worked there.
+//
+// WHAT IS SET, AND WHY EACH NUMBER.
+//
+//   keepAlive stays TRUE, and is restated rather than inherited because on
+//   Azure it is load-bearing for a second reason. App Service gives an
+//   instance a small pool of outbound SNAT ports, and a fresh TCP connection
+//   per request burns one for minutes after it closes. Reusing connections is
+//   what keeps that pool from being the next thing to run out.
+//
+//   maxSockets is raised to leave HEADROOM over what this app can genuinely
+//   need at once, and is deliberately not Infinity: unlimited sockets would
+//   trade a queue nobody can see for a SNAT pool nobody can see, and the
+//   second failure is worse because it takes Graph, blob storage and email
+//   down with it.
+//
+//   maxFreeSockets is small on purpose. An idle kept-alive socket still holds
+//   an outbound port, so the pool keeps a few warm and lets the rest go.
+//
+//   keepAliveMsecs is well under Azure's own idle teardown, so a connection
+//   is reused or released by us rather than being severed underneath us and
+//   surfacing as a socket hang-up mid-reply.
+//
+// A NOTE FOR WHOEVER READS A LOG NEXT. The SDK detects this state itself and
+// says so - NodeHttpHandler.checkSocketUsage logs
+// "@smithy/node-http-handler:WARN - socket usage at capacity=N and M
+// additional requests are enqueued" - but only once the queue is already
+// twice the cap, and by then everybody has been broken for a while. The
+// warning threshold is pulled forward below so it fires while there is still
+// something to learn from it.
+// ===================================================================
+export const BEDROCK_MAX_SOCKETS = 128;
+export const BEDROCK_MAX_FREE_SOCKETS = 8;
+export const BEDROCK_KEEP_ALIVE_MS = 30_000;
+
+/**
+ * The cap this replaces, from @smithy/node-http-handler's
+ * resolveDefaultConfig. Named so the test asserting we are above it says
+ * what it is above, and so nobody "tidies up" the agent back to a number
+ * that was the whole application's concurrent capacity.
+ */
+export const SMITHY_DEFAULT_MAX_SOCKETS = 50;
+
+/**
+ * Azure App Service severs an outbound connection idle for four minutes.
+ * Anything we keep alive has to be reused or released well inside that, or
+ * the teardown arrives as a socket hang-up in the middle of a reply.
+ */
+export const AZURE_OUTBOUND_IDLE_MS = 240_000;
+
+// How long a request may sit waiting for a socket before the SDK logs that
+// the pool is at capacity. Deliberately short: this is a diagnostic, and the
+// question it answers - "is anything queueing at all" - is only useful
+// before the queue has grown long enough to hurt.
+const SOCKET_WAIT_WARNING_MS = 5_000;
+
 // -------------------------------------------------------------------
 // AUTHENTICATION
 //
@@ -200,6 +296,20 @@ export function getBedrockClient(): BedrockRuntimeClient {
       // `requestTimeout`, which only warns.
       socketTimeout: BEDROCK_SOCKET_IDLE_MS,
       connectionTimeout: CONNECT_TIMEOUT_MS,
+      // The pool. Stated rather than inherited, because the default cap of
+      // 50 is the whole process's concurrent Bedrock capacity and running
+      // out of it is a wait no timeout in this file can see. See THE
+      // CONNECTION POOL above.
+      httpsAgent: new Agent({
+        keepAlive: true,
+        keepAliveMsecs: BEDROCK_KEEP_ALIVE_MS,
+        maxSockets: BEDROCK_MAX_SOCKETS,
+        maxFreeSockets: BEDROCK_MAX_FREE_SOCKETS,
+      }),
+      // Pulled forward from its default so the SDK's own capacity warning
+      // appears while the queue is still short enough to be a clue rather
+      // than an obituary.
+      socketAcquisitionWarningTimeout: SOCKET_WAIT_WARNING_MS,
     },
     // -----------------------------------------------------------------
     // STANDARD, AND NOT "adaptive". THIS IS A CORRECTION, AND IT IS THE ONE
