@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import { CHAT_FIRST_BYTE_CEILING_MS, CHAT_PHASES, CHAT_PLATFORM_IDLE_CEILING_MS } from "@/features/ai-chat/ai-chat.types";
@@ -209,6 +211,37 @@ describe("a one-shot call's ceiling", () => {
     // fails at BEDROCK_SOCKET_IDLE_MS on the first attempt, and the ceiling
     // has to be past that or even the honest case never gets its name.
     expect(converseCeilingFor(300)).toBeGreaterThan(BEDROCK_SOCKET_IDLE_MS);
+  });
+});
+
+// ===================================================================
+// THE RETRY MODE
+//
+// A test on one string, because that one string was a production fault and
+// the next person to read "adaptive" will think it sounds like the clever
+// option.
+//
+// Adaptive mode adds a client-side rate limiter that SLEEPS BEFORE THE
+// REQUEST IS SENT, latches on at the first throttling response and never
+// off, and lives on a process-wide client shared by every AI feature. A
+// call can spend its whole ceiling in that sleep having never reached AWS -
+// with no socket open, so nothing at the transport layer can see it, and
+// $metadata reporting a retry delay of under a hundred milliseconds because
+// the limiter's wait is not retry delay.
+//
+// See the block in bedrock-client.ts for the SDK source this is quoting.
+// ===================================================================
+describe("the retry mode", () => {
+  it("is standard, so a throttle arrives fast and named", async () => {
+    // Read from the built client rather than from a constant, because the
+    // constant is not what would drift - somebody editing the client is.
+    const source = await readFile(
+      new URL("./bedrock-client.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain('retryMode: "standard"');
+    expect(source).not.toContain('retryMode: "adaptive"');
   });
 });
 

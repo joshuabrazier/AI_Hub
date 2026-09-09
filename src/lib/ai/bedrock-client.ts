@@ -311,66 +311,69 @@ export function getBedrockClient(): BedrockRuntimeClient {
       // than an obituary.
       socketAcquisitionWarningTimeout: SOCKET_WAIT_WARNING_MS,
     },
+    maxAttempts: MAX_ATTEMPTS,
     // -----------------------------------------------------------------
-    // STANDARD, AND NOT "adaptive". THIS IS A CORRECTION, AND IT IS THE ONE
-    // THAT EXPLAINS "IT STOPS WORKING FOR EVERYONE AT ONCE".
+    // STANDARD, NOT ADAPTIVE, AND THIS ONE WORD WAS A PRODUCTION FAULT.
     //
-    // Both modes back off with jitter on throttling and transient 5xx, and
-    // both decline to retry AccessDenied or ValidationException by design -
-    // the first means the key is wrong, revoked or pointed at the wrong
-    // region, the second means the request is malformed, and retrying
-    // either just burns time. That much was true of the old comment here.
+    // Adaptive mode adds a CLIENT-SIDE RATE LIMITER on top of the backoff,
+    // and its behaviour is not what the name suggests. From
+    // @smithy/core's DefaultRateLimiter:
     //
-    // What it did not say is what ADAPTIVE adds on top, which is a
-    // CLIENT-SIDE RATE LIMITER. From @smithy/core's retry submodule:
-    //
-    //   AdaptiveRetryStrategy.acquireInitialRetryToken() {
-    //     const token = await this.standardRetryStrategy...
-    //     await this.rateLimiter.getSendToken();      // <- every request
-    //   }
-    //
-    //   DefaultRateLimiter.acquireTokenBucket(amount) {
+    //   async acquireTokenBucket(amount) {
     //     if (!this.enabled) return;
+    //     this.refillTokenBucket();
     //     while (amount > this.availableTokens) {
     //       const delay = ((amount - this.availableTokens) / this.fillRate) * 1000;
-    //       await new Promise((r) => setTimeout(r, delay));
+    //       await new Promise((resolve) => setTimeoutFn(resolve, delay));
     //       this.refillTokenBucket();
     //     }
+    //     ...
     //   }
     //
-    // Three properties of that, and every one of them is a problem here:
+    // Three properties of that, each bad here and worse together:
     //
-    //   IT SLEEPS BEFORE THE REQUEST IS SENT. The wait happens in the retry
-    //   strategy, ahead of the HTTP handler, so NEITHER connectionTimeout
-    //   NOR socketTimeout bounds it - there is no socket yet. It is also
-    //   absent from BEDROCK_LADDER_WORST_CASE_MS below, which therefore
-    //   understates what a call can cost before any caller's deadline.
+    //   1. IT SLEEPS BEFORE THE REQUEST IS SENT. No socket is open while it
+    //      waits, so socketTimeout cannot see it and neither can anything
+    //      else at the transport layer. A call can spend its entire
+    //      caller-side ceiling in this loop having never reached AWS - which
+    //      is exactly the signature we measured: the full ceiling elapsed,
+    //      $metadata reporting attempts: 2 and totalRetryDelay: 94ms,
+    //      because the limiter's sleep is not retry delay and is not counted.
     //
-    //   IT NEVER TURNS ITSELF OFF. `enabled` is set true by
-    //   enableTokenBucket() on the first throttling response and there is no
-    //   assignment back to false anywhere in the module. One throttle arms
-    //   it for the LIFE OF THE PROCESS, which is why a restart appeared to
-    //   fix this and nothing else did.
+    //   2. IT LATCHES ON AND NEVER OFF. enableTokenBucket() sets enabled =
+    //      true on the first throttling response, and nothing in the file
+    //      ever sets it false again. One throttled burst degrades every
+    //      later call.
     //
-    //   IT IS SHARED BY EVERYONE. The limiter belongs to the retry strategy,
-    //   the strategy belongs to the client, and the client is the singleton
-    //   below - one per Node process, not one per request. So the bucket is
-    //   global: once armed, maxCapacity floors at 1 and fillRate at 0.5, and
-    //   every user of this app is queueing through a bucket that admits
-    //   roughly one request every two seconds. That is the mechanism behind
-    //   "it was fine and then it stopped for everybody".
+    //   3. THE CLIENT IS A PROCESS-WIDE SINGLETON (see cachedClient below),
+    //      so the limiter is shared by chat, summaries, transcription and
+    //      filing alike. A sweep firing a burst of background calls could
+    //      therefore slow down somebody's chat reply, with nothing in either
+    //      feature to explain why.
+    //
+    //   4. IT IS INVISIBLE TO THE ARITHMETIC IN THIS FILE.
+    //      BEDROCK_LADDER_WORST_CASE_MS below is built from the socket idle
+    //      timeout and the backoff ceiling, because those are the parts the
+    //      SDK documents. The limiter's sleep is neither, so every caller
+    //      sizing a budget against that constant was sizing it against a
+    //      number that understated what a call could cost before it began.
     //
     // Adaptive is built for a single-tenant batch client that owns its whole
     // service quota and wants to self-pace into it. A shared web request path
-    // is the case it handles worst: the pacing is invisible, unbounded by any
+    // is the case it handles worst: the pacing is invisible, bounded by no
     // timeout we set, and paid by whoever asks next.
     //
-    // Standard mode keeps the backoff and drops the limiter. If throttling is
-    // genuinely the problem it now arrives AS a ThrottlingException, with a
-    // name, in the request log - which is a thing that can be diagnosed and
-    // quota-adjusted, rather than silence.
+    // Standard mode retries with exponential backoff and jitter and NO
+    // pre-send rate limiting, so a throttle arrives as a fast, named
+    // ThrottlingException. That is the outcome worth having: a name tells
+    // somebody to ask AWS for a quota increase, and an unexplained sixty
+    // seconds does not.
+    //
+    // AccessDenied and ValidationException are not retried in either mode,
+    // by design: the first means the key is wrong, revoked or pointed at the
+    // wrong region, and the second means the request is malformed. Retrying
+    // either just burns time.
     // -----------------------------------------------------------------
-    maxAttempts: MAX_ATTEMPTS,
     retryMode: "standard",
   });
 
