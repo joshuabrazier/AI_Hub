@@ -92,6 +92,7 @@ export function BoardWorkspace({
   members,
   rollup,
   yourName,
+  yourUserId,
 }: {
   projects: readonly BoardProjectLink[];
   activeProjectId: string;
@@ -103,6 +104,13 @@ export function BoardWorkspace({
   rollup: BudgetRollupDTO;
   /** The signed-in person, named on the log-time dialog. Time is always theirs. */
   yourName: string;
+  /**
+   * The viewer's own id, for the task panel: a time entry of theirs is
+   * editable and a colleague's is not, unless they lead the project. It is
+   * the SAME rule requireEntryControl applies on the server, and this copy
+   * decides only whether a button is offered.
+   */
+  yourUserId: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -357,12 +365,19 @@ export function BoardWorkspace({
 
       {openTask ? (
         <BoardTaskPanel
+          // KEYED ON THE CARD, so opening a different one mounts a fresh
+          // panel rather than reusing this one. The panel fetches the task it
+          // is showing, and without the key it would briefly show the
+          // previous card's description and files under the new card's title.
+          key={openTask.task.id}
           task={openTask.task}
           boardColumn={openTask.boardColumn}
           phaseName={openTask.phaseName}
           canEditTasks={canEditTasks}
           canLogTime={canLogTime}
           isPending={isPending}
+          members={members}
+          yourUserId={yourUserId}
           endPositionFor={endPositionFor}
           onOpenChange={(open) => {
             if (!open) setOpenTaskId(null);

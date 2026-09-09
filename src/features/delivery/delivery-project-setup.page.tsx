@@ -13,6 +13,8 @@ import { SetupBudgetGroupsPanel } from "./components/setup-budget-groups-panel";
 import { SetupBudgetNudge } from "./components/setup-budget-nudge";
 import { SetupMembersPanel, type SetupAssignablePerson } from "./components/setup-members-panel";
 import { SetupPhasesPanel } from "./components/setup-phases-panel";
+import { SetupProjectArchiveButton } from "./components/setup-project-archive-button";
+import { SetupProjectEditDialog } from "./components/setup-project-edit-dialog";
 import { SetupProjectCreateForm } from "./components/setup-project-create-form";
 import {
   getClientOptionsService,
@@ -105,12 +107,45 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
       description="Who is on the project, how its budget is pooled, and the phases its board is organised under."
       actions={
         <div className="flex flex-wrap gap-2">
+          {/* -------------------------------------------------------------
+              EDITING A PROJECT, WHICH THIS SCREEN COULD NOT DO.
+
+              updateProjectAction had existed with no caller anywhere in the
+              app, so a project's title, description and billable flag were
+              whatever the create form was given, permanently.
+
+              The dialog is seeded from `detail`, which carries all four
+              editable fields - the summary has the title, status and
+              billable flag, and the detail read adds the description - so
+              the form opens on the real values rather than on blanks. That
+              matters more than it looks: the description is the one field
+              nobody re-reads until they need it, and a form built from a
+              shape that did not carry it would post an empty box over
+              whatever was written.
+              ------------------------------------------------------------- */}
+          <SetupProjectEditDialog
+            project={{
+              id: detail.project.id,
+              title: detail.project.title,
+              description: detail.description,
+              isBillable: detail.project.isBillable,
+              status: detail.project.status,
+            }}
+          />
           <Button asChild variant="outline">
             <Link href={ROUTES.adminProject(detail.project.id)}>Open the board</Link>
           </Button>
           <Button asChild variant="outline">
             <Link href={ROUTES.adminDeliveryBudgetForProject(detail.project.id)}>Budget report</Link>
           </Button>
+          {/* Only where there is something to do - restoring an archived
+              project is an edit, and the dialog above owns it. */}
+          {isArchived ? null : (
+            <SetupProjectArchiveButton
+              projectId={detail.project.id}
+              projectTitle={detail.project.title}
+            />
+          )}
         </div>
       }
     >
@@ -130,7 +165,8 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
           // project. Membership and budget groups still work - restoring
           // the project should bring back the team that was on it.
           <p role="status" className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-foreground">
-            This project is archived. Its phases cannot be changed until an administrator makes it active again.
+            This project is archived. Its phases cannot be changed until an administrator makes it active
+            again, which is a status change in <strong>Edit project</strong>.
           </p>
         )}
 

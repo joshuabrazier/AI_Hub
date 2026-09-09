@@ -9,6 +9,7 @@ import {
   createTaskService,
   deleteTaskAttachmentService,
   deleteTaskService,
+  getTaskDetailForPanelService,
   moveTaskService,
   updateTaskService,
 } from "./delivery-board.service";
@@ -21,32 +22,36 @@ import {
   MoveTaskSchema,
   TaskAttachmentIdRequestDTO,
   TaskAttachmentIdSchema,
+  TaskIdRequestDTO,
+  TaskIdSchema,
   UpdateTaskRequestDTO,
   UpdateTaskSchema,
+  type TaskDetailDTO,
 } from "./delivery.types";
 
 // -------------------------------------------------------------------
 // Board actions: the four things somebody does to a card, and the one
 // thing they do to a file on it.
 //
-// FIVE, FOR A SERVICE WITH TEN ASYNC EXPORTS, and the arithmetic is worth
-// writing down so the gap does not read as an oversight.
+// SIX, AND THE ARITHMETIC IS WORTH WRITING DOWN so the gaps do not read as
+// oversights.
 //
 //   FOUR CARD MUTATIONS are here: create, edit, move, delete.
 //
-//   ONE ATTACHMENT MUTATION IS HERE: the delete, now that
-//   delivery.types.ts carries a schema for an attachment id. The OTHER one,
-//   the upload, is never getting an action - see the closing note, which is
-//   where that argument lives rather than being repeated here.
+//   ONE ATTACHMENT MUTATION IS HERE: the delete. The OTHER one, the upload,
+//   is never getting an action - see the closing note, which is where that
+//   argument lives rather than being repeated here.
 //
-//   FOUR READS ARE NOT HERE. The board, one task opened, this person's work
-//   list and a task's attachments are all what a SERVER COMPONENT renders,
-//   and each of them answers a scope miss with notFound() - a page's
-//   answer. An action wrapper around one of those would turn a card
-//   somebody else has just deleted into the not-found page replacing the
-//   whole board, which is the opposite of what a fetch-on-demand caller
-//   wants. TaskIdSchema now exists and is NOT what was missing; see the
-//   closing note.
+//   ONE READ IS HERE, AND IT IS THE ONLY ONE: the task panel, which opens
+//   over a board already on screen and therefore has to fetch. It is served
+//   by getTaskDetailForPanelService rather than getTaskDetailService, and
+//   the two differ ONLY in how they refuse - which is the whole reason the
+//   pair exists. See the note on the action itself.
+//
+//   THE OTHER THREE READS ARE STILL NOT HERE. The board, this person's work
+//   list and a task's attachment list are what a SERVER COMPONENT renders,
+//   and each answers a scope miss with notFound() - a page's answer, and the
+//   right one when the URL itself named the thing.
 //
 // THE GATE HERE IS requireUser AND NOTHING ELSE, exactly as on the
 // transcription actions. The four card mutations are lead-or-admin and none
@@ -229,51 +234,78 @@ export async function deleteTaskAttachmentAction(
 }
 
 // -------------------------------------------------------------------
+// ONE TASK, OPENED ON A BOARD THAT IS ALREADY ON SCREEN.
+//
+// THE ONLY READ IN THIS FILE, and it earns that by being the only one with
+// no page behind it. The panel opens over the client-side board, so the
+// description, the files, the time logged and the estimate history cannot
+// come from the board read - a hundred cards carrying all four would be a
+// megabyte on every render - and there is no navigation for a server
+// component to hang off.
+//
+// IT CALLS getTaskDetailForPanelService, NOT getTaskDetailService, and the
+// difference is the only reason both exist. The page version answers a miss
+// with notFound(), which is correct when a URL named the task and fatal
+// here: notFound() thrown inside a server action is propagated by
+// unstable_rethrow and REPLACES THE PAGE, so a card a lead deleted a second
+// ago would take the whole board away and read as a broken app. The panel
+// version refuses in words, like a mutation, and the board survives it.
+//
+// The refusal is IDENTICAL for "deleted" and "not on that project", which is
+// the service's doing rather than this file's. Two sentences would let
+// somebody walk task ids and learn which are real.
+// -------------------------------------------------------------------
+export async function getTaskDetailAction(
+  requestDTO: TaskIdRequestDTO,
+): Promise<ServerApiResponse<TaskDetailDTO>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(TaskIdSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const detail = await getTaskDetailForPanelService(validatedRequest.data.taskId);
+
+    return { success: true, data: detail } satisfies ServerApiResponse<TaskDetailDTO>;
+  } catch (error) {
+    return handleServerApiError("getTaskDetailAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
 // ===================================================================
 // WHAT IS NOT HERE, AND WHY
 // ===================================================================
 //
-//   1. addTaskAttachmentAction. DELIBERATELY NEVER AN ACTION, and this is
-//      the one gap on the list that is not waiting for anything. Its
-//      parameter is not a request DTO at all: mediaType must have been
-//      derived by SNIFFING THE BYTES and byteSize must be the number
-//      actually written, so there is nothing here a Zod schema could
-//      honestly validate - parsing either from a browser payload would make
-//      a stored-XSS decision in the wrong file, and would afterwards read as
-//      the check that had been done. delivery.types.ts says the same thing
-//      over TaskAttachmentUpload and gives the browser's half its own
-//      schema, UploadTaskAttachmentSchema, which is a task id and a file
-//      name and nothing that describes the bytes.
+//   1. AN UPLOAD ACTION. DELIBERATELY NEVER ONE, and this is the gap on
+//      the list that is not waiting for anything.
 //
-//      The bytes cannot travel through an action either, because
-//      serverActions.bodySizeLimit is global and defaults to 1 MB. So the
-//      upload is the ROUTE HANDLER the service's own findings ask for: it
-//      validates that schema, sniffs the bytes, writes the blob with
-//      putTaskAttachment and then calls the service - the same exception AI
-//      chat's upload already is. It does not exist yet.
+//      The bytes cannot travel through an action: serverActions
+//      .bodySizeLimit is GLOBAL and defaults to 1 MB, so raising it to clear
+//      a scope document would weaken every action in the app. So the upload
+//      is a ROUTE HANDLER - POST /api/delivery/task-attachments - the same
+//      exception AI chat's upload already is, and for the same one reason.
 //
-//   2. NO READ ACTIONS, which is a decision and not an omission, and
-//      TaskIdSchema landing in the contract file has not changed it. The
-//      board is a page keyed on /projects/[projectId], the work list is a
-//      page, and both by-id reads answer notFound() on a miss - the
-//      enumeration answer a page owes a guessed id. The missing schema was
-//      never the blocker; the refusal SHAPE is.
+//      That route validates UploadTaskAttachmentSchema (a task id and a file
+//      name, and nothing that describes the bytes) and hands the bytes
+//      straight to uploadTaskAttachmentService. It does NOT sniff, key,
+//      write or authorise: those are the service's, which is what keeps the
+//      storage key builder in one place and lets an archived project be
+//      refused BEFORE the file lands rather than never.
 //
-//      NOTHING IN THIS MODULE FETCHES ON DEMAND YET either: there is not a
-//      client component in src/features/delivery at all, so there is no
-//      caller to serve. listTeamsMeetingsAction earns its action by asking
-//      MICROSOFT something a page must not wait on, and every read on this
-//      service is one fixed set of queries against our own database in the
-//      request that renders the screen.
+//   2. AN ATTACHMENT DOWNLOAD ACTION, for the plainer reason that an action
+//      cannot return bytes. GET /api/delivery/task-attachments/[id] streams
+//      one back, authorised by the service, and it is a READ - so the
+//      mutations-go-through-actions rule never applied to it.
 //
-//      IF THE TASK PANEL LATER OPENS AS A DIALOG over the client-side board
-//      rather than as a route, that changes - and the work is in the
-//      SERVICE, not here: getTaskDetailService and getTaskAttachmentsService
-//      would each need a write-shaped refusal (the same "no longer
-//      available" sentence the mutations use) before an action could expose
-//      them, because notFound() thrown inside an action propagates through
-//      unstable_rethrow and replaces the board with the not-found page.
-//      Wrapping them as they stand would make a card somebody else deleted
-//      look like a broken app. Reported rather than done, because an action
-//      that caught notFound() to soften it would be deciding something.
+//   3. NO OTHER READ ACTIONS. The board and the work list are pages keyed on
+//      their own routes, and both answer notFound() on a miss - the
+//      enumeration answer a page owes a guessed id. Only the panel fetches
+//      on demand, and only the panel has an action.
+//
+//      getTaskAttachmentsService is the one that looks like it should have
+//      followed the panel here and did not: the panel's own read already
+//      carries the attachment list, so an action for it would be a second
+//      round trip for something the caller has in hand. It stays a page
+//      read, with a page's refusal.
 // -------------------------------------------------------------------

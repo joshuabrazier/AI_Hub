@@ -4,6 +4,7 @@ import { generateId } from "better-auth";
 import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
 
+import { inspectAttachment } from "@/lib/ai/attachment-formats";
 import { requireUser } from "@/lib/auth/session-auth-server";
 import type { SessionUser } from "@/lib/auth/auth.types";
 import {
@@ -53,6 +54,8 @@ import { ROUTES } from "@/lib/routes";
 import {
   deleteTaskAttachmentBlob,
   isTaskAttachmentStorageConfigured,
+  openTaskAttachmentStream,
+  putTaskAttachment,
   taskAttachmentStorageKey,
 } from "@/lib/storage/task-attachment-storage";
 import { userDisplayName } from "@/lib/user-display-name";
@@ -70,11 +73,11 @@ import {
   type MoveTaskRequestDTO,
   type MyWorkItemDTO,
   type TaskAttachmentDTO,
-  type TaskAttachmentUpload,
   type TaskCardDTO,
   type TaskDetailDTO,
   type TimeEntryDTO,
   type UpdateTaskRequestDTO,
+  type UploadTaskAttachmentRequestDTO,
 } from "./delivery.types";
 
 // -------------------------------------------------------------------
@@ -160,6 +163,12 @@ function revalidateBoardViews(): void {
 // -------------------------------------------------------------------
 const TASK_UNAVAILABLE_MESSAGE = "That task is no longer available.";
 
+const PHASE_UNAVAILABLE_MESSAGE = "That phase is no longer available.";
+
+const ATTACHMENT_UNAVAILABLE_MESSAGE = "That attachment is no longer available.";
+
+// For a caller who named a PROJECT. Anybody who named something else gets
+// that thing's sentence instead - see requireProjectAccessForWrite.
 const PROJECT_UNAVAILABLE_MESSAGE = "That project is no longer available.";
 
 // A ROLE-ish refusal rather than a scope one, so it may say what it means:
@@ -241,12 +250,32 @@ async function requireProjectAccessForPage(user: SessionUser, projectId: string)
   return access;
 }
 
-/** For a mutation: a sentence rather than a 404, identical for both cases. */
-async function requireProjectAccessForWrite(user: SessionUser, projectId: string): Promise<ProjectAccess> {
+// -------------------------------------------------------------------
+// For a mutation: a sentence rather than a 404, identical for both cases.
+//
+// THE SENTENCE IS ABOUT WHAT THE CALLER NAMED, WHICH IS WHY IT IS A
+// PARAMETER. Most callers here hold a task, a phase or an attachment id and
+// resolve the project FROM it - so answering "that project is no longer
+// available" to a bad task id told them something the task-miss above did
+// not: that the id they guessed is real, and only the project behind it was
+// out of reach. Two sentences for one question is an enumeration oracle,
+// and the note over the constants demands one answer.
+//
+// So every caller passes the message for the thing IT was given, and the
+// two refusals on either side of the project read are word-for-word the
+// same. Only a caller who genuinely named a project takes the default.
+// (delivery-time.service.ts carries the identical parameter, for the
+// identical reason.)
+// -------------------------------------------------------------------
+async function requireProjectAccessForWrite(
+  user: SessionUser,
+  projectId: string,
+  missMessage: string = PROJECT_UNAVAILABLE_MESSAGE,
+): Promise<ProjectAccess> {
   const access = await resolveProjectAccess(user, projectId);
 
   if (!access) {
-    throw new DisplayErrorMessage(PROJECT_UNAVAILABLE_MESSAGE);
+    throw new DisplayErrorMessage(missMessage);
   }
 
   return access;
@@ -303,7 +332,9 @@ async function requireEditableTask(taskId: string): Promise<{ task: Task; access
     throw new DisplayErrorMessage(TASK_UNAVAILABLE_MESSAGE);
   }
 
-  const access = await requireProjectAccessForWrite(user, task.projectId);
+  // The caller named a TASK, so a project they cannot reach answers about
+  // the task - the same words as the miss above.
+  const access = await requireProjectAccessForWrite(user, task.projectId, TASK_UNAVAILABLE_MESSAGE);
 
   if (!access.canEditTasks) {
     throw new DisplayErrorMessage(NOT_A_LEAD_MESSAGE);
@@ -531,46 +562,97 @@ export async function getProjectBoardService(projectId: string): Promise<BoardDT
 // lines underneath it - which is the property somebody reconciling a task
 // needs, and it costs no second query. The grouped per-task read exists for
 // the board, where the entries themselves are not loaded.
+//
+// NULL FOR BOTH "no such task" AND "not on that project", and nothing above
+// may tell them apart. The two entry points below turn that null into the
+// refusal their own caller can survive.
+// -------------------------------------------------------------------
+async function loadTaskDetail(user: SessionUser, taskId: string): Promise<TaskDetailDTO | null> {
+  const [row] = await getTasksByIdsRepo([taskId]);
+
+  if (!row) return null;
+
+  const access = await resolveProjectAccess(user, row.projectId);
+
+  if (!access) return null;
+
+  const [attachments, timeEntries, estimateHistory] = await Promise.all([
+    getTaskAttachmentsRepo(row.id),
+    getTimeEntriesForTaskRepo(row.id),
+    getEstimateChangesForTaskRepo(row.id),
+  ]);
+
+  const loggedMinutes = timeEntries.reduce((total, entry) => total + entry.minutes, 0);
+
+  return {
+    task: mapTaskCard(row, loggedMinutes, attachments.length),
+    projectId: row.projectId,
+    projectTitle: row.projectTitle,
+    phaseName: row.phaseName,
+    description: row.description,
+    attachments: await mapAttachments(attachments),
+    timeEntries: timeEntries.map(mapTimeEntry),
+    estimateHistory: estimateHistory.map(mapEstimateChange),
+    // Estimate against logged. A task with no estimate comes back with a
+    // null percentage rather than a full bar - nobody has said what this
+    // one was meant to take, and painting it red for that blames the
+    // person who did the work.
+    rollup: budgetProgress(row.estimateMinutes, loggedMinutes),
+    canEditTasks: access.canEditTasks,
+  };
+}
+
+// -------------------------------------------------------------------
+// FOR A PAGE RENDER. A miss is the not-found page, which is the right
+// answer when the URL itself named the task.
 // -------------------------------------------------------------------
 export async function getTaskDetailService(taskId: string): Promise<TaskDetailDTO> {
   try {
     // Session first, then the row, then the row's project. The read cannot
-    // move after the project check - the row is what names the project - but
-    // it can come after requireUser, and it must.
+    // move ahead of the project check - the row is what names the project -
+    // but it can come after requireUser, and it must.
     const user = await requireUser();
 
-    const [row] = await getTasksByIdsRepo([taskId]);
+    const detail = await loadTaskDetail(user, taskId);
 
-    if (!row) notFound();
+    if (!detail) notFound();
 
-    const access = await requireProjectAccessForPage(user, row.projectId);
-
-    const [attachments, timeEntries, estimateHistory] = await Promise.all([
-      getTaskAttachmentsRepo(row.id),
-      getTimeEntriesForTaskRepo(row.id),
-      getEstimateChangesForTaskRepo(row.id),
-    ]);
-
-    const loggedMinutes = timeEntries.reduce((total, entry) => total + entry.minutes, 0);
-
-    return {
-      task: mapTaskCard(row, loggedMinutes, attachments.length),
-      projectId: row.projectId,
-      projectTitle: row.projectTitle,
-      phaseName: row.phaseName,
-      description: row.description,
-      attachments: await mapAttachments(attachments),
-      timeEntries: timeEntries.map(mapTimeEntry),
-      estimateHistory: estimateHistory.map(mapEstimateChange),
-      // Estimate against logged. A task with no estimate comes back with a
-      // null percentage rather than a full bar - nobody has said what this
-      // one was meant to take, and painting it red for that blames the
-      // person who did the work.
-      rollup: budgetProgress(row.estimateMinutes, loggedMinutes),
-      canEditTasks: access.canEditTasks,
-    };
+    return detail;
   } catch (error) {
     throw handleError("getTaskDetailService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// FOR A PANEL OPENED ON A BOARD ALREADY ON SCREEN, fetched through an
+// action rather than rendered.
+//
+// SAME READ, DIFFERENT REFUSAL, and the difference is the whole reason this
+// exists. notFound() thrown inside a server action is propagated by
+// unstable_rethrow and REPLACES THE PAGE - so a card a lead deleted a second
+// ago would take the whole board away and read as a broken app. A person
+// clicking a stale card should be told the card has gone and keep their
+// board. That is a write-shaped refusal, so this throws the same sentence
+// the mutations do.
+//
+// The sentence is IDENTICAL for "deleted" and "you are not on that
+// project", exactly as resolveProjectAccess returns one null for both. A
+// panel that said "no longer available" for one and "not yours" for the
+// other would let somebody walk task ids and learn which are real.
+// -------------------------------------------------------------------
+export async function getTaskDetailForPanelService(taskId: string): Promise<TaskDetailDTO> {
+  try {
+    const user = await requireUser();
+
+    const detail = await loadTaskDetail(user, taskId);
+
+    if (!detail) {
+      throw new DisplayErrorMessage(TASK_UNAVAILABLE_MESSAGE);
+    }
+
+    return detail;
+  } catch (error) {
+    throw handleError("getTaskDetailForPanelService", error);
   }
 }
 
@@ -606,10 +688,11 @@ export async function createTaskService(requestDTO: CreateTaskRequestDTO): Promi
     // A phase id from the browser naming a project the caller is not on gets
     // the same answer as one that does not exist.
     if (!phase) {
-      throw new DisplayErrorMessage("That phase is no longer available.");
+      throw new DisplayErrorMessage(PHASE_UNAVAILABLE_MESSAGE);
     }
 
-    const access = await requireProjectAccessForWrite(user, phase.projectId);
+    // The caller named a PHASE, so both misses answer about the phase.
+    const access = await requireProjectAccessForWrite(user, phase.projectId, PHASE_UNAVAILABLE_MESSAGE);
 
     if (!access.canEditTasks) {
       throw new DisplayErrorMessage(NOT_A_LEAD_MESSAGE);
@@ -1005,71 +1088,100 @@ export async function getTaskAttachmentsService(taskId: string): Promise<TaskAtt
 // -------------------------------------------------------------------
 // STORE ONE FILE against a task the caller is on.
 //
-// THE STORAGE KEY IS BUILT BY src/lib/storage/task-attachment-storage.ts,
-// which owns the `delivery/` prefix, the put, the deletes and the listing
-// the reconciliation sweep will diff. This file used to carry its own
-// builder on a `delivery/tasks/...` shape, written before that module
-// existed; two builders disagreeing about the shape would leave the sweep
-// unable to recognise its own files, and the PROJECT segment the shared one
-// adds is what makes a per-project prefix delete possible at all. Nothing
-// had been uploaded yet, so there was nothing to migrate.
+// IT TAKES THE BYTES AND WRITES THE BLOB ITSELF, which is the whole reason
+// this replaced an `addTaskAttachmentService` that recorded a row somebody
+// else had already stored. That shape asked the ROUTE to resolve the task,
+// rebuild the storage key and decide whether an archived project may be
+// written to - three domain decisions in a transport file, and a second
+// copy of the key builder that only had to disagree once for the
+// reconciliation sweep to stop recognising its own files. The route now
+// carries the multipart body and nothing else.
 //
-// Still derived rather than accepted, and that is the load-bearing part: a
-// service that took a `storageKey` from its caller would let a row on this
-// task point at any blob in the container, including another client's
-// project, while the download route authorised on the task. It is built
-// from two ids this service has already authorised - the project off the
-// task row, not off the request - so a row can only ever address its own
-// task's prefix.
+// It also made one refusal impossible to write. An archived project must
+// take no new files, but the bytes were already in storage by the time the
+// service ran, so refusing there would strand a blob on the one prefix
+// whose sweep is not wired up yet. Here the check happens BEFORE the write.
 //
-// `TaskAttachmentUpload` is in delivery.types.ts and NOTHING PARSES IT:
-// `mediaType` must have been derived by sniffing the bytes and `byteSize`
-// must be the number actually written, so a schema over those two fields
-// would check a shape while proving nothing about where the values came
-// from, and would afterwards read as the check that had been done. The
-// download route serves the stored type back with `nosniff`, so a value
-// taken from a browser here is a stored-XSS decision made in the wrong
-// file. The byteSize refusal below is the second line.
+// MEMBERSHIP, NOT LEAD. Attaching is not editing the card: an ordinary
+// member logging time against a bug should be able to hang the screenshot
+// of it on the same card, and requiring a lead would mean everything
+// anybody wants to show each other lands in chat instead. The delete below
+// is the narrower rule - your own file, or a lead's call.
+//
+// THE TYPE IS SNIFFED FROM THE BYTES, never taken from the browser's
+// Content-Type and never guessed from the name. inspectAttachment is chat's
+// and is shared deliberately: it is the tested one, it proves an image's
+// dimensions in the same pass that proves its format, and it maps `html` to
+// text/plain - which is what stops a file uploaded here and served back
+// from this origin being stored XSS. The download route sets `nosniff` over
+// the top and refuses to render anything but an image inline.
+//
+// THE STORAGE KEY IS DERIVED, NEVER ACCEPTED. It is built by
+// src/lib/storage/task-attachment-storage.ts, which owns the `delivery/`
+// prefix, from two ids this service has already authorised - the project
+// off the TASK ROW, not off the request - so a row can only ever address
+// its own task's prefix. A caller-supplied key would let a row on this task
+// point at any blob in the container, including another client's project,
+// while the download route authorised on the task.
+//
+// THE BLOB GOES FIRST, THEN THE ROW - the same order chat uses, and the
+// opposite of every delete path in the module. A blob with no row is
+// invisible and collectable by the reconciliation sweep; a row with no blob
+// is a broken attachment somebody can see and nothing will ever repair.
 // -------------------------------------------------------------------
-export async function addTaskAttachmentService(upload: TaskAttachmentUpload): Promise<TaskAttachmentDTO> {
+export async function uploadTaskAttachmentService(
+  requestDTO: UploadTaskAttachmentRequestDTO,
+  bytes: Buffer,
+): Promise<TaskAttachmentDTO> {
   try {
-    // A caller bug rather than something a person did, so it is a plain
-    // error: an empty or fractional size means the upload path handed over
-    // something it never measured, and a row claiming zero bytes would
-    // render as a working attachment.
-    if (!Number.isInteger(upload.byteSize) || upload.byteSize <= 0) {
-      throw new Error("addTaskAttachmentService requires the byte count of the file that was written");
-    }
-
     const user = await requireUser();
 
-    const task = await getTaskRepo(upload.taskId);
+    // Inert rather than broken where no storage is configured. Checked
+    // before anything is read, so a misconfigured environment says so
+    // instead of failing somewhere inside the Azure client.
+    if (!isTaskAttachmentStorageConfigured()) {
+      throw new DisplayErrorMessage("File attachments are not configured on this environment.");
+    }
+
+    const task = await getTaskRepo(requestDTO.taskId);
 
     if (!task) {
       throw new DisplayErrorMessage(TASK_UNAVAILABLE_MESSAGE);
     }
 
-    // Membership, not lead: see the note above about who may attach.
-    const access = await requireProjectAccessForWrite(user, task.projectId);
+    // Membership, not lead: see the note above about who may attach. The
+    // caller named a TASK, so an unreachable project answers about the task.
+    const access = await requireProjectAccessForWrite(user, task.projectId, TASK_UNAVAILABLE_MESSAGE);
 
-    // NO ARCHIVED CHECK HERE, and it is a decision rather than the omission
-    // it looks like beside create, edit and move. By the time this runs the
-    // bytes are already in storage - the route writes the blob first, because
-    // the key is derived from an id it holds - so refusing here would leave a
-    // file nothing points at, on the one prefix whose reconciliation sweep is
-    // not wired up yet. The project's status belongs in the upload route,
-    // BEFORE it writes; it is on the list at the bottom of this file with the
-    // route itself, which does not exist.
+    // BEFORE the write, which is the point of doing this here rather than
+    // in the route or after the bytes have landed.
+    requireUnarchivedProject(access, "attaching a file");
+
+    const inspection = inspectAttachment(bytes, requestDTO.fileName);
+
+    // Written for the person who chose the file and shown to them verbatim.
+    // It never echoes the filename back - that string is theirs, and
+    // rendering it inside an error message is rendering untrusted input.
+    if (!inspection.ok) {
+      throw new DisplayErrorMessage(inspection.reason);
+    }
+
+    const attachmentId = generateId();
+    const storageKey = taskAttachmentStorageKey(access.projectId, task.id, attachmentId);
+
+    await putTaskAttachment(storageKey, bytes, inspection.mediaType);
+
     const stored = await addTaskAttachmentRepo({
-      id: upload.attachmentId,
+      id: attachmentId,
       taskId: task.id,
-      storageKey: taskAttachmentStorageKey(access.projectId, task.id, upload.attachmentId),
-      // Trimmed of any path the browser included and bounded, the way chat
-      // does it. The name is display only; nothing downstream decides
-      // anything from it.
-      fileName: upload.fileName.split(/[\\/]/).pop()?.slice(0, ATTACHMENT_NAME_MAX_CHARS) || "Attachment",
-      mediaType: upload.mediaType,
-      byteSize: upload.byteSize,
+      storageKey,
+      // Already trimmed of any path and bounded by the schema. It is
+      // display only; nothing downstream decides anything from it.
+      fileName: requestDTO.fileName.slice(0, ATTACHMENT_NAME_MAX_CHARS),
+      // The SNIFFED type, and the count of bytes actually written - never
+      // anything the browser said about either.
+      mediaType: inspection.mediaType,
+      byteSize: bytes.length,
       uploadedBy: access.user.id,
       createdAt: new Date(),
     });
@@ -1080,7 +1192,77 @@ export async function addTaskAttachmentService(upload: TaskAttachmentUpload): Pr
 
     return dto;
   } catch (error) {
-    throw handleError("addTaskAttachmentService", error);
+    throw handleError("uploadTaskAttachmentService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// ONE FILE, OPENED FOR READING, once the caller has been proved to be on
+// the project it hangs off.
+//
+// ANY MEMBER, matching getTaskAttachmentsService: the panel that lists
+// these files is open to the whole project, so a download narrower than the
+// list would show people files they cannot fetch.
+//
+// NULL RATHER THAN A THROW, for all three of "no such attachment", "not
+// your project" and "the blob has gone". The route answers 404 to the lot,
+// which is what keeps a guessed id from confirming that a real file is
+// behind it - and the third is a genuine state a partial delete can leave,
+// not a fault worth a 500.
+//
+// IT STREAMS. A card carries a scope document, a design pack, a screen
+// recording; reading one into a Buffer to hand to a Response would hold all
+// of it in the instance's memory for the length of the transfer.
+//
+// THE STORED TYPE IS WHAT COMES BACK, not the one storage reports. What the
+// blob says about itself is whatever was set when it was written; the row's
+// value was derived by sniffing the bytes, and that is the one the download
+// route puts behind `nosniff`.
+// -------------------------------------------------------------------
+export async function getTaskAttachmentDownloadService(attachmentId: string): Promise<{
+  fileName: string;
+  mediaType: string;
+  byteSize: number;
+  stream: NodeJS.ReadableStream;
+} | null> {
+  try {
+    const user = await requireUser();
+
+    if (!isTaskAttachmentStorageConfigured()) return null;
+
+    // Unscoped by necessity - the caller holds an attachment id - which is
+    // why the read returns the project that authorises it.
+    const attachment = await getTaskAttachmentRepo(attachmentId);
+
+    if (!attachment) return null;
+
+    // The row is authorization; the blob is just bytes. Storage is only
+    // reached AFTER this passes, so an id on somebody else's project never
+    // touches it.
+    const access = await resolveProjectAccess(user, attachment.projectId);
+
+    if (!access) return null;
+
+    const opened = await openTaskAttachmentStream(attachment.storageKey);
+
+    if (!opened) {
+      console.warn(
+        `[getTaskAttachmentDownloadService] blob missing for ${attachment.id} (${attachment.storageKey})`,
+      );
+
+      return null;
+    }
+
+    return {
+      fileName: attachment.fileName,
+      mediaType: attachment.mediaType,
+      // The row's count, not the blob's. They agree, and the row is the one
+      // written from the bytes this app measured.
+      byteSize: attachment.byteSize,
+      stream: opened.stream,
+    };
+  } catch (error) {
+    throw handleError("getTaskAttachmentDownloadService", error);
   }
 }
 
@@ -1102,10 +1284,15 @@ export async function deleteTaskAttachmentService(attachmentId: string): Promise
     const attachment = await getTaskAttachmentRepo(attachmentId);
 
     if (!attachment) {
-      throw new DisplayErrorMessage("That attachment is no longer available.");
+      throw new DisplayErrorMessage(ATTACHMENT_UNAVAILABLE_MESSAGE);
     }
 
-    const access = await requireProjectAccessForWrite(user, attachment.projectId);
+    // The caller named an ATTACHMENT, so both misses answer about it.
+    const access = await requireProjectAccessForWrite(
+      user,
+      attachment.projectId,
+      ATTACHMENT_UNAVAILABLE_MESSAGE,
+    );
 
     const isUploader = attachment.uploadedBy !== null && attachment.uploadedBy === access.user.id;
 
@@ -1144,24 +1331,7 @@ export async function deleteTaskAttachmentService(attachmentId: string): Promise
 // its own SQL to fill one of these gaps is the layering breach the module
 // is built to avoid.
 //
-//   1. THE UPLOAD ROUTE. A task attachment has no way in yet. It has to be
-//      a route handler rather than an action - `serverActions.bodySizeLimit`
-//      is global and defaults to 1 MB, and raising it weakens every action
-//      in the app - and it MUST sniff the bytes to decide the media type,
-//      the way src/lib/ai/attachment-formats.ts does. It validates its half
-//      of the request with UploadTaskAttachmentSchema, writes the blob with
-//      putTaskAttachment, and calls addTaskAttachmentService above.
-//
-//      TWO THINGS IT HAS TO SETTLE THAT THIS FILE CANNOT. The key needs the
-//      PROJECT id, which is on the task row rather than in the request, so
-//      the route has to resolve the task itself (behind
-//      getVerifiedApiSession, as every route handler must) and build the
-//      same key this service records. And the archived check belongs there,
-//      before the bytes are written - see the note in
-//      addTaskAttachmentService about why a refusal after the write would
-//      orphan a file.
-//
-//   2. THE RECONCILIATION SWEEP. The storage module now exists
+//   1. THE RECONCILIATION SWEEP. The storage module now exists
 //      (src/lib/storage/task-attachment-storage.ts) and owns the `delivery/`
 //      prefix, so both halves of the diff are in place:
 //      listAllTaskAttachmentKeys against getAllTaskAttachmentKeysRepo. The
@@ -1171,30 +1341,30 @@ export async function deleteTaskAttachmentService(attachmentId: string): Promise
 //      one that reaches attachment rows without an attachment being
 //      mentioned - is paid for indefinitely and nothing reports it.
 //
-//   3. A LOGGED-MINUTES READ FOR A SET OF TASK IDS. getLoggedMinutesByTaskRepo
+//   2. A LOGGED-MINUTES READ FOR A SET OF TASK IDS. getLoggedMinutesByTaskRepo
 //      groups within ONE project, so "my work" reads once per distinct
 //      project. One grouped read over a set of task ids would make it one
 //      query, and the timesheet week will want the same thing.
 //
-//   4. A NEXT-POSITION READ FOR ONE COLUMN. Creating a card and moving one
+//   3. A NEXT-POSITION READ FOR ONE COLUMN. Creating a card and moving one
 //      both read the whole board to look at a single column.
 //      addPhaseRepo derives its position inside the INSERT; the tasks
 //      repository has no equivalent, so either that or a narrow
 //      "cards in this phase and column" read would remove a full board read
 //      from both paths.
 //
-//   5. THE UPLOADER'S NAME ON THE ATTACHMENT READ. getTaskAttachmentsRepo
+//   4. THE UPLOADER'S NAME ON THE ATTACHMENT READ. getTaskAttachmentsRepo
 //      selects `uploaded_by` and joins nothing, so the name is resolved
 //      here in a second query. A left join to users - the one the task
 //      panel's time entries already have - would remove it.
 //
-//   6. A "WHAT WOULD DELETING THIS TASK TAKE" READ. Refusing a delete
+//   5. A "WHAT WOULD DELETING THIS TASK TAKE" READ. Refusing a delete
 //      politely means asking whether any time is logged, and the only way
 //      to ask is to load the entries and count them. `phases.repository.ts`
 //      has getPhaseTimeLoggedRepo for exactly this question one level up;
 //      the task-level equivalent would make the check one grouped count.
 //
-//   7. A BLOB CLEAR ON THE PHASE DELETE, which is not in this file but is
+//   6. A BLOB CLEAR ON THE PHASE DELETE, which is not in this file but is
 //      this file's problem: deletePhaseRepo cascades to the phase's tasks
 //      and therefore to their attachment rows without an attachment being
 //      named anywhere in it. deleteTaskAttachmentBlobsForTask, per task id,

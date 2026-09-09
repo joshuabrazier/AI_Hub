@@ -73,6 +73,12 @@ jobs:
       - name: Build
         run: pnpm build
         env:
+          # Produces .next/standalone, which the next two steps assemble and
+          # zip. next.config.ts leaves it OFF unless this is set, because
+          # tracing and copying node_modules is minutes of a local build and
+          # `pnpm start` never reads the result. This is the one place that
+          # wants it, so this is the one place that asks.
+          BUILD_STANDALONE: "1"
           MODE: production
           NEXT_PUBLIC_APP_TITLE: ${{ vars.NEXT_PUBLIC_APP_TITLE }}
           NEXT_PUBLIC_APP_DESCRIPTION: ${{ vars.NEXT_PUBLIC_APP_DESCRIPTION }}
@@ -113,6 +119,10 @@ jobs:
       # deployed package can serve them.
       - name: Assemble standalone deploy package
         run: |
+          if [ ! -d .next/standalone ]; then
+            echo "::error::.next/standalone is missing - the build step must set BUILD_STANDALONE=1 (see next.config.ts)."
+            exit 1
+          fi
           cp -r .next/static .next/standalone/.next/static
           if [ -d public ]; then cp -r public .next/standalone/public; fi
 
