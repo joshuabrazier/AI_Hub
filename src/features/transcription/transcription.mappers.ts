@@ -22,7 +22,13 @@ type TranscriptionListRow = Omit<Transcription, "transcript" | "segments" | "sum
 // of text cannot fill the column, and it renders as a text node like
 // everything else.
 // -------------------------------------------------------------------
-export function mapDBTranscriptionToSummaryDTO(row: TranscriptionListRow): TranscriptionSummaryDTO {
+export function mapDBTranscriptionToSummaryDTO(
+  row: TranscriptionListRow,
+  // Passed in rather than looked up, so rendering a list of forty rows is
+  // one filing query rather than forty. Undefined is the ordinary case for
+  // anything unfinished, unconfigured, or older than the feature.
+  filing?: TranscriptionFiling,
+): TranscriptionSummaryDTO {
   return {
     id: row.id,
     title: row.title,
@@ -33,6 +39,7 @@ export function mapDBTranscriptionToSummaryDTO(row: TranscriptionListRow): Trans
     error: row.error,
     createdAt: row.createdAt,
     completedAt: row.completedAt,
+    filingStatus: filing?.status ?? null,
   };
 }
 

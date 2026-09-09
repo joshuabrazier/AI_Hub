@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MESSAGES } from "@/lib/constants";
 import {
   TRANSCRIPTION_FILING_STATUSES,
+  TRANSCRIPTION_FILING_STATUS_LABELS,
   TRANSCRIPTION_IN_FLIGHT_STATUSES,
   TRANSCRIPTION_STATUSES,
   TRANSCRIPTION_STATUS_LABELS,
@@ -24,6 +25,7 @@ import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 
 import {
   downloadTranscriptAction,
+  retryTranscriptionFilingAction,
   retryTranscriptionSummaryAction,
   startTranscriptionAction,
 } from "../transcription.actions";
@@ -91,6 +93,47 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
 
         setCurrent(response.data);
         toast.success(MESSAGES.TRANSCRIPTION_STARTED);
+        router.refresh();
+      } catch (error) {
+        handleFrontendErrorWithToast(error);
+      }
+    });
+
+  // -------------------------------------------------------------------
+  // File these notes now.
+  //
+  // Two cases behind one button. A filing that ended nowhere or failed is
+  // terminal on purpose - the sweep does not retry those, because a folder
+  // somebody deleted fails identically every few minutes forever - so a
+  // person has to say try again. And a transcription older than the feature
+  // has no filing record at all, which is every meeting anybody had recorded
+  // before this shipped.
+  //
+  // It does not take a folder, and there is no way to give it one: the
+  // destination is chosen by the same rules as an automatic filing, so a
+  // retry cannot put a note somewhere those rules would refuse to.
+  // -------------------------------------------------------------------
+  const fileNow = () =>
+    startTransition(async () => {
+      try {
+        const response = await retryTranscriptionFilingAction({ transcriptionId: current.id });
+
+        if (!response.success) {
+          toast.error(response.formError ?? MESSAGES.SOMETHING_WENT_WRONG);
+          return;
+        }
+
+        // The outcome is not always success, and saying which is the point.
+        // "Nowhere to file it" is a real answer that a green tick would
+        // misreport, and the panel below carries the reason.
+        if (response.data === TRANSCRIPTION_FILING_STATUSES.FILED) {
+          toast.success("Filed in SharePoint.");
+        } else if (response.data === null) {
+          toast.error("SharePoint filing is not set up on this environment.");
+        } else {
+          toast.warning(TRANSCRIPTION_FILING_STATUS_LABELS[response.data]);
+        }
+
         router.refresh();
       } catch (error) {
         handleFrontendErrorWithToast(error);
@@ -301,7 +344,14 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
           </Tabs>
         ) : null}
 
-        {isCompleted && current.filing ? <FilingNote filing={current.filing} /> : null}
+        {/* Shown on every completed transcription, not only on ones that
+            have a filing record. A row with no record is the case somebody
+            most needs a button for: it predates the feature, so nothing will
+            ever file it on its own and there would be nothing on screen to
+            say so. */}
+        {isCompleted ? (
+          <FilingNote filing={current.filing} onFileNow={fileNow} isBusy={isPending} />
+        ) : null}
       </div>
     </div>
   );
@@ -401,8 +451,50 @@ function TranscriptFootnote({ isNamed = false }: { isNamed?: boolean }) {
 // renamed and moved; the link is the live answer and the path is the one we
 // acted on.
 // -------------------------------------------------------------------
-function FilingNote({ filing }: { filing: TranscriptionFilingDTO }) {
-  const decision = filingDecisionLabel(filing.decidedVia);
+function FilingNote({
+  filing,
+  onFileNow,
+  isBusy,
+}: {
+  // Null means no filing record at all: filing is not configured, or this
+  // transcription finished before the feature existed. Neither is a failure
+  // and neither must read like one - but both need a way out, which is the
+  // button.
+  filing: TranscriptionFilingDTO | null;
+  onFileNow: () => void;
+  isBusy: boolean;
+}) {
+  const decision = filing ? filingDecisionLabel(filing.decidedVia) : null;
+
+  const fileNowButton = (label: string) => (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="mt-3"
+      onClick={onFileNow}
+      disabled={isBusy}
+      loading={isBusy}
+    >
+      <FolderOpen size={14} aria-hidden="true" />
+      {label}
+    </Button>
+  );
+
+  // No record. Offered rather than explained away: every meeting recorded
+  // before this feature shipped is in this state, and without an offer they
+  // stay that way forever with nothing on screen to say why.
+  if (!filing) {
+    return (
+      <div className="mt-5 border-t border-border pt-4">
+        <p className="text-xs text-muted-foreground">
+          These notes have not been filed in SharePoint. That is normal for anything recorded before filing
+          was set up.
+        </p>
+        {fileNowButton("File in SharePoint")}
+      </div>
+    );
+  }
 
   if (filing.status === TRANSCRIPTION_FILING_STATUSES.PENDING) {
     return (
@@ -460,6 +552,12 @@ function FilingNote({ filing }: { filing: TranscriptionFilingDTO }) {
       {!isNowhere && filing.error && filing.reason ? (
         <p className="mt-0.5 break-words text-xs text-muted-foreground">{filing.error}</p>
       ) : null}
+
+      {/* Neither of these states is retried by the sweep - a folder somebody
+          deleted fails identically forever - so the only way out is a person
+          deciding to try again after fixing whatever the sentence above
+          names. */}
+      {fileNowButton("Try filing again")}
     </div>
   );
 }

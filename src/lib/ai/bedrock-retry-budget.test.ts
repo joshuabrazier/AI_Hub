@@ -1,9 +1,12 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import { CHAT_FIRST_BYTE_CEILING_MS, CHAT_PHASES, CHAT_PLATFORM_IDLE_CEILING_MS } from "@/features/ai-chat/ai-chat.types";
 import { MAX_TOOL_ROUNDS } from "@/features/ai-chat/ai-chat-tools";
 
 import { BEDROCK_LADDER_WORST_CASE_MS, BEDROCK_SOCKET_IDLE_MS, MAX_ATTEMPTS } from "./bedrock-client";
+import { converseCeilingFor } from "./converse";
 
 // ===================================================================
 // THE FOUR LAYERS THAT CAN GIVE UP ON A REPLY, AND THE ORDER THEY MUST DO
@@ -137,5 +140,93 @@ describe("the quiet gaps that are not stalls", () => {
     // before a single word has reached the reader. That is the worst case
     // for a question that needs figures before it can be answered.
     expect(CHAT_PHASES.tool.budgetMs * MAX_TOOL_ROUNDS).toBeLessThan(CHAT_FIRST_BYTE_CEILING_MS);
+  });
+});
+
+// ===================================================================
+// A ONE-SHOT CALL'S OWN CEILING
+//
+// These are the calls with no reader watching a cursor: a folder
+// suggestion, a timesheet question, a compaction summary. They get a TOTAL
+// ceiling rather than relying on the idle timeout, and production is the
+// reason: a stalled Bedrock call runs to that ceiling every time while
+// socketTimeout never fires, because an AWS event stream carries periodic
+// frames and the socket is therefore never idle. An idle timeout cannot see
+// the common failure.
+// ===================================================================
+describe("a one-shot call's ceiling", () => {
+  it("is derived from what was asked for, not shared", () => {
+    // The bug this fixes. Every converseText call sat on one 120s default,
+    // so a 300-token folder suggestion was given the same budget as a long
+    // report - and a stalled one spent all of it, four times over, because
+    // each filing retry pays the ceiling again.
+    expect(converseCeilingFor(300)).toBeLessThan(converseCeilingFor(4_000));
+  });
+
+  it("scales with the token cap, so raising one raises the other", () => {
+    expect(converseCeilingFor(600) - converseCeilingFor(300)).toBeGreaterThan(0);
+  });
+
+  it("allows for prefill, because the prompt is the slow part here", () => {
+    // A filing prompt carries up to MAX_FOLDER_OPTIONS paths. Generating 300
+    // tokens takes seconds; reading that prompt is most of the wait, so a
+    // ceiling derived from output alone would abort healthy calls.
+    expect(converseCeilingFor(0)).toBeGreaterThanOrEqual(20_000);
+  });
+
+  it("is DELIBERATELY tighter than the SDK ladder, unlike a chat phase", () => {
+    // ===============================================================
+    // THIS CONTRADICTS THE RULE ABOVE ON PURPOSE, and the difference is
+    // worth stating rather than discovering.
+    //
+    // A chat phase budget sits ABOVE the ladder so the SDK gets to fire
+    // first and name the failure. That trade is worth 70 seconds when
+    // somebody is watching a cursor and the name is the remedy.
+    //
+    // It is not worth it here. The failure these calls actually hit is a
+    // stream that heartbeats and delivers nothing, which the SDK cannot
+    // name at all - so waiting for a naming that will never come just
+    // spends the budget. Our own message for it is specific enough:
+    // "produced nothing for the full 40s allowed".
+    // ===============================================================
+    expect(converseCeilingFor(300)).toBeLessThan(BEDROCK_LADDER_WORST_CASE_MS);
+  });
+
+  it("still leaves room for ONE attempt to time out and name itself", () => {
+    // The part of the naming that is worth keeping. A genuinely dead socket
+    // fails at BEDROCK_SOCKET_IDLE_MS on the first attempt, and the ceiling
+    // has to be past that or even the honest case never gets its name.
+    expect(converseCeilingFor(300)).toBeGreaterThan(BEDROCK_SOCKET_IDLE_MS);
+  });
+});
+
+// ===================================================================
+// THE RETRY MODE
+//
+// A test on one string, because that one string was a production fault and
+// the next person to read "adaptive" will think it sounds like the clever
+// option.
+//
+// Adaptive mode adds a client-side rate limiter that SLEEPS BEFORE THE
+// REQUEST IS SENT, latches on at the first throttling response and never
+// off, and lives on a process-wide client shared by every AI feature. A
+// call can spend its whole ceiling in that sleep having never reached AWS -
+// with no socket open, so nothing at the transport layer can see it, and
+// $metadata reporting a retry delay of under a hundred milliseconds because
+// the limiter's wait is not retry delay.
+//
+// See the block in bedrock-client.ts for the SDK source this is quoting.
+// ===================================================================
+describe("the retry mode", () => {
+  it("is standard, so a throttle arrives fast and named", async () => {
+    // Read from the built client rather than from a constant, because the
+    // constant is not what would drift - somebody editing the client is.
+    const source = await readFile(
+      new URL("./bedrock-client.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain('retryMode: "standard"');
+    expect(source).not.toContain('retryMode: "adaptive"');
   });
 });

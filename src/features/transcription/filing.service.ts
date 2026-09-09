@@ -1,10 +1,11 @@
 import "server-only";
 
 import { generateId } from "better-auth";
+import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
-import { converseText } from "@/lib/ai/converse";
+import { converseCeilingFor, converseText } from "@/lib/ai/converse";
 import {
   AI_CHAT_REQUEST_KINDS,
   TRANSCRIPTION_FILING_STATUSES,
@@ -12,6 +13,7 @@ import {
   TRANSCRIPTION_STATUSES,
   type Transcription,
   type TranscriptionFiling,
+  type TranscriptionFilingStatus,
 } from "@/lib/data/kysely-database-types";
 import { getClientsRepo } from "@/lib/data/repositories/clients.repository";
 import { listSharepointDrivesRepo } from "@/lib/data/repositories/sharepoint-drive.repository";
@@ -24,6 +26,8 @@ import {
   updateTranscriptionFilingRepo,
 } from "@/lib/data/repositories/transcription-filing.repository";
 import { getTranscriptionForUserRepo } from "@/lib/data/repositories/transcriptions.repository";
+import { requireUser } from "@/lib/auth/session-auth-server";
+import { DisplayErrorMessage } from "@/lib/errors";
 import { envServer } from "@/lib/env-server";
 import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
@@ -41,7 +45,12 @@ import { buildNotesDocument } from "@/lib/sharepoint/notes-document";
 import { ensureFolderPath, uploadTextFile } from "@/lib/sharepoint/sharepoint-write";
 import { dateInAppZone } from "@/lib/timezone";
 
-import { formatTimestamp, speakerLabel } from "./transcription.types";
+import { revalidateTranscriptionViews } from "./transcription.revalidate";
+import {
+  formatTimestamp,
+  speakerLabel,
+  type TranscriptionIdRequestDTO,
+} from "./transcription.types";
 
 // ===================================================================
 // FILING A MEETING'S NOTES INTO SHAREPOINT
@@ -89,6 +98,21 @@ const FOLDER_QUERY_LIMIT = 5_000;
 // A folder id and one sentence. Anything longer is the model explaining
 // itself at length into a column nobody reads.
 const FILING_MAX_TOKENS = 300;
+
+// -------------------------------------------------------------------
+// The ceiling on that call, derived from the token cap rather than
+// inherited.
+//
+// MEASURED, NOT ESTIMATED. This call ran on the shared 120-second default,
+// and in production a stalled one used every second of it - four times over
+// for one meeting, because each retry pays the ceiling again. Eight minutes
+// of Bedrock to not choose a folder.
+//
+// 300 tokens does not need two minutes. The derivation allows for a slow
+// prefill on a prompt carrying up to MAX_FOLDER_OPTIONS paths, which is the
+// large part of this request; the generation itself is a few seconds.
+// -------------------------------------------------------------------
+const FILING_TIMEOUT_MS = converseCeilingFor(FILING_MAX_TOKENS);
 
 // Markdown, because it reads as plain text in SharePoint's preview and needs
 // no library to produce. Not .docx: that means a dependency and a binary blob
@@ -199,8 +223,12 @@ async function suggestFolder(
   clientName: string | null,
   participants: readonly string[],
   folders: readonly CandidateFolder[],
-): Promise<{ folderId: string | null; reason: string | null }> {
-  if (!isBedrockConfigured() || folders.length === 0) return { folderId: null, reason: null };
+): Promise<{ folderId: string | null; reason: string | null; failure: string | null }> {
+  if (!isBedrockConfigured()) {
+    return { folderId: null, reason: null, failure: null };
+  }
+
+  if (folders.length === 0) return { folderId: null, reason: null, failure: null };
 
   const prompt = buildFilingPrompt({
     title: transcription.title,
@@ -217,11 +245,18 @@ async function suggestFolder(
       system: FILING_SYSTEM_PROMPT,
       prompt: prompt.text,
       maxTokens: FILING_MAX_TOKENS,
+      timeoutMs: FILING_TIMEOUT_MS,
     });
 
     const parsed = FilingReplySchema.safeParse(parseJsonReply(result.text));
 
-    if (!parsed.success) return { folderId: null, reason: null };
+    if (!parsed.success) {
+      return {
+        folderId: null,
+        reason: null,
+        failure: "The model's answer did not fit the expected shape, so it was ignored.",
+      };
+    }
 
     const reason = parsed.data.reason?.trim() || null;
 
@@ -233,11 +268,23 @@ async function suggestFolder(
       reason: prompt.truncated
         ? `${reason ?? "No reason given."} (Only part of the library was offered, so this was chosen from an incomplete list.)`
         : reason,
+      failure: null,
     };
   } catch (error) {
     console.warn(`suggestFolder: could not get a filing suggestion for ${transcription.id}`, error);
 
-    return { folderId: null, reason: null };
+    // -----------------------------------------------------------------
+    // REPORTED, NOT ONLY LOGGED, and this was a real gap. The middle tier
+    // failing is not the same as the middle tier finding nothing, and both
+    // used to record the same thing: "No folder matches X". Somebody reading
+    // that went looking for a missing folder, when what had actually
+    // happened was that the model call timed out and never saw the list.
+    // -----------------------------------------------------------------
+    return {
+      folderId: null,
+      reason: null,
+      failure: `The model could not be asked which folder to use (${describeError(error)}).`,
+    };
   }
 }
 
@@ -452,8 +499,14 @@ export async function fileTranscription(
     const byName = matchFolderByName(clientName, folders);
 
     const suggestion = byName.folder
-      ? { folderId: null, reason: null }
+      ? { folderId: null, reason: null, failure: null }
       : await suggestFolder(userId, transcription, clientName, participants, folders);
+
+    // Appended to whatever the decision says, rather than replacing it. Both
+    // facts matter: where it ended up, and that one of the three tiers never
+    // got a chance to weigh in.
+    const withFailure = (reason: string | null): string | null =>
+      suggestion.failure ? `${reason ? `${reason} ` : ""}${suggestion.failure}` : reason;
 
     const decision = chooseFilingDestination({
       clientName,
@@ -481,7 +534,7 @@ export async function fileTranscription(
         (await updateTranscriptionFilingRepo(filing.id, {
           status: TRANSCRIPTION_FILING_STATUSES.NOWHERE,
           driveId: library.driveId,
-          reason: decision.kind === "nowhere" ? decision.reason : null,
+          reason: withFailure(decision.kind === "nowhere" ? decision.reason : null),
         })) ?? filing
       );
     }
@@ -515,7 +568,7 @@ export async function fileTranscription(
           // has to stay answerable afterwards.
           folderPath: destination.folder.path,
           decidedVia: destination.via,
-          reason: destination.reason,
+          reason: withFailure(destination.reason),
           fileItemId: uploaded.item.itemId,
           fileWebUrl: uploaded.item.webUrl,
           fileName,
@@ -542,7 +595,7 @@ export async function fileTranscription(
           folderItemId: destination.folder.itemId,
           folderPath: destination.folder.path,
           decidedVia: destination.via,
-          reason: destination.reason,
+          reason: withFailure(destination.reason),
           error: describeError(error),
         })) ?? filing
       );
@@ -597,5 +650,75 @@ export async function sweepTranscriptionFilingService(): Promise<{
     return { examined: pending.length, filed };
   } catch (error) {
     throw handleError("sweepTranscriptionFilingService", error);
+  }
+}
+
+// ===================================================================
+// FILE THIS ONE NOW
+//
+// The manual path, and it covers two cases that the automatic one cannot
+// reach on its own.
+//
+// A RETRY. A filing that ended 'nowhere' or 'failed' is terminal by design -
+// the sweep does not pick those up, because a folder somebody deleted fails
+// identically every few minutes forever and that is how a log stops being
+// worth reading. So somebody has to say "try again", and until now there was
+// nowhere to say it from.
+//
+// A BACKFILL. Every transcription that finished before this feature existed
+// has no filing row at all, and nothing would ever give it one. That is not
+// a small set - it is every meeting anybody had recorded up to the day this
+// shipped - and without this they stay unfiled forever with no explanation.
+//
+// IT DOES NOT SKIP THE DECISION. This does not take a folder, and there is
+// deliberately no way for a caller to name one: the destination is chosen by
+// the same three tiers as an automatic filing, so a retry cannot put a note
+// somewhere the rules would refuse to. Moving a note that landed in the
+// wrong place is a job for SharePoint, where the person doing it can see
+// what else is in the folder.
+//
+// The guard is the transcription's own owner. The upload runs on their
+// delegated token, so a caller who could retry somebody else's filing would
+// be causing a write to SharePoint as them.
+// ===================================================================
+export async function retryTranscriptionFilingService(
+  requestDTO: TranscriptionIdRequestDTO,
+): Promise<TranscriptionFilingStatus | null> {
+  try {
+    const user = await requireUser();
+
+    const transcription = await getTranscriptionForUserRepo(requestDTO.transcriptionId, user.id);
+
+    // Not theirs, or not there. notFound rather than "forbidden", so a
+    // guessed id cannot be used to discover which ones exist.
+    if (!transcription) notFound();
+
+    if (transcription.status !== TRANSCRIPTION_STATUSES.COMPLETED) {
+      throw new DisplayErrorMessage("This can be filed once the transcription has finished.");
+    }
+
+    const existing = await getTranscriptionFilingRepo(transcription.id, user.id);
+
+    // Reset to pending so fileTranscription will act on it. The attempt
+    // counter goes back to zero because this is a person deciding to try
+    // again, not the sweep spending another of its four - and a row that had
+    // exhausted its attempts is exactly the one somebody is here about.
+    if (existing) {
+      await updateTranscriptionFilingRepo(existing.id, {
+        status: TRANSCRIPTION_FILING_STATUSES.PENDING,
+        attempts: 0,
+        error: null,
+      });
+    }
+
+    // No row at all is the backfill case, and needs nothing: the claim
+    // inside fileTranscription creates one.
+    const filing = await fileTranscription(transcription, user.id);
+
+    revalidateTranscriptionViews();
+
+    return filing?.status ?? null;
+  } catch (error) {
+    throw handleError("retryTranscriptionFilingService", error);
   }
 }
