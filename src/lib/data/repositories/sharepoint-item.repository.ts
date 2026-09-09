@@ -203,11 +203,24 @@ export async function getSharepointDriveTotalsRepo(
 //
 // Tombstones are excluded. A folder somebody deleted is not a destination,
 // and the crawl keeps its row so that deletion is visible rather than silent.
+//
+// THE STORED path AND depth BELONG TO THE PARENT, NOT THE ITEM. Graph reports
+// an item's location as parentReference.path, so the row for the folder
+// "Acme" inside "Clients" holds path "/Clients" and depth 1 - the parent's.
+// That is the right thing to store (it is what Graph said) and the wrong
+// thing to hand a caller asking where a folder IS. Composed here, once,
+// because every consumer of this list needs the folder's own path: the model
+// is shown these paths to choose between, and 95 client folders all reading
+// "/Clients" is not a list of destinations, it is 95 identical lines. The
+// depth predicate is off by one for the same reason and is corrected below.
 // -------------------------------------------------------------------
 export interface SharepointFolderOption {
   itemId: string;
+  // The folder's OWN path, composed - "/Clients/Acme", not "/Clients".
   path: string;
   name: string;
+  // The folder's OWN depth. A top-level folder is 1; the drive root is 0 and
+  // is never a candidate.
   depth: number;
 }
 
@@ -223,7 +236,11 @@ export async function listSharepointFoldersRepo(
       .where("driveId", "=", driveId)
       .where("isFolder", "=", true)
       .where("deletedAt", "is", null)
-      .where("depth", "<=", options.maxDepth)
+      // maxDepth is the FOLDER's depth, and the column holds its parent's,
+      // so this is deliberately one less. Asking for depth 3 and getting
+      // depth-4 folders is the kind of off-by-one that shows up as a prompt
+      // full of subdirectories rather than as an error.
+      .where("depth", "<=", options.maxDepth - 1)
       // Both are nullable on the table. A folder with no path cannot be a
       // destination - there is nothing to address a write at - so it is
       // excluded here rather than filtered out in TypeScript afterwards,
@@ -244,11 +261,15 @@ export async function listSharepointFoldersRepo(
     // types rather than changing the result. Written as a filter instead of
     // an assertion so a future change to those predicates cannot turn a null
     // into a runtime surprise.
-    return rows.flatMap((row) =>
-      row.path !== null && row.depth !== null
-        ? [{ itemId: row.itemId, path: row.path, name: row.name, depth: row.depth }]
-        : [],
-    );
+    return rows.flatMap((row) => {
+      if (row.path === null || row.depth === null) return [];
+
+      // The parent path with the folder's own name on the end. The root
+      // reports itself as "/", so joining naively would produce "//Clients".
+      const path = row.path === "/" ? `/${row.name}` : `${row.path}/${row.name}`;
+
+      return [{ itemId: row.itemId, path, name: row.name, depth: row.depth + 1 }];
+    });
   } catch (error) {
     throw handleError("listSharepointFoldersRepo", error);
   }

@@ -97,6 +97,7 @@ import {
 } from "@/lib/speech/speech-client";
 
 import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from "./transcription.mappers";
+import { fileTranscription } from "./filing.service";
 import {
   MAX_MEDIA_BYTES,
   MAX_SUMMARY_ATTEMPTS,
@@ -471,6 +472,41 @@ async function notifyFinished(transcription: Transcription, userId: string): Pro
 }
 
 // -------------------------------------------------------------------
+// The two things that happen when a row stops moving: tell the person, and
+// put the notes in SharePoint.
+//
+// ONE HELPER RATHER THAN TWO CALLS AT FOUR SITES. There are four ways a
+// transcription reaches a terminal state - a Speech failure, a summary given
+// up on, the poll finishing one, the sweep finishing one - and filing added
+// at three of them would work perfectly until somebody noticed one kind of
+// meeting never got filed. Working out which of the four it was would then
+// take an afternoon.
+//
+// NEITHER HALF MAY THROW. The transcript is already stored by the time this
+// runs, and losing a finished job over a push service or an unreachable
+// SharePoint would be exactly backwards. notifyFinished is best-effort by
+// construction; fileTranscription catches its own and reports into its own
+// row. The catches here are the third belt, for whatever either of them
+// fails to hold.
+//
+// Filing a FAILED row is a no-op inside fileTranscription rather than a
+// condition here, so the rule lives with the thing that owns it.
+// -------------------------------------------------------------------
+async function finishTranscription(transcription: Transcription, userId: string): Promise<void> {
+  try {
+    await notifyFinished(transcription, userId);
+  } catch (error) {
+    console.error(`finishTranscription: could not notify about ${transcription.id}`, error);
+  }
+
+  try {
+    await fileTranscription(transcription, userId);
+  } catch (error) {
+    console.error(`finishTranscription: could not file ${transcription.id}`, error);
+  }
+}
+
+// -------------------------------------------------------------------
 // Move one in-flight row along.
 //
 // Called for every unfinished row when the page loads, and again while the
@@ -509,7 +545,7 @@ async function advanceTranscription(
       error: message.slice(0, MAX_ERROR_CHARS),
     });
 
-    await notifyFinished(updated ?? transcription, userId);
+    await finishTranscription(updated ?? transcription, userId);
 
     return updated ?? transcription;
   };
@@ -567,7 +603,7 @@ async function advanceTranscription(
         summaryStartedAt: null,
       });
 
-      if (givenUp) await notifyFinished(givenUp, userId);
+      if (givenUp) await finishTranscription(givenUp, userId);
 
       return givenUp ?? current;
     }
@@ -585,7 +621,7 @@ async function advanceTranscription(
 
     // Only the run that WON the claim notifies. Two sweeps arriving together
     // would otherwise send the same person the same notification twice.
-    if (updated) await notifyFinished(updated, userId);
+    if (updated) await finishTranscription(updated, userId);
 
     // The summary failed but attempts remain. The lease is released so the
     // next sweep can try again rather than waiting for it to expire - a
@@ -734,7 +770,7 @@ async function advanceTranscription(
     completedAt: new Date(),
   });
 
-  if (completed) await notifyFinished(completed, userId);
+  if (completed) await finishTranscription(completed, userId);
 
   return completed ?? stored;
 }

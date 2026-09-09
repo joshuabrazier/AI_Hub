@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
+import { sweepTranscriptionFilingService } from "@/features/transcription/filing.service";
 import {
   sweepAllTranscriptionsService,
   sweepTeamsAutoImportsService,
@@ -82,13 +83,35 @@ export async function POST(request: Request): Promise<Response> {
     console.error("[transcription-sweep] auto-import pass failed", error);
   }
 
+  // -----------------------------------------------------------------
+  // Retry filing BEFORE the advance pass, and the order is deliberate.
+  //
+  // A transcription that finishes below files itself on the spot, spending
+  // attempt one. Running this pass afterwards would find that same row and
+  // immediately spend attempt two - burning half the retry budget inside a
+  // single run, on a SharePoint that has had no time to recover. Running it
+  // first means every retry is a full sweep interval apart, which is what
+  // makes four attempts worth having.
+  //
+  // Its failures are its own, for the same reason as the auto-import pass:
+  // an unreachable SharePoint must not stop transcriptions being summarised.
+  // -----------------------------------------------------------------
+  let filing = { examined: 0, filed: 0 };
+
+  try {
+    filing = await sweepTranscriptionFilingService();
+  } catch (error) {
+    console.error("[transcription-sweep] filing pass failed", error);
+  }
+
   const result = await sweepAllTranscriptionsService();
 
   // Counts only - no ids, no titles, no owners - so a scheduler's logs do
   // not become a record of who is recording what.
   console.info(
     `[transcription-sweep] examined=${result.examined} advanced=${result.advanced}` +
-      ` autoImportDue=${autoImport.examined} imported=${autoImport.imported} gaveUp=${autoImport.gaveUp}`,
+      ` autoImportDue=${autoImport.examined} imported=${autoImport.imported} gaveUp=${autoImport.gaveUp}` +
+      ` filingDue=${filing.examined} filed=${filing.filed}`,
   );
 
   return NextResponse.json({ ok: true, ...result });

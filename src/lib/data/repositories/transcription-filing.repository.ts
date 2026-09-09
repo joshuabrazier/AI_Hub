@@ -81,15 +81,21 @@ export async function updateTranscriptionFilingRepo(
   db: DBClient = database,
 ): Promise<TranscriptionFiling | undefined> {
   try {
-    // `id` is stripped before the spread. A caller-supplied id in a patch
-    // would rewrite the primary key, and `updatedAt` is set here because
-    // this table has no trigger for it - both are house rules that have
-    // bitten before.
-    const { id: _ignored, ...fields } = patch;
+    // The identity columns are stripped before the spread, matching the
+    // transcriptions repository. A caller-supplied id in a patch rewrites the
+    // primary key; a caller-supplied transcription_id or user_id moves the
+    // record of a SharePoint write onto somebody else's meeting. Neither is
+    // ever intended, so neither is accepted.
+    const safePatch = { ...patch };
+    delete safePatch.id;
+    delete safePatch.transcriptionId;
+    delete safePatch.userId;
+    delete safePatch.createdAt;
 
     return await db
       .updateTable("transcriptionFiling")
-      .set({ ...fields, updatedAt: new Date() })
+      // Nothing stamps updated_at in the database, so the repository does.
+      .set({ ...safePatch, updatedAt: new Date() })
       .where("id", "=", filingId)
       .returningAll()
       .executeTakeFirst();
