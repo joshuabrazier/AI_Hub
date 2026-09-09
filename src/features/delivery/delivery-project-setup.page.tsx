@@ -135,9 +135,10 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
           <Button asChild variant="outline">
             <Link href={ROUTES.adminProject(detail.project.id)}>Open the board</Link>
           </Button>
-          <Button asChild variant="outline">
-            <Link href={ROUTES.adminDeliveryBudgetForProject(detail.project.id)}>Budget report</Link>
-          </Button>
+          {/* The budget report link is deliberately NOT here. It was on this
+              header and on the board's, which between them is every project
+              screen - see the note on the board page. The sidebar's Budgets
+              entry is the way in. */}
           {/* Only where there is something to do - restoring an archived
               project is an edit, and the dialog above owns it. */}
           {isArchived ? null : (

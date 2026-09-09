@@ -86,6 +86,16 @@ export default async function DeliveryBoardPage({
       // them as text, here and everywhere else in this feature.
       title={detail.project.title}
       description={`${detail.project.clientName}. Each phase has its own board, with the same four columns.`}
+      // NO BUDGET REPORT LINK HERE, and that is a removal rather than an
+      // omission. It sat on this header and on the project setup header, so
+      // between them it appeared on every project screen an admin opened -
+      // and a link repeated everywhere stops reading as a way to somewhere
+      // and starts reading as furniture. The sidebar's Budgets entry is the
+      // way in, and the page it opens lists every project.
+      //
+      // Project setup stays, because it is the ONE thing this screen cannot
+      // do for itself: the board edits cards, and members, budget groups and
+      // phases are all over there.
       actions={
         isAdmin ? (
           <div className="flex flex-wrap gap-4 text-sm">
@@ -94,12 +104,6 @@ export default async function DeliveryBoardPage({
               className="rounded text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
             >
               Project setup
-            </Link>
-            <Link
-              href={ROUTES.adminDeliveryBudgetForProject(detail.project.id)}
-              className="rounded text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              Budget report
             </Link>
           </div>
         ) : undefined
