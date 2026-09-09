@@ -715,12 +715,18 @@ export async function updateClientService(requestDTO: UpdateClientRequestDTO): P
       throw new DisplayErrorMessage("That client no longer exists.");
     }
 
+    // ONLY WHEN A NAME WAS ACTUALLY SUPPLIED. The schema makes it optional -
+    // absent leaves the name alone - and a patch that changes only the notes
+    // has no new name to collide with, so there is nothing to look up.
+    //
     // Compared through the index's own predicate, and the id check is what
     // makes re-saving a form without touching the name safe: a client is
     // never reported as a duplicate of itself.
-    const sameName = await getClientByNameRepo(requestDTO.name);
+    if (requestDTO.name !== undefined) {
+      const sameName = await getClientByNameRepo(requestDTO.name);
 
-    if (sameName && sameName.id !== before.id) throw duplicateClientMessage(sameName);
+      if (sameName && sameName.id !== before.id) throw duplicateClientMessage(sameName);
+    }
 
     const updated = await updateClientByIdRepo(requestDTO.clientId, {
       name: requestDTO.name,

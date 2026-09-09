@@ -322,7 +322,21 @@ async function requireEditableTask(taskId: string): Promise<{ task: Task; access
 // either. Null is the ordinary case (a card nobody has picked up yet) and
 // is not a failure.
 // -------------------------------------------------------------------
-async function requireProjectMemberAssignee(projectId: string, assigneeId: string | null): Promise<void> {
+// -------------------------------------------------------------------
+// THREE STATES, NOT TWO, which is why the parameter is this wide.
+//
+// UpdateTaskSchema spells assigneeId as .nullable().optional(), and each of
+// the three means something different: absent leaves the assignment alone,
+// null unassigns, an id assigns. The early return covers the first two - an
+// assignment that is not changing has nothing to check, and unassigning
+// names nobody to check against.
+//
+// Only the third is a claim, and claims get verified.
+// -------------------------------------------------------------------
+async function requireProjectMemberAssignee(
+  projectId: string,
+  assigneeId: string | null | undefined,
+): Promise<void> {
   if (!assigneeId) return;
 
   const member = await getProjectMemberRepo(projectId, assigneeId);
@@ -673,9 +687,9 @@ export async function updateTaskService(requestDTO: UpdateTaskRequestDTO): Promi
 
     requireUnarchivedProject(access, "changing a task on it");
 
-    // Null clears the assignment, which is a legitimate edit and is
-    // distinguished from "unchanged" by the schema making the field
-    // required.
+    // Null clears the assignment, which is a legitimate edit; absent leaves
+    // it alone. The schema allows both, so the guard takes all three states
+    // rather than the two it used to claim.
     await requireProjectMemberAssignee(access.projectId, requestDTO.assigneeId);
 
     const updated = await updateTaskRepo(requestDTO.taskId, access.projectId, {

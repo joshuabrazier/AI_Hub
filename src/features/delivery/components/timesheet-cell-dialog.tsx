@@ -145,8 +145,8 @@ export function TimesheetCellDialog({
   const clearDay = () =>
     startTransition(async () => {
       try {
-        for (const timeEntryId of cell.entryIds) {
-          const response = await deleteTimeEntryAction({ timeEntryId });
+        for (const entry of cell.entries) {
+          const response = await deleteTimeEntryAction({ timeEntryId: entry.id });
 
           if (!response.success) {
             toast.error(response.formError ?? MESSAGES.SOMETHING_WENT_WRONG);
@@ -158,7 +158,7 @@ export function TimesheetCellDialog({
         }
 
         setIsClearing(false);
-        toast.success(cell.entryIds.length === 1 ? "Time entry removed" : "Time entries removed");
+        toast.success(cell.entries.length === 1 ? "Time entry removed" : "Time entries removed");
         onSaved();
       } catch (error) {
         handleFrontendErrorWithToast(error);
@@ -182,7 +182,7 @@ export function TimesheetCellDialog({
           {cell.minutes > 0 && (
             <p className="mt-2 text-sm text-muted-foreground">
               {formatMinutesAsClock(cell.minutes)} already logged on this day
-              {cell.entryIds.length > 1 ? `, across ${cell.entryIds.length} entries` : ""}. Anything you add here
+              {cell.entries.length > 1 ? `, across ${cell.entries.length} entries` : ""}. Anything you add here
               is a further entry.
             </p>
           )}

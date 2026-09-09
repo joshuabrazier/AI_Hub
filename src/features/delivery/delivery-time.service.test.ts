@@ -521,7 +521,7 @@ describe("getTimesheetWeekService", () => {
     expect(week.weekStart).toBe("2026-06-15");
   });
 
-  it("builds rows from the ENTRIES, totals a day with two entries, and lists both ids", async () => {
+  it("builds rows from the ENTRIES, totals a day with two entries, and carries both whole", async () => {
     signedInAsMember();
     mockEntriesInRange.mockResolvedValue([
       entry({ id: "entry-1", workDate: "2026-06-16", minutes: 60 }),
@@ -533,7 +533,18 @@ describe("getTimesheetWeekService", () => {
     const week = await getTimesheetWeekService("2026-06-15");
 
     expect(week.rows).toHaveLength(1);
-    expect(week.rows[0].days[1]).toEqual({ date: "2026-06-16", minutes: 90, entryIds: ["entry-1", "entry-2"] });
+    // The cell TOTALS the day and carries each entry whole. The minutes and
+    // notes travel with the id because a dialog opened on this day has to
+    // fill its own form in - handles alone left it able to offer nothing but
+    // "clear the day and type it again".
+    expect(week.rows[0].days[1]).toEqual({
+      date: "2026-06-16",
+      minutes: 90,
+      entries: [
+        { id: "entry-1", minutes: 60, notes: null },
+        { id: "entry-2", minutes: 30, notes: null },
+      ],
+    });
     expect(week.rows[0].days[3].minutes).toBe(45);
     expect(week.rows[0].totalMinutes).toBe(135);
     expect(week.dayTotalMinutes).toEqual([0, 90, 0, 45, 0, 0, 0]);
@@ -642,7 +653,7 @@ describe("addTimesheetRowService", () => {
       "2026-06-20",
       "2026-06-21",
     ]);
-    expect(row.days.every((day) => day.minutes === 0 && day.entryIds.length === 0)).toBe(true);
+    expect(row.days.every((day) => day.minutes === 0 && day.entries.length === 0)).toBe(true);
     expect(mockAddEntry).not.toHaveBeenCalled();
   });
 
