@@ -64,6 +64,7 @@ import {
   ATTACHMENT_NAME_MAX_CHARS,
   budgetProgress,
   canEditProjectTasks,
+  placeIdAtPosition,
   type BoardColumnDTO,
   type BoardDTO,
   type BoardPhaseDTO,
@@ -384,31 +385,11 @@ async function columnCards(projectId: string, phaseId: string, column: TaskColum
   return tasks.filter((task) => task.phaseId === phaseId && task.boardColumn === column);
 }
 
-// -------------------------------------------------------------------
-// The destination column's whole ordered id list, with the moved card at
-// the slot it was dropped in.
-//
-// EXPORTED AND TESTED DIRECTLY, because every interesting case here is a
-// boundary: a card dropped below the last one, a stale position from a
-// board that has since changed, and a card dragged within its own column -
-// where removing it before inserting is what stops it landing one slot
-// short of where it was let go.
-//
-// The position is CLAMPED rather than refused. It is an index into a list
-// the browser last saw some milliseconds ago; a drop past the end of a
-// column somebody else has just emptied means "last", and refusing it would
-// undo a drag for a reason nobody could act on.
-// -------------------------------------------------------------------
-export function placeIdAtPosition(
-  orderedIds: readonly string[],
-  taskId: string,
-  position: number,
-): string[] {
-  const without = orderedIds.filter((id) => id !== taskId);
-  const index = Math.min(Math.max(0, Math.trunc(position)), without.length);
-
-  return [...without.slice(0, index), taskId, ...without.slice(index)];
-}
+// placeIdAtPosition MOVED TO delivery.types.ts, and is re-exported here so
+// this file's own name for it still resolves. It had to move: this file is
+// `server-only`, and the board needs the identical rule to draw a drag
+// immediately - see the note over the function itself.
+export { placeIdAtPosition };
 
 // -------------------------------------------------------------------
 // Mappers. Every one of them is total: a card, an attachment or an entry

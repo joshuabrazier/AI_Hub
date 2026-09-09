@@ -440,6 +440,47 @@ export function formatMinutesAsHours(minutes: number): string {
 
 // -------------------------------------------------------------------
 // ===================================================================
+// WHERE A DROPPED CARD LANDS
+// ===================================================================
+//
+// The destination column's whole ordered id list, with the moved card at the
+// slot it was dropped in.
+//
+// IT LIVES HERE, NOT IN THE SERVICE, AND THAT IS THE POINT. It was exported
+// from delivery-board.service.ts, which carries `import "server-only"` - so
+// the board could not use it, and showing a drag immediately needed the rule
+// written a second time in a client component. Two implementations of where
+// a card lands is how the card the browser shows and the card the server
+// saved end up one slot apart, which looks like the board jumping.
+//
+// So the SERVICE and the BOARD import the same function: the browser applies
+// it to draw the move at once, the service applies it to the rows, and there
+// is no arrangement in which they can disagree.
+//
+// EVERY INTERESTING CASE IS A BOUNDARY, which is why it is tested directly:
+// a card dropped below the last one, a stale position from a board that has
+// since changed, and a card dragged WITHIN its own column - where removing it
+// before inserting is what stops it landing one slot short of where it was
+// let go.
+//
+// The position is CLAMPED rather than refused. It is an index into a list the
+// browser last saw some milliseconds ago; a drop past the end of a column
+// somebody else has just emptied means "last", and refusing it would undo a
+// drag for a reason nobody could act on.
+// -------------------------------------------------------------------
+export function placeIdAtPosition(
+  orderedIds: readonly string[],
+  taskId: string,
+  position: number,
+): string[] {
+  const without = orderedIds.filter((id) => id !== taskId);
+  const index = Math.min(Math.max(0, Math.trunc(position)), without.length);
+
+  return [...without.slice(0, index), taskId, ...without.slice(index)];
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
 // BUDGET ROLLUP
 // ===================================================================
 //

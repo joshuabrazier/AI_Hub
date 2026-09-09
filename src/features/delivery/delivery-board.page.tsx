@@ -150,6 +150,11 @@ export default async function DeliveryBoardPage({
 
       <BoardWorkspace
         projects={links}
+        // The summary itself, not just its id: the board builds a
+        // one-project timesheet catalogue from it so the estimate dialog can
+        // be opened from a card. Folding the phases here a second time would
+        // be a second answer to what a task option looks like.
+        project={detail.project}
         activeProjectId={detail.project.id}
         projectStatus={detail.project.status}
         board={board}

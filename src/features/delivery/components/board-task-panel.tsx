@@ -135,6 +135,7 @@ export function BoardTaskPanel({
   onLogTime,
   onDelete,
   onMove,
+  onAdjustEstimate,
 }: {
   task: TaskCardDTO;
   boardColumn: TaskColumn;
@@ -150,6 +151,12 @@ export function BoardTaskPanel({
   onLogTime: (task: TaskCardDTO) => void;
   onDelete: (task: TaskCardDTO) => void;
   onMove: MoveTaskHandler;
+  /**
+   * Opened by the WORKSPACE, not from inside this sheet. A dialog rendered
+   * within a Sheet is nested in it, so closing the sheet would take the
+   * dialog with it mid-edit.
+   */
+  onAdjustEstimate: (task: TaskCardDTO) => void;
 }) {
   const [detail, setDetail] = useState<TaskDetailDTO | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -319,6 +326,32 @@ export function BoardTaskPanel({
                 </dd>
               </div>
             </dl>
+
+            {/* -----------------------------------------------------------
+                CHANGING THE ESTIMATE, FROM THE BOARD.
+
+                This was reachable only from the timesheet, so realising a
+                card will take longer meant leaving the board to say so - and
+                the board is where somebody is standing when they realise it.
+
+                It is here rather than in the edit dialog because an estimate
+                is not an ordinary field: every change lands in the
+                append-only log with a reason, and it can TRANSFER hours from
+                another task instead of growing the project. A number box in
+                an edit form would lose both.
+                ----------------------------------------------------------- */}
+            {canEditTasks ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={() => onAdjustEstimate(card)}
+              >
+                <Timer size={14} aria-hidden="true" />
+                Adjust estimate
+              </Button>
+            ) : null}
           </section>
 
           <section aria-labelledby="task-panel-description">

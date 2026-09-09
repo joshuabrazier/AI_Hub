@@ -1,6 +1,6 @@
 import type { TaskColumn } from "@/lib/data/kysely-database-types";
 
-import type { BoardDTO, TaskCardDTO } from "../delivery.types";
+import { placeIdAtPosition, type BoardDTO, type TaskCardDTO } from "../delivery.types";
 
 // -------------------------------------------------------------------
 // The board's arithmetic, away from the components that draw it.
@@ -129,4 +129,102 @@ export function movePhaseOrder(
   reordered.splice(to, 0, phaseId);
 
   return reordered;
+}
+
+// -------------------------------------------------------------------
+// THE BOARD AS IT WILL BE, so a drag can be drawn before the server answers.
+//
+// WHY THIS EXISTS. A move used to await the action and then router.refresh(),
+// which means the card stayed where it was for a whole round trip plus a
+// re-render - and after a DRAG that is unmistakable: the gesture ends, the
+// card snaps back to where it came from, and some time later it appears
+// where it was dropped. People read that as the board being broken, and drag
+// the card again.
+//
+// So the workspace applies this immediately and sends the write behind it.
+// The optimistic value is discarded when the refresh lands, so the server
+// remains the authority and a refusal simply puts the card back.
+//
+// IT USES placeIdAtPosition, THE SERVICE'S OWN RULE, imported rather than
+// reimplemented. That is the whole reason that function moved out of a
+// server-only file: two implementations of where a dropped card lands is how
+// the card the browser shows ends up one slot from the card the server saved,
+// and the correction arrives as a visible jump a second later.
+//
+// A CARD CAN CHANGE PHASE AS WELL AS COLUMN, so the copy written into the
+// destination gets the destination's `phaseId`. Leaving it would put a card
+// in a column whose own id disagrees with the card in it - which the next
+// `indexBoard` would then locate by the stale value.
+//
+// AN UNKNOWN CARD LEAVES THE BOARD ALONE. The board has changed underneath -
+// somebody else deleted it - and inventing a card to satisfy the gesture
+// would show work that does not exist. The write still goes, and the service
+// answers about it.
+// -------------------------------------------------------------------
+export function applyMove(board: BoardDTO, taskId: string, destination: BoardPlacement): BoardDTO {
+  let moved: TaskCardDTO | undefined;
+
+  for (const phase of board.phases) {
+    for (const column of phase.columns) {
+      const found = column.tasks.find((task) => task.id === taskId);
+      if (found) moved = found;
+    }
+  }
+
+  if (!moved) return board;
+
+  // The card as it will be once it lands. `position` is set from the slot
+  // rather than left stale, so a second drag of the same card reads the
+  // index it is actually at.
+  const landing: TaskCardDTO = {
+    ...moved,
+    phaseId: destination.phaseId,
+    boardColumn: destination.boardColumn,
+  };
+
+  return {
+    ...board,
+    phases: board.phases.map((phase) => ({
+      ...phase,
+      columns: phase.columns.map((column) => {
+        const isDestination =
+          phase.phaseId === destination.phaseId && column.column === destination.boardColumn;
+
+        // Everywhere else: drop the card if it was here. Unconditional
+        // rather than guarded on the source, because a card in two columns
+        // for one render is worse than a wasted filter.
+        if (!isDestination) {
+          const tasks = column.tasks.filter((task) => task.id !== taskId);
+
+          return tasks.length === column.tasks.length
+            ? column
+            : { ...column, tasks: renumber(tasks) };
+        }
+
+        // The destination: the same ordered-id rule the service applies,
+        // then the cards back in that order.
+        const byId = new Map(column.tasks.map((task) => [task.id, task]));
+        byId.set(taskId, landing);
+
+        const order = placeIdAtPosition(
+          column.tasks.map((task) => task.id),
+          taskId,
+          destination.position,
+        );
+
+        return {
+          ...column,
+          tasks: renumber(order.flatMap((id) => {
+            const task = byId.get(id);
+            return task ? [task] : [];
+          })),
+        };
+      }),
+    })),
+  };
+}
+
+/** Positions to match the array, so a second drag reads a live index. */
+function renumber(tasks: readonly TaskCardDTO[]): TaskCardDTO[] {
+  return tasks.map((task, position) => (task.position === position ? task : { ...task, position }));
 }
