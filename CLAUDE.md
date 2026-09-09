@@ -37,13 +37,24 @@ Package manager is **pnpm 10**; Node 20. Run lint and tsc before treating a
 change as done - CI enforces both, and it type-checks `tests/**` too, so a
 broken spec breaks the build.
 
-**Do NOT run `pnpm build` to check your work.** Verify with `pnpm exec tsc
---noEmit`, `pnpm lint` and `pnpm test` - between them they catch everything a
-build would, in a fraction of the time. `next build` runs type checking and
-linting itself, so chaining them in front of it pays for the same work twice,
-and `output: "standalone"` then traces and COPIES most of an 800 MB
-`node_modules` into `.next/standalone`. On Windows that is minutes, not
-seconds. Build only when you are about to deploy and want it proven.
+**`pnpm build` then `pnpm start` is a supported way to RUN this app locally**,
+and on some machines it is the only bearable one: `next dev` compiles a route on
+first request and recompiles on every edit, which on a tree this size can be
+slower to work in than rebuilding outright. Build, start, click about, rebuild.
+
+`output: "standalone"` is opt-in behind `BUILD_STANDALONE`, because it traces
+and COPIES most of an 800 MB `node_modules` into `.next/standalone` and
+`pnpm start` never reads the result - it serves `.next` directly. Measured cold
+on Windows with the Defender exclusion in place: **56s without it, 79s with**.
+So it is worth about 23 seconds a build, not the minutes this file used to
+claim. CI sets the variable and gets the same artifact as before; set it
+yourself only to prove the deploy package locally.
+
+To CHECK a change, `pnpm exec tsc --noEmit`, `pnpm lint` and `pnpm test` still
+answer faster than any build, so reach for them when the question is "does this
+compile" rather than "does this work". Do not chain them IN FRONT of a build:
+`next build` type-checks and lints itself, so that pays for the same work
+twice.
 
 **On Windows, exclude the repo from Defender before doing anything else.**
 Real-time scanning inspects every file in `node_modules` and `.next`

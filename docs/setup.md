@@ -132,7 +132,7 @@ pnpm dev          # dev server at http://localhost:3000
 | Script | Purpose |
 | --- | --- |
 | `pnpm dev` | development server |
-| `pnpm build` | production build (standalone output) |
+| `pnpm build` | production build. Standalone output only when `BUILD_STANDALONE` is set (CI does; a local build skips the slow `node_modules` trace) |
 | `pnpm start` | serve the production build |
 | `pnpm lint` | ESLint |
 | `pnpm test` | unit tests (Vitest, one-shot) |
@@ -176,15 +176,27 @@ Add-MpPreference -ExclusionPath "C:\Dev\AI_Hub"
 Adjust the path if the repo lives elsewhere. This speeds up `pnpm install`,
 `pnpm build` and `pnpm dev` startup together.
 
-**And do not use `pnpm build` to check your work.** `pnpm exec tsc --noEmit`,
-`pnpm lint` and `pnpm test` catch everything it would and finish quickly.
-`next build` type-checks and lints internally, then `output: "standalone"`
-traces and copies most of `node_modules` into `.next/standalone` - which is
-what you are waiting for after "Compiled successfully" appears. Save it for
-when you are actually deploying.
+**If `pnpm dev` is too slow to work in, build and run instead.** `pnpm build`
+then `pnpm start` serves the same app at the same port, already compiled, and
+for a click-about-and-check loop that beats waiting on a route to compile on
+first request.
 
-CI runs on Linux and has neither problem, so this is a local annoyance rather
-than anything that affects a deploy.
+Part of the tail after "Compiled successfully" is `output: "standalone"` tracing
+and copying most of `node_modules` into `.next/standalone`. That artifact is
+only for the App Service deploy and `pnpm start` never opens it, so it sits
+behind `BUILD_STANDALONE` and a local build skips it - measured cold, 56s
+against 79s. Set the variable if you want to prove the deploy package:
+
+```powershell
+$env:BUILD_STANDALONE = "1"; pnpm build
+```
+
+To CHECK a change rather than run it, `pnpm exec tsc --noEmit`, `pnpm lint` and
+`pnpm test` still answer faster than a build. Do not chain them in front of one:
+`next build` type-checks and lints internally, so that pays twice.
+
+CI runs on Linux and has neither problem, so the speed of a local build is an
+annoyance rather than anything that affects a deploy.
 
 ## 5. Tests
 
