@@ -142,11 +142,26 @@ export const BEDROCK_RETRY_BACKOFF_CEILING_MS = 20_000;
 // every attempt going silent for its full window, with a maximum backoff
 // between them.
 //
-// A CALLER'S DEADLINE MUST BE LONGER THAN THIS. Set one tighter and the
+// A CALLER'S PHASE BUDGET MUST BE LONGER THAN THIS. Set one tighter and the
 // caller aborts mid-ladder, the SDK's named TimeoutError is never thrown,
 // and the failure arrives as a bare AbortError with no cause - the exact
 // trap the old configuration fell into. bedrock-retry-budget.test.ts holds
 // the line.
+//
+// ONE DELIBERATE EXCEPTION, AND IT IS NOT A LOOPHOLE: model-stream.ts bounds
+// TIME TO FIRST EVENT at less than this on purpose. The rule above is about
+// not losing a diagnosis, and that is why it holds - a phase budget firing
+// mid-ladder yields "AbortError: Request aborted" and nothing else. The
+// first-event deadline CATCHES its own abort and converts it into either
+// another attempt or a named ModelSilentError, so nothing is lost and a
+// stalled call is recovered instead of merely described.
+//
+// The interaction is worth knowing when reading a log. On a genuinely dead
+// socket the SDK still wins the race - socketTimeout at 25s is inside the
+// 30s first-event window - so that failure keeps its TimeoutError. What the
+// tighter deadline cuts short is the SDK's SECOND attempt, which for this
+// failure mode is redundant: model-stream re-issues the whole request
+// anyway, and does it from a layer that can tell the reader what happened.
 export const BEDROCK_LADDER_WORST_CASE_MS =
   BEDROCK_SOCKET_IDLE_MS * MAX_ATTEMPTS + BEDROCK_RETRY_BACKOFF_CEILING_MS * (MAX_ATTEMPTS - 1);
 
@@ -186,13 +201,67 @@ export function getBedrockClient(): BedrockRuntimeClient {
       socketTimeout: BEDROCK_SOCKET_IDLE_MS,
       connectionTimeout: CONNECT_TIMEOUT_MS,
     },
-    // Adaptive retries back off with jitter on throttling and transient
-    // 5xx. AccessDenied and ValidationException are not retried by design:
-    // the first means the key is wrong, revoked, or pointed at the wrong
-    // region, and the second means the request is malformed. Retrying
-    // either just burns time.
+    // -----------------------------------------------------------------
+    // STANDARD, AND NOT "adaptive". THIS IS A CORRECTION, AND IT IS THE ONE
+    // THAT EXPLAINS "IT STOPS WORKING FOR EVERYONE AT ONCE".
+    //
+    // Both modes back off with jitter on throttling and transient 5xx, and
+    // both decline to retry AccessDenied or ValidationException by design -
+    // the first means the key is wrong, revoked or pointed at the wrong
+    // region, the second means the request is malformed, and retrying
+    // either just burns time. That much was true of the old comment here.
+    //
+    // What it did not say is what ADAPTIVE adds on top, which is a
+    // CLIENT-SIDE RATE LIMITER. From @smithy/core's retry submodule:
+    //
+    //   AdaptiveRetryStrategy.acquireInitialRetryToken() {
+    //     const token = await this.standardRetryStrategy...
+    //     await this.rateLimiter.getSendToken();      // <- every request
+    //   }
+    //
+    //   DefaultRateLimiter.acquireTokenBucket(amount) {
+    //     if (!this.enabled) return;
+    //     while (amount > this.availableTokens) {
+    //       const delay = ((amount - this.availableTokens) / this.fillRate) * 1000;
+    //       await new Promise((r) => setTimeout(r, delay));
+    //       this.refillTokenBucket();
+    //     }
+    //   }
+    //
+    // Three properties of that, and every one of them is a problem here:
+    //
+    //   IT SLEEPS BEFORE THE REQUEST IS SENT. The wait happens in the retry
+    //   strategy, ahead of the HTTP handler, so NEITHER connectionTimeout
+    //   NOR socketTimeout bounds it - there is no socket yet. It is also
+    //   absent from BEDROCK_LADDER_WORST_CASE_MS below, which therefore
+    //   understates what a call can cost before any caller's deadline.
+    //
+    //   IT NEVER TURNS ITSELF OFF. `enabled` is set true by
+    //   enableTokenBucket() on the first throttling response and there is no
+    //   assignment back to false anywhere in the module. One throttle arms
+    //   it for the LIFE OF THE PROCESS, which is why a restart appeared to
+    //   fix this and nothing else did.
+    //
+    //   IT IS SHARED BY EVERYONE. The limiter belongs to the retry strategy,
+    //   the strategy belongs to the client, and the client is the singleton
+    //   below - one per Node process, not one per request. So the bucket is
+    //   global: once armed, maxCapacity floors at 1 and fillRate at 0.5, and
+    //   every user of this app is queueing through a bucket that admits
+    //   roughly one request every two seconds. That is the mechanism behind
+    //   "it was fine and then it stopped for everybody".
+    //
+    // Adaptive is built for a single-tenant batch client that owns its whole
+    // service quota and wants to self-pace into it. A shared web request path
+    // is the case it handles worst: the pacing is invisible, unbounded by any
+    // timeout we set, and paid by whoever asks next.
+    //
+    // Standard mode keeps the backoff and drops the limiter. If throttling is
+    // genuinely the problem it now arrives AS a ThrottlingException, with a
+    // name, in the request log - which is a thing that can be diagnosed and
+    // quota-adjusted, rather than silence.
+    // -----------------------------------------------------------------
     maxAttempts: MAX_ATTEMPTS,
-    retryMode: "adaptive",
+    retryMode: "standard",
   });
 
   return cachedClient;

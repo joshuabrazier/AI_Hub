@@ -81,8 +81,13 @@ describe("phase budgets against the ladder below them", () => {
   });
 
   it.each(MODEL_PHASES)("leaves real headroom, not milliseconds: $name", (phase) => {
-    // Wide enough that ordinary variance in adaptive backoff cannot close
-    // it, since the real backoff is not knowable from here.
+    // Wide enough that ordinary variance in the SDK's backoff cannot close
+    // it, since the real sleep is jittered and not knowable from here.
+    // (This said "adaptive backoff" when the client used retryMode
+    // "adaptive". It does not any more, and the reason is worth the trip:
+    // adaptive adds a client-side rate limiter that arms permanently on the
+    // first throttle and paces every user through one shared bucket. See the
+    // block on retryMode in bedrock-client.ts.)
     expect(phase.budgetMs - BEDROCK_LADDER_WORST_CASE_MS).toBeGreaterThanOrEqual(5_000);
   });
 
