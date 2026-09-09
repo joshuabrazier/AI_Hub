@@ -9,12 +9,15 @@ import {
   deleteUserRateService,
   getUserRateDeletionImpactService,
   setUserRateService,
+  setUserRatesService,
 } from "./delivery-rates.service";
 import {
   DeleteUserRateRequestDTO,
   DeleteUserRateSchema,
   SetUserRateRequestDTO,
+  SetUserRatesRequestDTO,
   SetUserRateSchema,
+  SetUserRatesSchema,
   UserRateDTO,
   UserRateDeletionImpactDTO,
 } from "./delivery.types";
@@ -22,13 +25,20 @@ import {
 // -------------------------------------------------------------------
 // Rate actions.
 //
-// THREE, for a service with seven exports, and the arithmetic is worth
-// stating. Two of the seven are mutations and both are here. Four are
-// reads a SERVER COMPONENT performs directly - the overview, one person's
-// history and a project's budget report are what their pages render, and
-// `rateDeletionConsequenceOf` is pure and has no session to check - so
-// none of them gets an action. The seventh, the deletion impact, is the
-// exception argued for below.
+// FOUR, for a service with eight exports, and the arithmetic is worth
+// stating. Three of the eight are mutations and all three are here: setting
+// one band, setting every band somebody entered, and deleting a row. Four
+// are reads a SERVER COMPONENT performs directly - the overview, one
+// person's history and a project's budget report are what their pages
+// render, and `rateDeletionConsequenceOf` is pure and has no session to
+// check - so none of them gets an action. The eighth, the deletion impact,
+// is the exception argued for below.
+//
+// TWO SET ACTIONS IS NOT A DUPLICATE. The rates overview prices a PERSON -
+// three bands from one date, in one transaction - and the history list
+// corrects one dated ROW in one band. They are different acts on different
+// screens: posting three bands at a historical row's date would move bands
+// nobody had opened.
 //
 // EVERY ONE OF THEM IS ADMIN-ONLY AND NONE OF THEM SAYS SO. The gate here
 // is `requireUser`, exactly as it is on the transcription actions, and the
@@ -99,6 +109,42 @@ export async function setUserRateAction(
     return { success: true, data: rate } satisfies ServerApiResponse<UserRateDTO>;
   } catch (error) {
     return handleServerApiError("setUserRateAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Set every band somebody entered for one person, from one date.
+//
+// The parameter is the REQUEST DTO for the same reason as the single-band
+// action above: the amounts are coerced, so the Input type widens to
+// `unknown` and typing against it would let dollars through where cents are
+// read.
+//
+// Returns the saved rows. The screen needs them back for the reason the
+// single-band action does - the upsert may have CORRECTED existing rows
+// rather than added them, and the caller cannot tell which from what it
+// sent - and it needs them per band, because a payload with two bands comes
+// back as two rows.
+//
+// THE SINGLE-BAND ACTION STAYS. It is what the history list uses to correct
+// one row on one date, which is a genuinely different act from deciding what
+// a person is worth: the row being corrected has its own effective date, and
+// posting three bands at that date would move bands nobody was looking at.
+// -------------------------------------------------------------------
+export async function setUserRatesAction(
+  requestDTO: SetUserRatesRequestDTO,
+): Promise<ServerApiResponse<UserRateDTO[]>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(SetUserRatesSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const rates = await setUserRatesService(validatedRequest.data);
+
+    return { success: true, data: rates } satisfies ServerApiResponse<UserRateDTO[]>;
+  } catch (error) {
+    return handleServerApiError("setUserRatesAction", error);
   }
 }
 

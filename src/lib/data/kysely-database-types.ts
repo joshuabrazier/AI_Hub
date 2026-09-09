@@ -1445,6 +1445,17 @@ export const RATE_BAND_LABELS: Record<RateBand, string> = {
   [RATE_BANDS.HIGH]: "High",
 };
 
+// Cheapest to dearest. Exported for the same reason TASK_COLUMN_ORDER is: a
+// screen or a service that iterated Object.values(RATE_BANDS) would inherit
+// its order from however the constant happens to be declared, so reordering
+// that would silently reorder a rates form and an audit summary. Ordering is
+// a decision, and it is made once, here.
+export const RATE_BAND_ORDER: readonly RateBand[] = [
+  RATE_BANDS.DISCOUNTED,
+  RATE_BANDS.STANDARD,
+  RATE_BANDS.HIGH,
+];
+
 // -------------------------------------------------------------------
 // The four columns of every board.
 //

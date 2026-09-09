@@ -757,21 +757,64 @@ const dollarAmountRules = z
   }, "Use at most two decimal places")
   .transform((value) => Math.round(value * 100));
 
+// -------------------------------------------------------------------
+// AN EMPTY STRING IS MAPPED TO NaN FOR THE SAME REASON null IS, and it was
+// missing.
+//
+// `Number("")` is 0. So is `Number("   ")`. The guard in front of this
+// coercion caught null and let both of those through, which meant a charge
+// rate submitted as an empty string stored $0.00 - the work recorded as
+// FREE, on a plausible-looking row, beside rates that are right.
+//
+// That is the identical failure the null guard above exists to prevent,
+// through the identical mechanism, and it was reached the moment a form sent
+// a band with a cost typed and the charge box left empty. The single-band
+// dialog happened not to expose it because its submit button is disabled
+// until the charge box has something in it - so the schema was being
+// protected by a UI check, which is the wrong way round and only holds until
+// the next caller.
+//
+// `optionalDollarsField` below is UNAFFECTED, and deliberately so: it is a
+// union that tries `z.literal("")` FIRST, so an empty COST box still parses
+// as "nobody has recorded a cost" and stores null. Empty means absent there
+// and refused here, which is the whole difference between the two fields.
+// -------------------------------------------------------------------
 const dollarsField = z
-  .preprocess((value) => (value === null ? Number.NaN : value), z.coerce.number())
+  .preprocess(
+    (value) =>
+      value === null || (typeof value === "string" && value.trim().length === 0)
+        ? Number.NaN
+        : value,
+    z.coerce.number(),
+  )
   .pipe(dollarAmountRules);
 
 // -------------------------------------------------------------------
 // Empty means "not recorded", which for a cost rate is a real answer:
 // margin stays unknown rather than becoming 100%.
 //
-// "" IS THE ONE SPELLING OF ABSENCE THIS FIELD ACCEPTS, because it is what
-// an empty text input actually sends. null and undefined are both refused -
-// null by the guard on dollarsField above, which explains why - so a JSON
-// caller cannot reach the coercion and have absence read as nought.
+// A BLANK BOX IS THE ONE SPELLING OF ABSENCE THIS FIELD ACCEPTS, because it
+// is what an empty text input actually sends. null and undefined are both
+// refused - null by the guard on dollarsField above, which explains why - so
+// a JSON caller cannot reach the coercion and have absence read as nought.
+//
+// WHITESPACE COUNTS AS BLANK, matching the guard on dollarsField rather than
+// only `z.literal("")`. Before, "  " was refused here and refused there, so
+// nothing was ever mispriced by it - but the two fields disagreed about what
+// blank MEANS, and the version that mattered was reached only because the
+// form happens to trim before sending. A schema protected by a caller's
+// tidiness is protected until the next caller.
+//
+// The direction is the safe one either way: this maps blank to NULL, which
+// is the honest "nobody has recorded a cost", and never to a number.
 // -------------------------------------------------------------------
+const blankMoney = z
+  .string()
+  .refine((value) => value.trim().length === 0)
+  .transform(() => "" as const);
+
 const optionalDollarsField = z
-  .union([z.literal(""), dollarsField])
+  .union([blankMoney, dollarsField])
   .transform((value) => (value === "" ? null : value));
 
 // -------------------------------------------------------------------
@@ -1750,6 +1793,63 @@ export const SetUserRateSchema = z.object({
 
 export type SetUserRateInputDTO = z.input<typeof SetUserRateSchema>;
 export type SetUserRateRequestDTO = z.output<typeof SetUserRateSchema>;
+
+// -------------------------------------------------------------------
+// ALL THREE BANDS FOR ONE PERSON, FROM ONE DATE.
+//
+// WHY THIS EXISTS BESIDE THE SINGLE-BAND SCHEMA ABOVE. Setting somebody up
+// meant opening a dialog, choosing a band, typing a date and two amounts,
+// saving, and then doing the whole thing twice more - for one person, whose
+// three bands almost always start on the same day and are decided in the same
+// conversation. The date was retyped each time, which is the field that must
+// match across the three or the person is priced differently in different
+// bands from different Mondays.
+//
+// So the date is ONCE here, and it is the reason this is not just a
+// convenience: three separate saves could not share one, and nothing stopped
+// them disagreeing.
+//
+// A BAND LEFT OUT IS LEFT ALONE, exactly as an absent key means elsewhere in
+// this file. That is what makes this safe to use for an edit rather than only
+// for first-time setup: somebody raising the standard rate posts standard,
+// and the discounted and high rates they never looked at are untouched
+// instead of being blanked by a form that carried empty boxes for them.
+//
+// AT LEAST ONE IS REQUIRED, because a payload naming a person and a date and
+// no rates is not an edit - it is a form somebody opened and saved without
+// typing anything, and answering it with a silent success would have them
+// believe a rate was set.
+//
+// chargeRate is REQUIRED WITHIN a band and costRate is not, which is the
+// single-band rule unchanged: a row with no charge rate is not a rate, and an
+// empty cost means nobody has recorded one so margin stays unknown rather
+// than reading as 100%.
+// -------------------------------------------------------------------
+const bandRateFields = z.object({
+  chargeRate: dollarsField,
+  costRate: optionalDollarsField,
+});
+
+export const SetUserRatesSchema = z.object({
+  userId: userIdSchema,
+  // ONE date for every band supplied. See the note above.
+  effectiveFrom: calendarDateField,
+  bands: z
+    .object({
+      [RATE_BANDS.DISCOUNTED]: bandRateFields.optional(),
+      [RATE_BANDS.STANDARD]: bandRateFields.optional(),
+      [RATE_BANDS.HIGH]: bandRateFields.optional(),
+    })
+    // Checked on the PARSED object rather than the payload, so a band sent
+    // as undefined counts as absent the same way a missing key does.
+    .refine(
+      (bands) => Object.values(bands).some((band) => band !== undefined),
+      "Enter a rate for at least one band",
+    ),
+});
+
+export type SetUserRatesInputDTO = z.input<typeof SetUserRatesSchema>;
+export type SetUserRatesRequestDTO = z.output<typeof SetUserRatesSchema>;
 
 // -------------------------------------------------------------------
 // Removing a rate ROW, not a rate: `user_rates` is a history, and deleting

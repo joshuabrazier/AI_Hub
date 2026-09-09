@@ -82,8 +82,10 @@ export function getRatesOverviewColumns({
       header: columnHeader("Actions", "center"),
       cell: ({ row }) => (
         <div className="flex justify-center gap-2">
+          {/* Plural, because it now opens every band at once. The label is
+              the only place a person learns that before clicking. */}
           <Button type="button" variant="outline" size="sm" onClick={() => onSetRate(row.original)}>
-            Set rate
+            Set rates
           </Button>
           {/* A real link, not a button that pushes: this opens a page, and a
               link can be middle-clicked, copied and read by anything that

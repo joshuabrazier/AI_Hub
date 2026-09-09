@@ -1,6 +1,6 @@
 import "server-only";
 
-import { database, DBClient } from "@/lib/data/kysely-database-client";
+import { database, DBClient, runInTransaction } from "@/lib/data/kysely-database-client";
 import { handleError } from "@/lib/handle-errors";
 
 import { NewUserRate, RateBand, UserRate } from "../kysely-database-types";
@@ -45,6 +45,48 @@ import { NewUserRate, RateBand, UserRate } from "../kysely-database-types";
 // and the row keeps the identity it already had. `updatedAt` is set here
 // because nothing in this schema stamps it.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// SEVERAL RATES FOR ONE PERSON, ALL OR NOTHING.
+//
+// One person's three bands are decided in one conversation and start on one
+// day, so they are saved as one act. THE TRANSACTION IS THE POINT: a second
+// upsert failing partway would leave somebody priced in one band from the
+// new date and in another from the old one, which is a pricing error nothing
+// on any screen would show and nobody would think to look for.
+//
+// IT IS HERE RATHER THAN IN THE SERVICE because a repository is the only
+// thing in this app that touches the database, and that includes deciding
+// what shares a transaction. A service reaching for `database` and
+// `runInTransaction` to wrap two repository calls is the layering breach the
+// rule exists to prevent - and it would put the transaction boundary in a
+// file that cannot see the queries inside it.
+//
+// Each row is the same upsert as the single-band version below, on the same
+// (user, band, date) conflict target, so saving over a combination that
+// already has a rate corrects it rather than adding a second.
+// -------------------------------------------------------------------
+export async function upsertUserRatesRepo(
+  rows: readonly NewUserRate[],
+  db: DBClient = database,
+): Promise<UserRate[]> {
+  try {
+    return await runInTransaction(db, async (trx) => {
+      const saved: UserRate[] = [];
+
+      // Sequential rather than Promise.all: these run on ONE connection
+      // inside a transaction, so issuing them together buys no concurrency
+      // and only makes the order a failure happened in harder to read.
+      for (const row of rows) {
+        saved.push(await upsertUserRateRepo(row, trx));
+      }
+
+      return saved;
+    });
+  } catch (error) {
+    throw handleError("upsertUserRatesRepo", error);
+  }
+}
+
 export async function upsertUserRateRepo(row: NewUserRate, db: DBClient = database): Promise<UserRate> {
   try {
     return await db

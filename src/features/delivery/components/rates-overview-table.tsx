@@ -3,14 +3,20 @@
 import { Fragment, useMemo, useState } from "react";
 
 import { DataTable, type DataTableToggle } from "@/components/data-table";
-import { RATE_BANDS } from "@/lib/data/kysely-database-types";
 
 import type { UserRateBandsDTO } from "../delivery.types";
+import { RatesPersonDialog } from "./rates-person-dialog";
 import { getRatesOverviewColumns, hasUnpricedBand } from "./rates-overview-columns";
-import { RatesSetDialog, type RateSetTarget } from "./rates-set-dialog";
 
 // -------------------------------------------------------------------
-// Everybody, with their three bands, and a way to set one.
+// Everybody, with their three bands, and a way to set ALL of them.
+//
+// It used to open a single-band dialog, so pricing one person was three
+// passes over one decision - and the effective date had to be retyped each
+// time, with nothing checking the three matched. RatesPersonDialog takes the
+// date once and every band together. The single-band dialog is still used by
+// the history list, where correcting one dated row genuinely is a one-band
+// act.
 //
 // NO SORT PRESETS, deliberately. The service already returns active accounts
 // first and then by name, and DataTable applies the FIRST sort option as its
@@ -47,23 +53,11 @@ const TOGGLES: DataTableToggle<UserRateBandsDTO>[] = [
 ];
 
 export function RatesOverviewTable({ people }: { people: UserRateBandsDTO[] }) {
-  const [target, setTarget] = useState<RateSetTarget | null>(null);
+  // The whole row, because the dialog prices every band and prefills each
+  // from what is in force today - which is exactly what this row shows.
+  const [target, setTarget] = useState<UserRateBandsDTO | null>(null);
 
-  const columns = useMemo(
-    () =>
-      getRatesOverviewColumns({
-        onSetRate: (person) =>
-          setTarget({
-            subject: { userId: person.userId, name: person.name, email: person.email },
-            // Standard is where a rate conversation starts; the dialog can
-            // change it, and changing it re-prefills from that band's own
-            // current rate rather than leaving this one's figures behind.
-            band: RATE_BANDS.STANDARD,
-            bands: person.bands,
-          }),
-      }),
-    [],
-  );
+  const columns = useMemo(() => getRatesOverviewColumns({ onSetRate: setTarget }), []);
 
   return (
     <>
@@ -81,9 +75,9 @@ export function RatesOverviewTable({ people }: { people: UserRateBandsDTO[] }) {
           and re-runs its defaults. Without it React keeps the first row's
           figures in the boxes - the RowDialog rule, applied by hand because
           that helper keys on `id` and a person here is a `userId`. */}
-      <Fragment key={target?.subject.userId ?? "none"}>
-        <RatesSetDialog
-          target={target}
+      <Fragment key={target?.userId ?? "none"}>
+        <RatesPersonDialog
+          person={target}
           open={target !== null}
           onOpenChange={(open) => {
             if (!open) setTarget(null);

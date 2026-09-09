@@ -20,6 +20,7 @@ import {
   weekDayOf,
   CreateClientSchema,
   SetUserRateSchema,
+  SetUserRatesSchema,
   UpdateClientSchema,
   UpdateProjectSchema,
   UpdateTaskSchema,
@@ -1040,5 +1041,158 @@ describe("UpdateProjectSchema is a patch", () => {
 
   it("refuses a status it does not recognise", () => {
     expect(UpdateProjectSchema.safeParse({ projectId: PROJECT_ID, status: "paused" }).success).toBe(false);
+  });
+});
+
+// -------------------------------------------------------------------
+// ALL THREE BANDS, ONE DATE.
+//
+// The schema behind the rates form that replaced three passes over one
+// decision. Two properties carry the whole design and both are asserted on
+// the KEY rather than the value, because an absent band and a band priced at
+// nothing are the difference between leaving a rate alone and destroying it.
+// -------------------------------------------------------------------
+describe("SetUserRatesSchema", () => {
+  const USER_ID = "u".repeat(32);
+
+  it("leaves out a band the payload did not mention", () => {
+    // What makes the form usable as an EDIT: raising the standard rate must
+    // not blank the two bands nobody opened.
+    const parsed = SetUserRatesSchema.parse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { standard: { chargeRate: "110", costRate: "60" } },
+    });
+
+    expect(Object.hasOwn(parsed.bands, "standard")).toBe(true);
+    expect(Object.hasOwn(parsed.bands, "discounted")).toBe(false);
+    expect(Object.hasOwn(parsed.bands, "high")).toBe(false);
+  });
+
+  it("converts dollars to integer cents, per band", () => {
+    const parsed = SetUserRatesSchema.parse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: {
+        discounted: { chargeRate: "90.50", costRate: "50" },
+        high: { chargeRate: "150", costRate: "" },
+      },
+    });
+
+    expect(parsed.bands.discounted?.chargeRate).toBe(9050);
+    expect(parsed.bands.discounted?.costRate).toBe(5000);
+    expect(parsed.bands.high?.chargeRate).toBe(15000);
+  });
+
+  it("reads an empty cost box as NULL, never nought", () => {
+    // Nought says the work was free and reports 100% margin. Null says
+    // nobody has recorded a cost. Both assertions, because toBeNull() alone
+    // passes against undefined too.
+    const parsed = SetUserRatesSchema.parse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { high: { chargeRate: "150", costRate: "" } },
+    });
+
+    expect(parsed.bands.high?.costRate).toBeNull();
+    expect(parsed.bands.high?.costRate).not.toBe(0);
+  });
+
+  it("refuses a band with a cost and no charge, rather than dropping it", () => {
+    // The form deliberately SENDS this case instead of tidying it away,
+    // because omitting it would discard an amount somebody typed and report
+    // success. The refusal has to land on the charge box.
+    const result = SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { standard: { chargeRate: "", costRate: "60" } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("refuses a payload with no bands at all", () => {
+    // A person and a date and no rates is not an edit - it is a form
+    // somebody saved without typing anything, and a silent success would
+    // have them believe a rate was set.
+    const result = SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: {},
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("requires the date, which is the field three separate saves could not share", () => {
+    const result = SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      bands: { standard: { chargeRate: "110", costRate: "60" } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
+
+// -------------------------------------------------------------------
+// A CHARGE RATE OF NOUGHT SAYS THE WORK WAS FREE.
+//
+// This is the third spelling of "nothing" to reach `dollarsField` and be
+// read as a number, after null and after the union branch that made
+// optionalDollarsField look like it refused null when it did not. All three
+// arrive by the same mechanism: z.coerce.number() runs Number(), and
+// Number(null), Number("") and Number("  ") are every one of them 0.
+//
+// The danger is not a crash. It is a row that renders as a working rate, at
+// $0.00, beside rates that are right - which is the failure this whole
+// module is written around. Kept as its own block because it is about the
+// FIELD rather than any one schema that uses it, and the next schema to use
+// it inherits whatever this proves.
+// -------------------------------------------------------------------
+describe("a money field refuses every spelling of nothing", () => {
+  const USER_ID = "u".repeat(32);
+
+  const parseCharge = (chargeRate: unknown) =>
+    SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { standard: { chargeRate, costRate: "" } },
+    });
+
+  it.each([
+    ["an empty string", ""],
+    ["whitespace", "   "],
+    ["null", null],
+    ["undefined", undefined],
+  ])("refuses %s rather than storing $0.00", (_label, value) => {
+    expect(parseCharge(value).success).toBe(false);
+  });
+
+  it("still accepts a genuine nought, because free work is a real answer", () => {
+    // The point is not that nought is forbidden - somebody may genuinely be
+    // charged nothing - it is that BLANK must not silently become nought.
+    // Typing 0 is a decision; leaving the box empty is not.
+    const result = parseCharge("0");
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.bands.standard?.chargeRate).toBe(0);
+  });
+
+  it("keeps the empty COST box meaning null, which is the opposite rule", () => {
+    // optionalDollarsField is a union that tries z.literal("") first, so
+    // empty means absent there and refused for a charge rate. If a change
+    // to the shared field ever broke this, margin would start reading as
+    // 100% instead of unknown.
+    const result = SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { standard: { chargeRate: "110", costRate: "  " } },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.bands.standard?.costRate).toBeNull();
+      expect(result.data.bands.standard?.costRate).not.toBe(0);
+    }
   });
 });
