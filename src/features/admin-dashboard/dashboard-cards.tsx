@@ -1,12 +1,9 @@
 import Link from "next/link";
-import { ArrowRight, LayoutPanelLeft, type LucideIcon } from "lucide-react";
+import { type LucideIcon } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader } from "@/components/ui/card";
-import { ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
-import type { DashboardTeamDTO } from "./admin-dashboard.types";
 
 // -------------------------------------------------------------------
 // Dashboard primitives
@@ -148,63 +145,5 @@ export function EmptyState({ icon: Icon, title, subtitle }: { icon: LucideIcon; 
       <p className="mt-3 text-sm font-medium text-foreground">{title}</p>
       {subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>}
     </div>
-  );
-}
-
-// A small "view everything" button for a card header.
-function ViewAllButton({ href, label }: { href: string; label: string }) {
-  return (
-    <Button variant="outline" size="sm" asChild>
-      <Link href={href}>
-        {label}
-        <ArrowRight size={16} aria-hidden="true" />
-      </Link>
-    </Button>
-  );
-}
-
-// -------------------------------------------------------------------
-// Teams
-//
-// Membership is many-to-many, so a member count is a count of team_members
-// rows, not of people who "belong to" the team in any exclusive sense - the
-// same person can appear in several of these.
-// -------------------------------------------------------------------
-export function TeamsCard({ teams, totalTeams }: { teams: DashboardTeamDTO[]; totalTeams: number }) {
-  const extra = totalTeams - teams.length;
-
-  return (
-    <DashboardCard
-      icon={LayoutPanelLeft}
-      title="Teams"
-      subtitle={totalTeams === 1 ? "1 active team" : `${totalTeams} active teams`}
-      action={<ViewAllButton href={ROUTES.ADMIN_TEAMS} label="Manage" />}
-    >
-      {teams.length === 0 ? (
-        <EmptyState icon={LayoutPanelLeft} title="No teams yet" subtitle="Create a team to group people" />
-      ) : (
-        <>
-          <ul className="space-y-1">
-            {teams.map((team) => (
-              <li key={team.id} className="flex items-center gap-3 rounded-lg px-2 py-2">
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <LayoutPanelLeft size={16} aria-hidden="true" />
-                </span>
-                <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{team.name}</p>
-                <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                  {team.memberCount} {team.memberCount === 1 ? "member" : "members"}
-                </span>
-              </li>
-            ))}
-          </ul>
-
-          {extra > 0 && (
-            <p className="mt-3 border-t border-border pt-3 text-center text-xs text-muted-foreground">
-              {extra} more {extra === 1 ? "team" : "teams"}
-            </p>
-          )}
-        </>
-      )}
-    </DashboardCard>
   );
 }

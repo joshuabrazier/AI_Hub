@@ -60,13 +60,10 @@ export function getAdminActivityColumns({ onView }: Props): ColumnDef<AuditLogEn
       cell: ({ row }) => (
         <div className="text-sm text-foreground">
           {row.original.summary || <span className="text-muted-foreground">-</span>}
-          {/* Who it was done TO, and which team it belonged to - the two
+          {/* Who it was done TO - the
               questions the summary line usually cannot answer on its own. */}
           {row.original.subjectUserName && (
             <div className="text-xs text-muted-foreground">Person: {row.original.subjectUserName}</div>
-          )}
-          {row.original.teamName && (
-            <div className="text-xs text-muted-foreground">Team: {row.original.teamName}</div>
           )}
         </div>
       ),

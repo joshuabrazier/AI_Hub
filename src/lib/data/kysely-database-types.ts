@@ -44,31 +44,6 @@ export const USER_ROLE_OPTIONS = Object.values(USER_ROLES).map((role) => ({
 }));
 
 // -------------------------------------------------------------------
-// Team Roles (a user's role WITHIN one team)
-//
-// Distinct from the platform role above: the platform role decides which area
-// a user can reach, the team role decides what they can do inside a team they
-// belong to. An admin assigns a manager to a team by creating a team_members
-// row with team_role = 'manager'.
-// -------------------------------------------------------------------
-export const TEAM_ROLES = {
-  MANAGER: "manager",
-  MEMBER: "member",
-} as const;
-
-export type TeamRole = (typeof TEAM_ROLES)[keyof typeof TEAM_ROLES];
-
-export const TEAM_ROLE_LABELS: Record<TeamRole, string> = {
-  [TEAM_ROLES.MANAGER]: "Manager",
-  [TEAM_ROLES.MEMBER]: "Member",
-};
-
-export const TEAM_ROLE_OPTIONS = Object.values(TEAM_ROLES).map((role) => ({
-  value: role,
-  label: TEAM_ROLE_LABELS[role],
-}));
-
-// -------------------------------------------------------------------
 // Invitation Status
 // -------------------------------------------------------------------
 export const INVITATION_STATUS = {
@@ -326,51 +301,10 @@ export interface TwoFactor {
 }
 
 // -------------------------------------------------------------------
-// Teams Table
-// An explicitly created, named grouping of users. Nothing creates a team
-// implicitly - an admin makes one and then adds people to it.
-// -------------------------------------------------------------------
-export interface Teams {
-  id: string;
-  name: string;
-  description: string;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type Team = Selectable<Teams>;
-export type NewTeam = Insertable<Teams>;
-export type UpdateTeam = Updateable<Teams>;
-
-// -------------------------------------------------------------------
-// Team Members Table
-// Many-to-many and optional in both directions: a user can be in no team, one
-// team, or several, and a team can be empty.
-//
-// This table IS the app's security boundary. A user's team set is always
-// resolved from the SESSION user id, never from a URL parameter, and any
-// query over team-scoped data is filtered by it. Because membership is
-// many-to-many, helpers return string[] - never a single id.
-// -------------------------------------------------------------------
-export interface TeamMembers {
-  id: string;
-  teamId: string;
-  userId: string;
-  teamRole: TeamRole;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type TeamMember = Selectable<TeamMembers>;
-export type NewTeamMember = Insertable<TeamMembers>;
-export type UpdateTeamMember = Updateable<TeamMembers>;
-
-// -------------------------------------------------------------------
 // User Invitations Table
-// Sign-up is invite-only. An invitation may optionally place the new user
-// straight into a team; teamRole only means anything alongside a teamId
-// (enforced by a CHECK constraint).
+// An invitation is not a gate - anybody in the tenant on an allowed domain
+// gets an account. It says what ROLE the person lands with, and nothing
+// else: it used to pre-assign a team too, and teams are gone.
 // -------------------------------------------------------------------
 export interface UserInvitations {
   id: string;
@@ -380,8 +314,6 @@ export interface UserInvitations {
   status: InvitationStatus;
   expiresAt: Date;
   inviterId: string;
-  teamId: string | null;
-  teamRole: TeamRole | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -887,8 +819,8 @@ export type NewAiChatRequestLog = Insertable<AiChatRequestLogs>;
 // Audit Logs
 // Append-only trail of sensitive-data changes and auth events. `actor_*` are
 // snapshotted so the trail survives a user being renamed or deleted.
-// `changes`/`metadata` are JSONB. teamId and subjectUserId are SOFT
-// references (no FK) so deleting the subject never removes its history.
+// `changes`/`metadata` are JSONB. subjectUserId is a SOFT reference (no FK)
+// so deleting the subject never removes its history.
 // -------------------------------------------------------------------
 export interface AuditLogs {
   id: string;
@@ -898,7 +830,6 @@ export interface AuditLogs {
   action: string;
   entityType: string;
   entityId: string | null;
-  teamId: string | null;
   subjectUserId: string | null;
   summary: string | null;
   changes: ColumnType<Record<string, unknown> | null, string | null, string | null>;
@@ -1734,8 +1665,6 @@ export interface Database {
   accounts: Accounts;
   verifications: Verifications;
   twoFactor: TwoFactor;
-  teams: Teams;
-  teamMembers: TeamMembers;
   userInvitations: UserInvitations;
   siteContent: SiteContentTable;
   enquiryCategories: EnquiryCategories;

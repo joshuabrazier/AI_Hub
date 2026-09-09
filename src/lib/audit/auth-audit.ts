@@ -29,7 +29,6 @@ export async function recordAuthAuditEvent(input: {
       action: input.action,
       entityType: AUDIT_ENTITY_TYPES.AUTH,
       entityId: input.actor.id,
-      teamId: null,
       // An auth event is done BY the actor to their own account, so the actor
       // is also the subject - stamped here so "everything that happened to this
       // person" includes their sign-ins without a special case in the viewer.

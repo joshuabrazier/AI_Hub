@@ -26,11 +26,6 @@ export const MESSAGES = {
   USER_INVITATION_SENT: "Invite sent",
   USER_INVITATION_CANCELLED: "Invite cancelled",
 
-  TEAM_CREATED: "Team created",
-  TEAM_UPDATED: "Team updated",
-  TEAM_MEMBER_ADDED: "Member added",
-  TEAM_MEMBER_UPDATED: "Member updated",
-  TEAM_MEMBER_REMOVED: "Member removed",
 
   AI_CHAT_DELETED: "Conversation deleted",
   AI_CHAT_RENAMED: "Conversation renamed",

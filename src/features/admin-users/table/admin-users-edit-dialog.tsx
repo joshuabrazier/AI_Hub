@@ -12,10 +12,9 @@ import { FormDialog } from "@/components/form/form-dialog";
 import { FormSelectField } from "@/components/form/form-select-field";
 import { FormSwitchField } from "@/components/form/form-switch-field";
 import { useFormDialogSubmit } from "@/components/form/use-form-dialog-submit";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MESSAGES } from "@/lib/constants";
-import { TEAM_ROLES, TEAM_ROLE_LABELS, USER_ROLE_OPTIONS } from "@/lib/data/kysely-database-types";
+import { USER_ROLE_OPTIONS } from "@/lib/data/kysely-database-types";
 
 import { resetUserTwoFactorAction, updateAdminUserAction } from "../admin-users.actions";
 import {
@@ -36,10 +35,9 @@ type FormValues = UpdateAdminUserRequestDTO;
 // -------------------------------------------------------------------
 // Edit a person's platform role and active status.
 //
-// Team membership is deliberately NOT edited here: it is managed per team on
-// the Teams screen, where the team is the thing being changed. This dialog
-// shows the teams read-only so an admin can see the effect of a role change
-// (a manager with no managed team reaches /manage and finds nothing).
+// ONLY THE PLATFORM ROLE. There is nothing else about an account an admin
+// changes from here - this dialog used to show the person's teams read-only
+// beside it, and teams are gone from the base.
 // -------------------------------------------------------------------
 export function AdminUsersEditDialog({ user, open, onOpenChange }: AdminUsersEditDialogProps) {
   const userIsActive = user?.displayStatus === ADMIN_USER_DISPLAY_STATUS.Active;
@@ -87,25 +85,10 @@ export function AdminUsersEditDialog({ user, open, onOpenChange }: AdminUsersEdi
       canSubmit={isChanged}
       isPending={isPending}
       beforeForm={
-        // Who is being edited, plus the teams they are in (read-only).
+        // Who is being edited.
         <div className="rounded-md border bg-muted p-3">
           <div className="pb-2 font-medium">{user.name}</div>
           <div className="text-sm text-muted-foreground">{user.email}</div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-1">
-            {user.teams.length === 0 ? (
-              <span className="text-sm text-muted-foreground">In no teams</span>
-            ) : (
-              user.teams.map((team) => (
-                <Badge key={team.teamId} variant="outline" className="font-normal">
-                  {team.teamName}
-                  {team.teamRole === TEAM_ROLES.MANAGER && (
-                    <span className="ml-1 text-muted-foreground">({TEAM_ROLE_LABELS[team.teamRole]})</span>
-                  )}
-                </Badge>
-              ))
-            )}
-          </div>
         </div>
       }
     >

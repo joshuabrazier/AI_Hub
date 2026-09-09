@@ -6,7 +6,7 @@ detail is in `docs/`.
 ## What this is
 
 A **reusable portal base**: Next.js 16 (App Router) with authentication,
-role-based access and teams already built. Projects are started
+role-based access already built. Projects are started
 FROM this repo rather than from scratch.
 
 It is deliberately a **blank canvas** below that line: there is no delivery or
@@ -68,12 +68,16 @@ person-without-a-login concept.
 
 ```text
 users          admin | manager | member
-teams          created and named explicitly by an admin, never implicitly
-team_members   (team_id, user_id, team_role)  MANY-TO-MANY and optional
 ```
 
+**THERE ARE NO TEAMS.** The base carried `teams` and `team_members`, described
+right here as the security boundary, and they were removed - see migration
+024. The claim had stopped being true: the ONLY consumer of team scoping was
+the teams feature itself. Everything else is scoped by something nearer the
+data, which is where a scope belongs.
+
 - `/admin` admins, everything
-- `/manage` managers, scoped to the teams an admin assigned them
+- `/manage` managers. The projects they are on, and their own time. `/manage` itself redirects to projects
 - `/portal` members, their own data. **No id in the URL** - the session is the identity.
 
 Everything else is cross-cutting and domain-neutral: invitations, site
@@ -160,10 +164,10 @@ serving bytes, so the actions rule never applied to it.)
 
 ## Conventions that bite if ignored
 
-- **Team membership is the security boundary, and it is many-to-many.** Any helper answering "which teams is this user in" returns `string[]`. Never `executeTakeFirst` into a single id: row order is not stable, so a user in two teams would silently get an arbitrary scope.
-- **Guards belong in the service, not only the action.** A page that calls a service directly must still be safe. Use `requireUserRole`, `requireTeamScope`, `requireManagementScope`, `requireTeamAccess`, `requireTeamManagement` from `src/lib/auth/session-auth-server.ts`.
+- **A ROLE IS NOT A SCOPE, and there is no longer a general-purpose scope guard.** `requireUserRole` says who is asking and nothing more. What is worth scoping is scoped by the feature that owns it - a project by `project_members` (`requireProjectAccessForWrite` and friends in `delivery-board.service.ts`), and chat, summaries, transcription and the timesheet by the session user id. Reach for the guard nearest the data; do not add a global one back.
+- **Guards belong in the service, not only the action.** A page that calls a service directly must still be safe. Use `requireUserRole` from `src/lib/auth/session-auth-server.ts`, plus whatever scope check the feature owns.
 - **Resolve the actor from the session, never from the URL.** No route parameter is proof of access.
-- **An empty scope means nothing, not everything.** A manager with no teams sees no rows.
+- **An empty scope means nothing, not everything.** A manager on no projects sees no rows - never every row.
 - **A scope failure answers `notFound()`, not "forbidden".** Saying "forbidden" to a guessed id confirms the record exists and turns the route into an enumeration oracle. A *role* failure may say so plainly.
 - **Calendar dates are `'YYYY-MM-DD'` strings, not `Date`.** The pg type parser in `src/lib/data/kysely-database-client.ts` maps Postgres `DATE` to a string on purpose (timezone-safe, React-renderable), and `TIME` to `'HH:MM:SS'`. No table currently has a `DATE` column, but the parser stays so the first one a project adds is safe by default. Type such columns as `string` and compare lexicographically.
 - **The app timezone is `NEXT_PUBLIC_APP_TIME_ZONE`**, read once in `src/lib/timezone.ts` as `APP_TIME_ZONE`. Never hardcode a zone, and never use `new Date()` to decide what calendar day it is - derive it in the app zone (`formatDateTime` in `src/lib/format.ts` is the pattern).
@@ -172,7 +176,7 @@ serving bytes, so the actions rule never applied to it.)
 - **App-level 2FA exists again, behind `APP_TWO_FACTOR_ENABLED`, and it is a SECOND factor on top of whatever Entra's Conditional Access already asks for.** Off by default; `false` is a legitimate permanent answer. The gate is `isTwoFactorSatisfied` inside `requireUser`, so it covers every guarded surface at once, and state is per SESSION (`session_two_factor`) rather than per user. The proxy gates it too - not as a duplicate, but because the root layout paints the navbar and sidebar before an area layout has awaited its guard, so without an edge redirect the whole shell flashes up before bouncing. It reads `two_factor_enabled` FRESH rather than from the session, which snapshots it at sign-in and would send somebody who just enrolled straight back. Enrolment needs `allowPasswordless: true` on the plugin because an Entra account has no password to re-authenticate with - which also means **a local dev password account cannot enrol at all**, by design, and answers `INVALID_PASSWORD`. Turning the flag on with `session_two_factor` missing locks everybody at the enrolment screen; the flag is the way out.
 - **The one exception is `DEV_PASSWORD_SIGN_IN`, and it is local-only by construction.** `emailAndPassword` is enabled when that flag is set AND `MODE` is not `production` (`isPasswordSignInEnabled`) - two conditions because an `.env` gets copied. It exists because with no `MICROSOFT_*` variables the sign-in page has no button on it and the app cannot be run at all. It opens a door and hands out no keys: no sign-up, no reset, accounts come from `scripts/create-dev-user.mjs`, and the domain allowlist / deactivated-account check / audit log all still apply. Never set it on a deployed environment.
 - **The app AUTO-PROVISIONS.** Anyone in the tenant on `AUTH_ALLOWED_EMAIL_DOMAINS` gets an account as `member` on first sign-in. That allowlist is the entire access boundary - unset means *no restriction*. It is enforced in `databaseHooks.user.create.before`, the database layer, so it holds for every path.
-- **An invitation is no longer a gate, it is a pre-assignment.** A pending invitation matching the address Entra verified sets the role and team the person lands with (`apply-invitation.ts`); without one they land as a member in no team.
+- **An invitation is no longer a gate, it is a pre-assignment.** A pending invitation matching the address Entra verified sets the ROLE the person lands with (`apply-invitation.ts`); without one they land as a member. It used to pre-assign a team too, and that half went with teams.
 - **`requireUser` redirects an incomplete profile to `/welcome`.** `users.profile_completed_at` is NULL until first-run setup is done. Anything that must work *during* setup uses `requireSessionUserAllowingSetup` instead, or it redirects to itself.
 - **The email address is the Entra identity.** It is not editable anywhere - the domain allowlist only runs at creation, so an editable email would separate an account from the directory it is trusted because of.
 - **Account linking is explicit and `requireLocalEmailVerified` stays on.** It is what lets a pre-existing password account keep working after passwords were disabled, and what stops an unverified account at somebody's address capturing their Entra identity.

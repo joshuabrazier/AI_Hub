@@ -13,7 +13,6 @@ import {
   FlaskConical,
   FolderSearch,
   House,
-  LayoutPanelLeft,
   ListTodo,
   type LucideIcon,
   Mail,
@@ -101,10 +100,9 @@ const ADMIN_NAV: NavGroup[] = [
       {
         label: "People",
         icon: UsersRound,
-        tooltip: "Users and teams",
+        tooltip: "Users and invitations",
         children: [
           { label: "Users", href: ROUTES.ADMIN_USERS, icon: Users, tooltip: "Everyone with an account" },
-          { label: "Teams", href: ROUTES.ADMIN_TEAMS, icon: LayoutPanelLeft, tooltip: "Teams and their members" },
         ],
       },
     ],
@@ -314,9 +312,8 @@ const MANAGER_NAV: NavGroup[] = [
     ],
   },
   {
-    label: "Your teams",
+    label: "Your work",
     items: [
-      { label: "Teams", href: ROUTES.MANAGE_TEAMS, icon: LayoutPanelLeft, tooltip: "Teams you manage" },
     ],
   },
 ];

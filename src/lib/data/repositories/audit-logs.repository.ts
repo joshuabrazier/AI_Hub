@@ -10,8 +10,8 @@ import { handleError } from "@/lib/handle-errors";
 // actorRole/actorName are snapshots rather than a join: the trail has to stay
 // readable after the actor is renamed, deactivated or deleted.
 //
-// teamId and subjectUserId are soft references with no foreign key, so removing
-// a team or a person never cascades their history away.
+// subjectUserId is a soft reference with no foreign key, so removing a person
+// never cascades their history away.
 export type AuditLogInsert = {
   id: string;
   actorUserId: string | null;
@@ -20,7 +20,6 @@ export type AuditLogInsert = {
   action: string;
   entityType: string;
   entityId: string | null;
-  teamId: string | null;
   subjectUserId: string | null;
   summary: string | null;
   changes: Record<string, unknown> | null;
@@ -52,7 +51,6 @@ export async function insertAuditLogRepo(entry: AuditLogInsert, db: DBClient = d
         action: entry.action,
         entityType: entry.entityType,
         entityId: entry.entityId,
-        teamId: entry.teamId,
         subjectUserId: entry.subjectUserId,
         summary: entry.summary,
         changes: entry.changes ? JSON.stringify(entry.changes) : null,
@@ -85,13 +83,8 @@ export async function deleteAuditLogsOlderThanRepo(cutoff: Date, db: DBClient = 
 // backed by an index on audit_logs; entityId is only selective alongside
 // entityType, which shares its composite index.
 export type AuditLogFilter = {
-  // Team scope is a LIST, because team membership is many-to-many: a manager
-  // can manage several teams at once. A scalar here would force a caller to
-  // pick one of them and would silently show the wrong slice of history.
-  // An empty array means "no teams" and matches nothing.
-  teamIds?: string[];
-  // Scalar, unlike teamIds: the subject is one person, resolved from the
-  // session when a user reads their own trail.
+  // The subject is one person, resolved from the session when somebody reads
+  // their own trail.
   subjectUserId?: string;
   actorUserId?: string;
   action?: string;
@@ -102,8 +95,8 @@ export type AuditLogFilter = {
 };
 
 // -------------------------------------------------------------------
-// Read the audit trail, newest first, optionally scoped to a team, subject,
-// actor, action or entity.
+// Read the audit trail, newest first, optionally scoped to a subject, actor,
+// action or entity.
 //
 // Ordering falls back to id so paging is stable: rows written in the same
 // millisecond would otherwise come back in an arbitrary order and could repeat
@@ -111,17 +104,12 @@ export type AuditLogFilter = {
 // -------------------------------------------------------------------
 export async function getAuditLogsRepo(filter: AuditLogFilter = {}): Promise<AuditLog[]> {
   try {
-    // Fail closed. A caller scoped to no teams sees nothing, rather than
-    // dropping the filter and reading every team's history.
-    if (filter.teamIds && filter.teamIds.length === 0) return [];
-
     let query = database.selectFrom("auditLogs").selectAll();
 
     // Presence, not truthiness. A truthiness guard makes an empty string DROP
-    // the filter and return the unscoped trail, which is fail-open and the
-    // opposite of the teamIds handling above. An empty string is a supplied
-    // value that matches nothing, so it must narrow to nothing.
-    if (filter.teamIds !== undefined) query = query.where("teamId", "in", filter.teamIds);
+    // the filter and return the unscoped trail, which is fail-open. An empty
+    // string is a supplied value that matches nothing, so it must narrow to
+    // nothing.
     if (filter.subjectUserId !== undefined) query = query.where("subjectUserId", "=", filter.subjectUserId);
     if (filter.actorUserId !== undefined) query = query.where("actorUserId", "=", filter.actorUserId);
     if (filter.action !== undefined) query = query.where("action", "=", filter.action);
