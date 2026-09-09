@@ -116,6 +116,10 @@ export default async function DeliveryBoardPage({
         // Named on the log-time dialog, because time here is always the
         // signed-in person's own and the screen should say whose it is.
         yourName={userDisplayName(user) ?? user.email}
+        // FROM THE SESSION, never from a route parameter. It decides which
+        // time entries the task panel offers an edit button on; the service
+        // decides whether the edit is allowed.
+        yourUserId={user.id}
       />
     </PortalPage>
   );

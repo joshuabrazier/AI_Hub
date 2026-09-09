@@ -1,5 +1,10 @@
 import z from "zod";
 
+import {
+  AI_CHAT_ACCEPT_ATTRIBUTE,
+  AI_CHAT_ACCEPTED_SUMMARY,
+  MAX_DOCUMENT_BYTES,
+} from "@/lib/ai/attachment-formats";
 import { TABLE_ID_LENGTH } from "@/lib/constants";
 import {
   PROJECT_STATUSES,
@@ -1255,22 +1260,26 @@ export type DeleteTaskRequestDTO = z.infer<typeof DeleteTaskSchema>;
 // A file on a card: metadata in Postgres, bytes in Azure Blob, streamed back
 // through a download route and never handed out as a signed URL.
 //
-// THREE SHAPES, AND ONE DELIBERATE ABSENCE - because an upload is not one act
-// but two halves that are trusted differently.
+// TWO SHAPES, AND ONE DELIBERATE ABSENCE.
 //
-//   WHAT THE BROWSER SENDS is a task and a file name. That is
-//   UploadTaskAttachmentSchema, and it is validated like anything else here.
+//   WHAT THE BROWSER SENDS BESIDE THE BYTES is a task and a file name. That
+//   is UploadTaskAttachmentSchema, and it is validated like anything else
+//   here.
 //
-//   WHAT THE ROUTE THEN HANDS THE SERVICE is TaskAttachmentUpload, and it has
-//   NO SCHEMA ON PURPOSE. `mediaType` must have been derived by SNIFFING THE
-//   BYTES and `byteSize` must be the number actually written, so a parse of
-//   those two fields would check a shape while proving nothing about the only
-//   thing that matters - where the values came from - and would afterwards
-//   read as the check that had been done. The download route serves the
-//   stored type back with `nosniff`, so accepting a browser's `Content-Type`
-//   here is a stored-XSS decision made in the wrong file. The refusal is the
-//   type not being parseable from a payload at all; the service refusing a
-//   byteSize it was not given is the second line.
+//   THE BYTES THEMSELVES HAVE NO SCHEMA, and could not usefully have one.
+//   The media type is DERIVED by sniffing them in the service, never taken
+//   from the browser's `Content-Type` and never guessed from the name, and
+//   the byte count is the length of what was actually written. A schema over
+//   either would check a shape while proving nothing about the only thing
+//   that matters - where the value came from - and would afterwards read as
+//   the check that had been done. The download route serves the stored type
+//   back behind `nosniff`, so accepting a browser's word for it is a
+//   stored-XSS decision made in the wrong file.
+//
+//   (There was a third shape here, `TaskAttachmentUpload`, for a route that
+//   wrote the blob and handed the service a type and a size to record. The
+//   service takes the bytes now and does both itself, which is what let the
+//   archived-project refusal happen BEFORE the write instead of never.)
 //
 // The delete and the download hold an ATTACHMENT id rather than a task id, so
 // they share one schema: the row carries the task, the task carries the
@@ -1297,6 +1306,38 @@ export const UploadTaskAttachmentSchema = z.object({
 export type UploadTaskAttachmentInputDTO = z.input<typeof UploadTaskAttachmentSchema>;
 export type UploadTaskAttachmentRequestDTO = z.output<typeof UploadTaskAttachmentSchema>;
 
+// -------------------------------------------------------------------
+// WHAT A CARD WILL TAKE, named here and DERIVED FROM ONE PLACE.
+//
+// All three come from src/lib/ai/attachment-formats.ts, which is chat's
+// module, and the sharing is deliberate rather than incidental. That file
+// holds the only tested byte-sniffer in the app: it proves a format from the
+// header, measures an image in the same pass, and maps `html` to text/plain
+// - which is what stops a file uploaded here and served back from this
+// origin being stored XSS. A second allowlist would be a second answer to
+// "may this be served inline", and the wrong one would not fail a test.
+//
+// SO THE CEILING IS CHAT'S DOCUMENT CAP, and it is aliased rather than
+// re-chosen because inspectAttachment enforces its own limits regardless: a
+// larger number here would be refused a layer down with a message about
+// chat's cap, which is worse than being refused honestly. The route checks
+// this before reading the body so an oversized upload is turned away without
+// being buffered; the inspector is the real gate.
+//
+// IF A CARD EVER NEEDS TO CARRY MORE THAN THIS - a screen recording of a bug
+// is the obvious one - the answer is a delivery-owned sniffer with its own
+// allowlist and its own caps, NOT a bigger number here. The limits and the
+// formats travel together, and splitting them is how a video ends up
+// accepted by the route and rejected by the inspector.
+// -------------------------------------------------------------------
+export const MAX_TASK_ATTACHMENT_BYTES = MAX_DOCUMENT_BYTES;
+
+/** For the file input's `accept`, which is a hint to the picker and never a check. */
+export const TASK_ATTACHMENT_ACCEPT = AI_CHAT_ACCEPT_ATTRIBUTE;
+
+/** Said on screen, so nobody discovers the allowlist by being refused. */
+export const TASK_ATTACHMENT_ACCEPTED_SUMMARY = AI_CHAT_ACCEPTED_SUMMARY;
+
 // Removing one file, and serving one back. One shape for both, because the id
 // is the whole request in each case.
 export const TaskAttachmentIdSchema = z.object({
@@ -1304,28 +1345,6 @@ export const TaskAttachmentIdSchema = z.object({
 });
 
 export type TaskAttachmentIdRequestDTO = z.infer<typeof TaskAttachmentIdSchema>;
-
-// -------------------------------------------------------------------
-// What the upload path hands over once the bytes are safely in storage.
-//
-// NOT A REQUEST DTO. It is in the contract file because the route and the
-// service on either side of it are two modules, not because a browser sends
-// it, and NOTHING PARSES IT - see the absence described above. `mediaType`
-// must have been derived by sniffing the bytes and `byteSize` must be the
-// number of bytes actually written; both are then recorded as facts about the
-// file.
-//
-// `attachmentId` comes from the caller because the blob is written before the
-// row exists and the storage key is derived from it - which is also why no
-// caller ever supplies a storage key.
-// -------------------------------------------------------------------
-export type TaskAttachmentUpload = {
-  taskId: string;
-  attachmentId: string;
-  fileName: string;
-  mediaType: string;
-  byteSize: number;
-};
 
 // -------------------------------------------------------------------
 // ===================================================================
