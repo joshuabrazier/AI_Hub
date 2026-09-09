@@ -549,6 +549,19 @@ describe("updateTaskService", () => {
     ).rejects.toThrow(/not on this project/);
     expect(mockUpdateTask).not.toHaveBeenCalled();
   });
+
+  it("does not check an assignee when the patch leaves it unchanged", async () => {
+    signedInAsMember(true);
+
+    await updateTaskService({ taskId: "task-1", title: "Retitle" } as Parameters<typeof updateTaskService>[0]);
+
+    expect(mockGetProjectMember).not.toHaveBeenCalled();
+    expect(mockUpdateTask).toHaveBeenCalledWith("task-1", PROJECT_ID, {
+      title: "Retitle",
+      description: undefined,
+      assigneeId: undefined,
+    });
+  });
 });
 
 describe("moveTaskService", () => {

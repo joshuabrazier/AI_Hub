@@ -673,10 +673,11 @@ export async function updateTaskService(requestDTO: UpdateTaskRequestDTO): Promi
 
     requireUnarchivedProject(access, "changing a task on it");
 
-    // Null clears the assignment, which is a legitimate edit and is
-    // distinguished from "unchanged" by the schema making the field
-    // required.
-    await requireProjectMemberAssignee(access.projectId, requestDTO.assigneeId);
+    // Null clears the assignment, while undefined means the patch leaves it
+    // unchanged. Only an actual replacement id needs membership validation.
+    if (requestDTO.assigneeId !== undefined) {
+      await requireProjectMemberAssignee(access.projectId, requestDTO.assigneeId);
+    }
 
     const updated = await updateTaskRepo(requestDTO.taskId, access.projectId, {
       title: requestDTO.title,
