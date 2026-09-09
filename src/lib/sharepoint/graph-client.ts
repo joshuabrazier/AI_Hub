@@ -102,6 +102,24 @@ export const GRAPH_SCOPES = [
   // signed-in person's own state and nothing else, which is all the
   // in-meeting prompt needs.
   "Presence.Read",
+  // -----------------------------------------------------------------
+  // THE FIRST WRITE SCOPE THIS APP HAS EVER ASKED FOR, and the only one.
+  //
+  // Everything else here reads. This exists so a meeting's notes can be
+  // filed into the document library and, where the destination folder does
+  // not exist yet, created.
+  //
+  // Files.ReadWrite.All rather than Sites.ReadWrite.All: the narrower of the
+  // two, covering drive items and not list items, site settings or pages.
+  //
+  // WHAT BOUNDS IT IS NOT THE SCOPE, IT IS THE CODE. Delegated, so Graph
+  // still enforces that the signed-in person can reach what is being
+  // written. Beyond that: the destination is always an item id the crawl
+  // catalogued, folder creation only ever follows a path from configuration,
+  // and every write sets conflictBehavior=fail so nothing can overwrite a
+  // file somebody else put there. Nothing in this app deletes or moves.
+  // -----------------------------------------------------------------
+  "Files.ReadWrite.All",
 ] as const;
 
 const REQUEST_TIMEOUT_MS = 30000;
@@ -322,6 +340,24 @@ export async function graphRequest(
     fetchImpl?: typeof fetch;
     now?: () => number;
     headers?: Record<string, string>;
+    // -----------------------------------------------------------------
+    // WRITES GO THROUGH THE SAME FUNCTION, on purpose. The throttle gate,
+    // the retry ladder and the 403 handling are the parts that took real
+    // effort to get right, and a second client for writes would drift from
+    // them - most likely by not participating in the process-wide throttle,
+    // which is the one thing that must cover every caller.
+    //
+    // RETRIES AND NON-IDEMPOTENT WRITES. This retries on 429 and 5xx, so a
+    // POST that creates a folder could in principle run twice. That is safe
+    // here only because every write this app makes sets
+    // conflictBehavior=fail and treats the resulting 409 as "it already
+    // exists" - so the second attempt finds the first attempt's work rather
+    // than duplicating it. A future write that cannot make that promise
+    // must not simply reuse this.
+    // -----------------------------------------------------------------
+    method?: "GET" | "POST" | "PUT" | "PATCH";
+    body?: BodyInit;
+    contentType?: string;
   } = {},
 ): Promise<unknown> {
   const doFetch = options.fetchImpl ?? fetch;
@@ -346,11 +382,14 @@ export async function graphRequest(
 
     try {
       const response = await doFetch(url, {
+        method: options.method ?? "GET",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/json",
+          ...(options.contentType ? { "Content-Type": options.contentType } : {}),
           ...options.headers,
         },
+        ...(options.body === undefined ? {} : { body: options.body }),
         signal: controller.signal,
       });
 

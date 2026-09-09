@@ -620,7 +620,14 @@ export async function updateTimeEntryService(requestDTO: UpdateTimeEntryRequestD
 
     requireEntryControl(entry, access, actor);
 
-    const workDate = requireWorkDateNotInFuture(requestDTO.workDate);
+    // ABSENT MEANS THE DAY HAS NOT MOVED, so it resolves to the stored date
+    // rather than being validated. Only a date somebody actually supplied is
+    // a claim about when the work happened - and resolving it this way keeps
+    // the comparison below correct, which is what leaves the rate snapshot
+    // alone. Re-pricing an hour nobody moved would rewrite what it was worth
+    // when it was worked.
+    const workDate =
+      requestDTO.workDate === undefined ? entry.workDate : requireWorkDateNotInFuture(requestDTO.workDate);
 
     // Left out of the patch entirely when the day has not moved, so the
     // stored snapshot is untouched rather than rewritten with the value it
