@@ -2266,6 +2266,29 @@ export type BudgetGroupReportDTO = {
   marginCents?: number | null;
 };
 
+// -------------------------------------------------------------------
+// HOW MANY HOURS BLANKED THE TOTAL.
+//
+// PRESENT ONLY WHERE THE MONEY IS, and absent for the same reason the cents
+// are: a reader who may not see a figure has no business knowing how many
+// entries went into it either.
+//
+// It exists because "Not valued" was the whole answer, and it reads
+// identically for one hour logged before somebody's rate existed and for a
+// project nobody has ever priced. The first is a note to yourself; the second
+// is a rate card to fill in. Nothing on the screen distinguished them, which
+// is how a report doing exactly what it was designed to do came to be
+// reported as broken.
+//
+// PER SIDE, because on a non-billable project every charge snapshot is null
+// by design - a single combined count would be permanently non-zero there and
+// would cry wolf on the one project where a blank charge is correct.
+//
+// PROJECT LEVEL ONLY. A group's blank has the same cause as the project's and
+// the remedy is the same rate card, so repeating the count per row would be
+// the same sentence several times. The project line is where somebody looks
+// first.
+// -------------------------------------------------------------------
 export type BudgetReportDTO = {
   projectId: string;
   projectTitle: string;
@@ -2284,6 +2307,10 @@ export type BudgetReportDTO = {
   chargeableCents?: number | null;
   costCents?: number | null;
   marginCents?: number | null;
+  /** Entries with no charge snapshot. Present only when charge is. */
+  unvaluedChargeEntries?: number;
+  /** Entries with no cost snapshot. Present only when cost is. */
+  unvaluedCostEntries?: number;
 };
 
 // -------------------------------------------------------------------

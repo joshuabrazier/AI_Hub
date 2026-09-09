@@ -403,10 +403,121 @@ export interface ChargeAndCostCents {
   costCents: number | null;
 }
 
+// -------------------------------------------------------------------
+// HOW MANY ENTRIES BLANKED THE TOTAL, which is the question a null on the
+// report cannot answer on its own.
+//
+// A blank said "not valued" and nothing more, so it read identically for one
+// hour logged before somebody's rate existed and for a project where nothing
+// had ever been priced. That is the difference between a note to yourself and
+// a fault to chase, and the screen had no way to tell them apart - which is
+// exactly how a working report came to be reported as broken.
+//
+// COUNTED PER SIDE, not once. On a non-billable project every charge
+// snapshot is null by design, so a single combined count would be permanently
+// non-zero there and would cry wolf on the one project where a blank charge
+// is the correct answer.
+// -------------------------------------------------------------------
+export interface UnvaluedEntryCounts {
+  unvaluedChargeEntries: number;
+  unvaluedCostEntries: number;
+}
+
 export interface BudgetGroupChargeAndCostCents extends ChargeAndCostCents {
   // Null is the no-group bucket, for the reason the minutes read returns
   // one: time logged by somebody in no group is still the project's money.
   groupId: string | null;
+}
+
+// ===================================================================
+// VALUING THE HOURS THAT WERE NEVER VALUED.
+//
+// THE BUG THIS FIXES, WHICH LOOKED LIKE A BROKEN REPORT. A time entry
+// snapshots the cents it was charged at when it is LOGGED, and the budget
+// report sums those snapshots. Set somebody's rates after their time is
+// already logged - which is the ordinary order of events, because nobody
+// prices a person before they have started - and every one of those entries
+// carries no snapshot. Nothing filled them in afterwards, so the report read
+// "not valued" for the whole project, permanently, however many rates were
+// entered.
+//
+// And it only took ONE such entry. `valuedCents` above propagates unknown on
+// purpose: one unvalued hour blanks that side's total, because a partial cost
+// against a full charge inflates the margin. That is the right call and it
+// made the symptom total rather than partial.
+//
+// WHY THIS IS NOT REWRITING HISTORY, which is the promise it has to keep.
+// The module's rule is that an hour is worth what it was worth when it was
+// worked, and `deleteUserRateRepo` and the rate services all say so. COALESCE
+// is what keeps it: a column that already holds cents is left exactly as it
+// is, on every row, and only a NULL is ever written to. An hour that was
+// valued keeps its value. An hour that was never valued gains one, which is
+// not a restatement - there was nothing there to restate.
+//
+// THE RATE IS RESOLVED PER ENTRY, AS AT ITS OWN WORK DATE, by the same rule
+// getUserRateAsAtRepo applies: the greatest effective_from on or before the
+// date, never a later one. So a rate effective from July values July's hours
+// and leaves June's alone - and June stays visibly unvalued rather than being
+// quietly priced at a rate that did not exist when it was worked.
+//
+// THE BAND COMES FROM `project_members`, not from the rate row, because a
+// band is a fact about somebody ON A PROJECT: the same person can be
+// discounted for one client and standard for another. An entry whose project
+// membership has since been removed resolves no band and is left alone, which
+// is correct - there is no longer an answer to what that client was charged.
+//
+// A NON-BILLABLE PROJECT KEEPS A NULL CHARGE and gains a cost, which is the
+// same asymmetry resolveRateSnapshot applies at log time: the work costs what
+// it costs whether or not anybody is billed for it.
+// ===================================================================
+export async function valueUnpricedTimeEntriesForUserRepo(
+  userId: string,
+  db: DBClient = database,
+): Promise<number> {
+  try {
+    // Written as one statement rather than a read-then-write loop: the set
+    // being corrected is every unvalued entry a person has, across every
+    // project, and pulling that back to resolve a rate each would be a query
+    // per hour ever logged.
+    const result = await sql<{ id: string }>`
+      update time_entries te
+         set charge_rate_cents = coalesce(te.charge_rate_cents, r.charge_rate_cents),
+             cost_rate_cents   = coalesce(te.cost_rate_cents, r.cost_rate_cents),
+             updated_at        = now()
+        from project_members pm
+        join projects p on p.id = pm.project_id
+        cross join lateral (
+               select case when p.is_billable then ur.charge_rate_cents end as charge_rate_cents,
+                      ur.cost_rate_cents
+                 from user_rates ur
+                where ur.user_id = te.user_id
+                  and ur.band    = pm.rate_band
+                  and ur.effective_from <= te.work_date
+                order by ur.effective_from desc
+                limit 1
+             ) r
+       where te.user_id    = ${userId}
+         and pm.user_id    = te.user_id
+         and pm.project_id = te.project_id
+         -- Only rows with something missing, so an entry that is already
+         -- fully valued is not touched at all.
+         and (te.charge_rate_cents is null or te.cost_rate_cents is null)
+         -- And only where this would actually CHANGE one of them. Without
+         -- it, an entry on a non-billable project with no cost rate is
+         -- rewritten with the values it already had on every rate save,
+         -- bumping updated_at and inflating the count reported to the
+         -- person saving.
+         and (
+               (te.charge_rate_cents is null and r.charge_rate_cents is not null)
+            or (te.cost_rate_cents   is null and r.cost_rate_cents   is not null)
+         )
+       returning te.id
+    `.execute(db);
+
+    return result.rows.length;
+  } catch (error) {
+    throw handleError("valueUnpricedTimeEntriesForUserRepo", error);
+  }
 }
 
 // The rate column is a closed union rather than a string, so `sql.raw` here
@@ -416,6 +527,13 @@ function valuedCents(rateColumn: "charge_rate_cents" | "cost_rate_cents") {
       when count(*) filter (where te.${sql.raw(rateColumn)} is null) > 0 then null
       else sum(round(te.minutes::numeric * te.${sql.raw(rateColumn)} / 60))
     end`;
+}
+
+// The same `count(*) filter` the case above already evaluates, returned
+// rather than only branched on - so the screen can say how many hours blanked
+// the total instead of only that it is blank.
+function unvaluedCount(rateColumn: "charge_rate_cents" | "cost_rate_cents") {
+  return sql<string>`count(*) filter (where te.${sql.raw(rateColumn)} is null)`;
 }
 
 // Postgres hands numeric and bigint back as STRINGS, so the conversion
@@ -432,17 +550,27 @@ function centsOrNull(value: string | null): number | null {
 export async function getChargeAndCostCentsByProjectRepo(
   projectId: string,
   db: DBClient = database,
-): Promise<ChargeAndCostCents> {
+): Promise<ChargeAndCostCents & UnvaluedEntryCounts> {
   try {
     const row = await db
       .selectFrom("timeEntries as te")
-      .select([valuedCents("charge_rate_cents").as("chargeCents"), valuedCents("cost_rate_cents").as("costCents")])
+      .select([
+        valuedCents("charge_rate_cents").as("chargeCents"),
+        valuedCents("cost_rate_cents").as("costCents"),
+        unvaluedCount("charge_rate_cents").as("unvaluedChargeEntries"),
+        unvaluedCount("cost_rate_cents").as("unvaluedCostEntries"),
+      ])
       .where("te.projectId", "=", projectId)
       .executeTakeFirst();
 
     return {
       chargeCents: centsOrNull(row?.chargeCents ?? null),
       costCents: centsOrNull(row?.costCents ?? null),
+      // Postgres returns count() as a bigint, which arrives as a STRING.
+      // Zero when there is no row at all, which is a project with no time
+      // logged - nothing is unvalued because nothing exists.
+      unvaluedChargeEntries: Number(row?.unvaluedChargeEntries ?? 0),
+      unvaluedCostEntries: Number(row?.unvaluedCostEntries ?? 0),
     };
   } catch (error) {
     throw handleError("getChargeAndCostCentsByProjectRepo", error);

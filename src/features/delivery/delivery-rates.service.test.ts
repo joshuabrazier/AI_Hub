@@ -81,6 +81,7 @@ vi.mock("@/lib/data/repositories/time-entries.repository", () => ({
   getChargeAndCostCentsByProjectRepo: vi.fn(),
   getLoggedMinutesByBudgetGroupRepo: vi.fn(),
   getLoggedMinutesByProjectRepo: vi.fn(),
+  valueUnpricedTimeEntriesForUserRepo: vi.fn(),
 }));
 
 vi.mock("@/lib/data/repositories/user-rates.repository", () => ({
@@ -110,6 +111,7 @@ import {
   getChargeAndCostCentsByProjectRepo,
   getLoggedMinutesByBudgetGroupRepo,
   getLoggedMinutesByProjectRepo,
+  valueUnpricedTimeEntriesForUserRepo,
 } from "@/lib/data/repositories/time-entries.repository";
 import {
   deleteUserRateRepo,
@@ -152,6 +154,19 @@ const mockCurrentRates = vi.mocked(listCurrentUserRatesRepo);
 const mockRatesForUser = vi.mocked(listUserRatesForUserRepo);
 const mockUpsertRate = vi.mocked(upsertUserRateRepo);
 const mockUpsertRates = vi.mocked(upsertUserRatesRepo);
+const mockValueUnpriced = vi.mocked(valueUnpricedTimeEntriesForUserRepo);
+
+/**
+ * The project money read, with the unvalued counts these fixtures are not
+ * about. Defaulted to 0 rather than left off, so a test about a null TOTAL is
+ * not also making a claim about how many entries caused it - the two are
+ * separate facts and the report shows them separately.
+ */
+const projectCents = (cents: { chargeCents: number | null; costCents: number | null }) => ({
+  ...cents,
+  unvaluedChargeEntries: 0,
+  unvaluedCostEntries: 0,
+});
 const mockMemberUsers = vi.mocked(getMemberUsersRepo);
 const mockStaffUsers = vi.mocked(getStaffUsersRepo);
 const mockGetUser = vi.mocked(getUserByUserIdRepo);
@@ -277,6 +292,7 @@ function repositoryDefaults(): void {
   mockCurrentRates.mockResolvedValue([]);
   mockRatesForUser.mockResolvedValue([]);
   mockGetUser.mockResolvedValue(person());
+  mockValueUnpriced.mockResolvedValue(0);
   mockGetRateById.mockResolvedValue(rate(RATE_ID, "2026-06-01"));
   mockUpsertRate.mockResolvedValue(rate(RATE_ID, "2026-06-01"));
   mockDeleteRate.mockResolvedValue(1);
@@ -288,7 +304,7 @@ function repositoryDefaults(): void {
   mockGroupMinutes.mockResolvedValue([]);
   // The honest default for a project nobody has logged an hour against:
   // null on both sides, never nought.
-  mockProjectCents.mockResolvedValue({ chargeCents: null, costCents: null });
+  mockProjectCents.mockResolvedValue(projectCents({ chargeCents: null, costCents: null }));
   mockGroupCents.mockResolvedValue([]);
 }
 
@@ -426,7 +442,7 @@ describe("every exported function is admin-only", () => {
 // -------------------------------------------------------------------
 describe("the budget report's money", () => {
   it("carries all three money KEYS for an admin, present even when the value is unknown", async () => {
-    mockProjectCents.mockResolvedValue({ chargeCents: null, costCents: null });
+    mockProjectCents.mockResolvedValue(projectCents({ chargeCents: null, costCents: null }));
 
     const report = await getProjectBudgetReportService(PROJECT_ID);
 
@@ -444,7 +460,7 @@ describe("the budget report's money", () => {
     // are asserted, because `?? 0` passes a null check written as
     // `not.toBe(undefined)`.
     mockProjectMinutes.mockResolvedValue([]);
-    mockProjectCents.mockResolvedValue({ chargeCents: null, costCents: null });
+    mockProjectCents.mockResolvedValue(projectCents({ chargeCents: null, costCents: null }));
 
     const report = await getProjectBudgetReportService(PROJECT_ID);
 
@@ -463,7 +479,7 @@ describe("the budget report's money", () => {
     // The sharpest case, and the one a plausible wrong implementation gets
     // wrong: `charge - (cost ?? 0)` reports the whole charge as margin,
     // which is the one wrong answer that reads as good news.
-    mockProjectCents.mockResolvedValue({ chargeCents: 500_000, costCents: null });
+    mockProjectCents.mockResolvedValue(projectCents({ chargeCents: 500_000, costCents: null }));
 
     const report = await getProjectBudgetReportService(PROJECT_ID);
 
@@ -474,7 +490,7 @@ describe("the budget report's money", () => {
   });
 
   it("subtracts the two figures Postgres already summed, and nothing else", async () => {
-    mockProjectCents.mockResolvedValue({ chargeCents: 500_000, costCents: 200_000 });
+    mockProjectCents.mockResolvedValue(projectCents({ chargeCents: 500_000, costCents: 200_000 }));
 
     const report = await getProjectBudgetReportService(PROJECT_ID);
 
@@ -1099,6 +1115,102 @@ describe("setUserRatesService", () => {
       expect.objectContaining({
         subjectUserId: USER_ID,
         summary: expect.stringContaining("Discounted, Standard, High"),
+      }),
+    );
+  });
+});
+
+// ===================================================================
+// VALUING THE HOURS THAT WERE NEVER VALUED.
+//
+// The bug that read as a broken budget report: a time entry snapshots its
+// cents when it is LOGGED, and rates are almost always entered after
+// somebody has started - so their existing hours carried no snapshot,
+// nothing filled them in, and the report said "not valued" for the whole
+// project forever. One unvalued entry was enough, because the money read
+// propagates unknown on purpose.
+//
+// What is asserted here is the WIRING and the ORDER. The SQL itself is
+// proven against a database, not a mock - a mock that returns a number
+// cannot tell a correct lateral join from a wrong one.
+// ===================================================================
+describe("setting a rate values the hours it now covers", () => {
+  const SINGLE = {
+    userId: USER_ID,
+    band: RATE_BANDS.STANDARD,
+    effectiveFrom: "2026-07-01",
+    chargeRate: 11000,
+    costRate: 6000,
+  } as Unsafe as Parameters<typeof setUserRateService>[0];
+
+  const BULK = {
+    userId: USER_ID,
+    effectiveFrom: "2026-07-01",
+    bands: { [RATE_BANDS.STANDARD]: { chargeRate: 11000, costRate: 6000 } },
+  } as Unsafe as Parameters<typeof setUserRatesService>[0];
+
+  beforeEach(() => {
+    mockUpsertRates.mockResolvedValue([rate(RATE_ID, "2026-07-01")]);
+  });
+
+  it("repairs after the single-band save, for that person", async () => {
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRateService(SINGLE);
+
+    expect(mockValueUnpriced).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it("repairs after the all-bands save, for that person", async () => {
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRatesService(BULK);
+
+    expect(mockValueUnpriced).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it("repairs AFTER the rate is written, never before", async () => {
+    // Order matters: the repair resolves each entry against the rates in the
+    // table, so running it first would find the rate that is about to be
+    // saved missing and value nothing.
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRatesService(BULK);
+
+    expect(mockUpsertRates.mock.invocationCallOrder[0]).toBeLessThan(
+      mockValueUnpriced.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does NOT repair when the save was refused", async () => {
+    // A de-identified account is refused, and nothing about its hours should
+    // move on the strength of a rate that was never stored.
+    signedInAs(USER_ROLES.ADMIN);
+    mockGetUser.mockResolvedValue(person({ deidentifiedAt: new Date("2026-05-01T00:00:00Z") }));
+
+    await expect(setUserRatesService(BULK)).rejects.toThrow(/de-identified/);
+    expect(mockValueUnpriced).not.toHaveBeenCalled();
+  });
+
+  it("does NOT repair for somebody who is not an admin", async () => {
+    signedInAs(USER_ROLES.MANAGER);
+
+    await expect(setUserRatesService(BULK)).rejects.toThrow();
+    expect(mockValueUnpriced).not.toHaveBeenCalled();
+  });
+
+  it("records how many hours it valued, because that is a change to BILLING data", async () => {
+    // It happened without anybody asking for it by name, so an admin
+    // reading the log later needs to see that setting a rate valued 40
+    // entries.
+    signedInAs(USER_ROLES.ADMIN);
+    mockValueUnpriced.mockResolvedValue(40);
+
+    await setUserRatesService(BULK);
+
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: expect.objectContaining({ valuedEntries: 40 }),
       }),
     );
   });

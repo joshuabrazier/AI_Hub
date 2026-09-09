@@ -27,6 +27,7 @@ import {
   getChargeAndCostCentsByProjectRepo,
   getLoggedMinutesByBudgetGroupRepo,
   getLoggedMinutesByProjectRepo,
+  valueUnpricedTimeEntriesForUserRepo,
   type ChargeAndCostCents,
 } from "@/lib/data/repositories/time-entries.repository";
 import {
@@ -370,6 +371,11 @@ export async function setUserRateService(requestDTO: SetUserRateRequestDTO): Pro
       costRateCents: requestDTO.costRate,
     });
 
+    // The same repair the bulk service performs, for the same reason - see
+    // the long note there. A rate corrected on one band values the hours
+    // that band now covers.
+    const valuedEntries = await valueUnpricedTimeEntriesForUserRepo(requestDTO.userId);
+
     // After the write, so a failed save is not recorded as a change. Both
     // parties are named: one admin deciding what another person's hour is
     // worth is a commercial act about somebody else.
@@ -384,6 +390,7 @@ export async function setUserRateService(requestDTO: SetUserRateRequestDTO): Pro
         effectiveFrom: saved.effectiveFrom,
         chargeRateCents: saved.chargeRateCents,
         costRateCents: saved.costRateCents,
+        valuedEntries,
       },
     });
 
@@ -479,6 +486,32 @@ export async function setUserRatesService(requestDTO: SetUserRatesRequestDTO): P
       })),
     );
 
+    // -----------------------------------------------------------------
+    // VALUE THE HOURS THIS RATE NOW COVERS.
+    //
+    // Without this the feature had a dead end that read as a broken report.
+    // A time entry snapshots its cents when it is LOGGED, and rates are
+    // almost always entered after somebody has started - so their existing
+    // hours carried no snapshot, nothing ever filled them in, and the budget
+    // report said "not valued" for the whole project forever. One unvalued
+    // entry is enough: the money read propagates unknown on purpose.
+    //
+    // ONLY NULLS ARE WRITTEN, which is what keeps the module's promise that
+    // an hour is worth what it was worth when it was worked. An hour already
+    // valued is untouched; an hour never valued gains a value, and there was
+    // nothing there to restate. Each entry resolves the rate as at ITS OWN
+    // work date, so a rate effective from July leaves June visibly unvalued
+    // rather than pricing it at a rate that did not exist yet.
+    //
+    // AFTER the write and outside its transaction, deliberately. The rates
+    // are the thing being saved; this is a consequence of them. If it fails,
+    // the rates are still correct and the entries are exactly as unvalued as
+    // they were a moment ago - where rolling the rates back would lose the
+    // work somebody just did over a repair that can be retried by saving
+    // again.
+    // -----------------------------------------------------------------
+    const valuedEntries = await valueUnpricedTimeEntriesForUserRepo(requestDTO.userId);
+
     // After the write, so a failed save is not recorded as a change. Both
     // parties are named: one admin deciding what another person's hour is
     // worth is a commercial act about somebody else.
@@ -497,6 +530,10 @@ export async function setUserRatesService(requestDTO: SetUserRatesRequestDTO): P
           chargeRateCents: rate.chargeRateCents,
           costRateCents: rate.costRateCents,
         })),
+        // Recorded because it is a change to BILLING DATA that this save
+        // caused without anybody asking for it by name. An admin reading the
+        // log later needs to see that setting a rate valued 40 hours.
+        valuedEntries,
       },
     });
 
@@ -885,6 +922,19 @@ async function buildBudgetReport(
     // not a gap to be filled in passing.
     ungrouped: budgetProgress(0, loggedByGroup.get(null) ?? 0),
     ...moneyFields(visibility, projectCents),
+    // Beside the money and gated with it: a reader who may not see a figure
+    // has no business knowing how many entries went into it.
+    ...(visibility === "none" || projectCents === undefined
+      ? {}
+      : {
+          unvaluedChargeEntries: projectCents.unvaluedChargeEntries,
+          // Only where cost is visible at all. On `chargeOnly` the cost
+          // figure is withheld, so a count explaining its blank would be
+          // explaining something the reader cannot see.
+          ...(visibility === "full"
+            ? { unvaluedCostEntries: projectCents.unvaluedCostEntries }
+            : {}),
+        }),
   };
 }
 

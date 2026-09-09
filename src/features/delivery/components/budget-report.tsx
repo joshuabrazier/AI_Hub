@@ -39,6 +39,33 @@ import { MoneyCell, MoneyStat } from "./budget-money";
 // claim they were that column's total. It leads instead, as the headline it
 // is, and the groups are the breakdown below it.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// Why a money figure is blank, in one sentence, or nothing.
+//
+// SAID ONLY WHEN THE FIGURE IS ACTUALLY MISSING. A valued total has a count
+// of nought, and explaining a number that is present is noise - so this
+// answers undefined unless the figure is null AND something caused it.
+//
+// The remedy is the useful half. An hour is valued at the rate it was logged
+// at, so an entry with no snapshot needs a rate whose start date is on or
+// before the day the work happened - and setting one now values it, which is
+// what the rates screen does. Saying only "some hours are unvalued" leaves
+// somebody looking at a blank with nothing to do about it.
+// -------------------------------------------------------------------
+function unvaluedHint(
+  cents: number | null | undefined,
+  unvalued: number | undefined,
+  side: "charge" | "cost",
+): string | undefined {
+  if (cents !== null || !unvalued) return undefined;
+
+  const hours = unvalued === 1 ? "1 hour has" : `${unvalued} entries have`;
+
+  return side === "charge"
+    ? `${hours} no charge rate behind them. Set a rate that starts on or before the day the work was done, and they are valued.`
+    : `${hours} no cost rate recorded. Add one on the rates screen and they are valued.`;
+}
+
 export function BudgetReport({ report }: { report: BudgetReportDTO }) {
   // PRESENCE, NOT TRUTHINESS - the rule above, written once here and read by
   // every cell below. `report.chargeableCents === 0` is a real answer and
@@ -73,12 +100,34 @@ export function BudgetReport({ report }: { report: BudgetReportDTO }) {
 
           {showAnyMoney ? (
             <div className="grid gap-3 sm:grid-cols-3">
+              {/* -------------------------------------------------------
+                  A BLANK NOW SAYS WHY IT IS BLANK.
+
+                  "Not valued" was the whole answer, and it read identically
+                  for one hour logged before somebody's rate existed and for
+                  a project nobody had ever priced - so a report doing
+                  exactly what it was designed to do was indistinguishable
+                  from a broken one.
+
+                  The count is only worth saying when the figure is actually
+                  missing: on a valued total it is zero, and on a
+                  non-billable project the badge above already explains the
+                  charge side better than a count would.
+                  ------------------------------------------------------- */}
               <MoneyStat
                 label="Chargeable"
                 cents={report.chargeableCents}
-                hint={report.isBillable ? undefined : "This project is not billable."}
+                hint={
+                  report.isBillable
+                    ? unvaluedHint(report.chargeableCents, report.unvaluedChargeEntries, "charge")
+                    : "This project is not billable."
+                }
               />
-              <MoneyStat label="Cost" cents={report.costCents} />
+              <MoneyStat
+                label="Cost"
+                cents={report.costCents}
+                hint={unvaluedHint(report.costCents, report.unvaluedCostEntries, "cost")}
+              />
               <MoneyStat
                 label="Margin"
                 cents={report.marginCents}
