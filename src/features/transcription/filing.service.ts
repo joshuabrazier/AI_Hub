@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
-import { converseText } from "@/lib/ai/converse";
+import { converseCeilingFor, converseText } from "@/lib/ai/converse";
 import {
   AI_CHAT_REQUEST_KINDS,
   TRANSCRIPTION_FILING_STATUSES,
@@ -98,6 +98,21 @@ const FOLDER_QUERY_LIMIT = 5_000;
 // A folder id and one sentence. Anything longer is the model explaining
 // itself at length into a column nobody reads.
 const FILING_MAX_TOKENS = 300;
+
+// -------------------------------------------------------------------
+// The ceiling on that call, derived from the token cap rather than
+// inherited.
+//
+// MEASURED, NOT ESTIMATED. This call ran on the shared 120-second default,
+// and in production a stalled one used every second of it - four times over
+// for one meeting, because each retry pays the ceiling again. Eight minutes
+// of Bedrock to not choose a folder.
+//
+// 300 tokens does not need two minutes. The derivation allows for a slow
+// prefill on a prompt carrying up to MAX_FOLDER_OPTIONS paths, which is the
+// large part of this request; the generation itself is a few seconds.
+// -------------------------------------------------------------------
+const FILING_TIMEOUT_MS = converseCeilingFor(FILING_MAX_TOKENS);
 
 // Markdown, because it reads as plain text in SharePoint's preview and needs
 // no library to produce. Not .docx: that means a dependency and a binary blob
@@ -208,8 +223,12 @@ async function suggestFolder(
   clientName: string | null,
   participants: readonly string[],
   folders: readonly CandidateFolder[],
-): Promise<{ folderId: string | null; reason: string | null }> {
-  if (!isBedrockConfigured() || folders.length === 0) return { folderId: null, reason: null };
+): Promise<{ folderId: string | null; reason: string | null; failure: string | null }> {
+  if (!isBedrockConfigured()) {
+    return { folderId: null, reason: null, failure: null };
+  }
+
+  if (folders.length === 0) return { folderId: null, reason: null, failure: null };
 
   const prompt = buildFilingPrompt({
     title: transcription.title,
@@ -226,11 +245,18 @@ async function suggestFolder(
       system: FILING_SYSTEM_PROMPT,
       prompt: prompt.text,
       maxTokens: FILING_MAX_TOKENS,
+      timeoutMs: FILING_TIMEOUT_MS,
     });
 
     const parsed = FilingReplySchema.safeParse(parseJsonReply(result.text));
 
-    if (!parsed.success) return { folderId: null, reason: null };
+    if (!parsed.success) {
+      return {
+        folderId: null,
+        reason: null,
+        failure: "The model's answer did not fit the expected shape, so it was ignored.",
+      };
+    }
 
     const reason = parsed.data.reason?.trim() || null;
 
@@ -242,11 +268,23 @@ async function suggestFolder(
       reason: prompt.truncated
         ? `${reason ?? "No reason given."} (Only part of the library was offered, so this was chosen from an incomplete list.)`
         : reason,
+      failure: null,
     };
   } catch (error) {
     console.warn(`suggestFolder: could not get a filing suggestion for ${transcription.id}`, error);
 
-    return { folderId: null, reason: null };
+    // -----------------------------------------------------------------
+    // REPORTED, NOT ONLY LOGGED, and this was a real gap. The middle tier
+    // failing is not the same as the middle tier finding nothing, and both
+    // used to record the same thing: "No folder matches X". Somebody reading
+    // that went looking for a missing folder, when what had actually
+    // happened was that the model call timed out and never saw the list.
+    // -----------------------------------------------------------------
+    return {
+      folderId: null,
+      reason: null,
+      failure: `The model could not be asked which folder to use (${describeError(error)}).`,
+    };
   }
 }
 
@@ -461,8 +499,14 @@ export async function fileTranscription(
     const byName = matchFolderByName(clientName, folders);
 
     const suggestion = byName.folder
-      ? { folderId: null, reason: null }
+      ? { folderId: null, reason: null, failure: null }
       : await suggestFolder(userId, transcription, clientName, participants, folders);
+
+    // Appended to whatever the decision says, rather than replacing it. Both
+    // facts matter: where it ended up, and that one of the three tiers never
+    // got a chance to weigh in.
+    const withFailure = (reason: string | null): string | null =>
+      suggestion.failure ? `${reason ? `${reason} ` : ""}${suggestion.failure}` : reason;
 
     const decision = chooseFilingDestination({
       clientName,
@@ -490,7 +534,7 @@ export async function fileTranscription(
         (await updateTranscriptionFilingRepo(filing.id, {
           status: TRANSCRIPTION_FILING_STATUSES.NOWHERE,
           driveId: library.driveId,
-          reason: decision.kind === "nowhere" ? decision.reason : null,
+          reason: withFailure(decision.kind === "nowhere" ? decision.reason : null),
         })) ?? filing
       );
     }
@@ -524,7 +568,7 @@ export async function fileTranscription(
           // has to stay answerable afterwards.
           folderPath: destination.folder.path,
           decidedVia: destination.via,
-          reason: destination.reason,
+          reason: withFailure(destination.reason),
           fileItemId: uploaded.item.itemId,
           fileWebUrl: uploaded.item.webUrl,
           fileName,
@@ -551,7 +595,7 @@ export async function fileTranscription(
           folderItemId: destination.folder.itemId,
           folderPath: destination.folder.path,
           decidedVia: destination.via,
-          reason: destination.reason,
+          reason: withFailure(destination.reason),
           error: describeError(error),
         })) ?? filing
       );

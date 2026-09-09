@@ -88,11 +88,25 @@ export const BEDROCK_MODEL_ID = "au.anthropic.claude-opus-4-6-v1";
 //
 // WHAT IS SET NOW. `socketTimeout` is the idle timeout the old comment
 // believed `requestTimeout` was. It rejects with a named TimeoutError
-// saying how long the socket was quiet, which is a real diagnosis arriving
-// from the layer that knows it. `requestTimeout` is deliberately NOT set:
-// a streamed reply has no meaningful total duration, and a warn-only timer
-// that fires on every healthy long answer is log noise that trains people
-// to ignore the log.
+// saying how long the socket was quiet. `requestTimeout` is still
+// deliberately NOT set: it is a TOTAL duration applied to every call
+// through this one client, and a chat reply legitimately streams for
+// minutes while a one-shot call must not - one number cannot serve both.
+// Total ceilings therefore live with each CALLER, sized to what it asked
+// for. See converseCeilingFor in converse.ts.
+//
+// AND SOCKETTIMEOUT IS NOT THE MAIN DETECTOR, WHICH IS A CORRECTION TO WHAT
+// THIS BLOCK FIRST CLAIMED. It was written expecting the idle timeout to
+// catch a dead call, with each caller's total ceiling as a rarely-used
+// backstop. Production says the reverse: a stalled Bedrock call runs to the
+// caller's ceiling every time and socketTimeout at 25s has not fired once.
+// The socket is not idle during one - an AWS event stream carries periodic
+// frames, so the connection stays busy while the model produces nothing.
+//
+// So this catches a genuinely dead socket, which is a real and different
+// failure, and it cannot see the common one. Do not remove a caller's total
+// ceiling on the strength of this option existing; that is the mistake the
+// paragraph above it describes, in the other direction.
 //
 // TWENTY-FIVE SECONDS OF SILENCE IS ALREADY PATHOLOGICAL. Time to first
 // token is a few seconds even on a large cached prompt, and mid-stream gaps

@@ -57,21 +57,38 @@ export class BedrockNotConfiguredError extends Error {
 }
 
 // -------------------------------------------------------------------
-// A total ceiling for a one-shot call, used when the caller gives no signal
-// of its own.
+// A TOTAL ceiling, and it is the ONLY bound that works on this failure.
 //
-// These calls have no reader watching a cursor: they run inside a sweep, a
-// server action or a filing decision. So an abandoned one is not a blank
-// screen, it is a request holding a database connection and a socket open
-// with nobody to answer - and the sweep that called it retries on the next
-// pass anyway.
+// A CORRECTION, written from production logs. The request handler's
+// socketTimeout was meant to be the real detector of a dead call, with this
+// as a backstop for the rarer case of a stream that trickles. It is the
+// other way round: measured in production, a stalled Bedrock call ran to
+// this ceiling every time with socketTimeout at 25s never firing once. The
+// socket is NOT idle during one - an AWS event stream carries periodic
+// frames, so the connection stays perfectly busy while the model produces
+// nothing at all.
 //
-// It is a TOTAL rather than an idle measure, because the idle case is
-// already covered properly one layer down by the request handler's
-// socketTimeout. This is the backstop for the other shape of failure: a
-// stream that keeps trickling just enough to stay alive and never ends.
+// So an idle timeout cannot see this failure, and total duration is the only
+// quantity that can. That makes this ceiling load-bearing rather than
+// defensive, which is why it is now sized per call instead of one number for
+// everything: a 300-token folder suggestion and a 4,000-token summary are
+// not the same wait, and giving the first the second's budget is how one
+// filing decision cost two minutes and then did it three more times.
+//
+// DERIVED, NOT PICKED. Slowest observed generation rate, plus an allowance
+// for prefill on a large prompt. Raising a caller's token cap raises its
+// ceiling with it.
 // -------------------------------------------------------------------
-const TOTAL_TIMEOUT_MS = 120_000;
+const SLOWEST_TOKENS_PER_SECOND = 30;
+const PREFILL_ALLOWANCE_MS = 30_000;
+
+export function converseCeilingFor(maxTokens: number): number {
+  return Math.ceil((maxTokens / SLOWEST_TOKENS_PER_SECOND) * 1000) + PREFILL_ALLOWANCE_MS;
+}
+
+// The default, for a caller that has not thought about it. Matches
+// DEFAULT_MAX_TOKENS below.
+const DEFAULT_TIMEOUT_MS = converseCeilingFor(1_500);
 
 export interface ConverseTextParams {
   // Whose spend this is. Required, because the log row is per user and an
@@ -83,10 +100,14 @@ export interface ConverseTextParams {
   maxTokens?: number;
   temperature?: number;
   // The caller's own deadline or cancellation, where it has one. Combined
-  // with the ceiling above rather than replacing it, so a caller cannot
+  // with the ceiling rather than replacing it, so a caller cannot
   // accidentally remove the only bound on the call by passing a signal that
   // never fires.
   abortSignal?: AbortSignal;
+  // A tighter total ceiling than the default. Worth setting whenever the
+  // reply is short: the ceiling is what a stalled call actually costs, and
+  // that cost is paid on every retry above it.
+  timeoutMs?: number;
 }
 
 export interface ConverseTextResult {
@@ -114,8 +135,10 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
     cacheWriteTokens: null,
   };
 
+  const ceilingMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
   // AbortSignal.any needs Node 18.17 / 20.3; this app is on Node 20.
-  const timeout = AbortSignal.timeout(TOTAL_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(ceilingMs);
   const abortSignal = params.abortSignal
     ? AbortSignal.any([params.abortSignal, timeout])
     : timeout;
@@ -184,7 +207,7 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
     // The SDK throws its own bare AbortError and discards the reason, so a
     // call that hit the ceiling above and one the caller cancelled would
     // otherwise be indistinguishable in the log. Said explicitly.
-    const described = describeConverseFailure(error, params.abortSignal, timeout);
+    const described = describeConverseFailure(error, params.abortSignal, timeout, ceilingMs);
 
     // Logged before rethrowing, and separately from the success path, so a
     // failed call is on the record with whatever usage it had reported.
@@ -205,12 +228,19 @@ function describeConverseFailure(
   error: unknown,
   callerSignal: AbortSignal | undefined,
   timeout: AbortSignal,
+  ceilingMs: number,
 ): string {
   const isAbort = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 
   if (isAbort) {
     if (timeout.aborted) {
-      return `TimeoutError: the model call ran past its ${TOTAL_TIMEOUT_MS / 1000}s ceiling and was stopped.`;
+      // Says the ceiling, because "ran to the full budget" and "failed
+      // quickly" are different problems and the SDK's own AbortError cannot
+      // tell them apart.
+      return (
+        `TimeoutError: the model accepted the request and produced nothing for the full ` +
+        `${Math.round(ceilingMs / 1000)}s allowed, so it was stopped.`
+      );
     }
 
     if (callerSignal?.aborted) {
