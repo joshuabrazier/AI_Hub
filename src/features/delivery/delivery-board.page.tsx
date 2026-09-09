@@ -7,8 +7,13 @@ import { ROUTES, projectBoardForRole } from "@/lib/routes";
 import { userDisplayName } from "@/lib/user-display-name";
 
 import { getProjectBoardService } from "./delivery-board.service";
-import { getMyProjectsService, getProjectDetailService } from "./delivery-setup.service";
+import {
+  getMyProjectsService,
+  getProjectBudgetGroupsService,
+  getProjectDetailService,
+} from "./delivery-setup.service";
 import { BoardWorkspace, type BoardProjectLink } from "./components/board-workspace";
+import { SetupBudgetNudge } from "./components/setup-budget-nudge";
 
 // -------------------------------------------------------------------
 // The board: one project, in whichever area the viewer is allowed to be in.
@@ -49,10 +54,29 @@ export default async function DeliveryBoardPage({
   // are built from.
   const user = await requireUser();
 
-  const [projects, detail, board] = await Promise.all([
+  // Known before the reads, so the admin-only fourth one can be skipped
+  // entirely for everybody else rather than fetched and thrown away.
+  const isAdmin = user.role === USER_ROLES.ADMIN;
+
+  const [projects, detail, board, budgetGroups] = await Promise.all([
     getMyProjectsService(),
     getProjectDetailService(projectId),
     getProjectBoardService(projectId),
+    // -----------------------------------------------------------------
+    // FOR THE BUDGET NUDGE, WHICH MOVED HERE FROM PROJECT SETUP.
+    //
+    // It shows how much of the budgeted pool the task estimates have taken,
+    // and tasks are made HERE - on setup it read 0% on every project,
+    // because a project reaches that screen with no tasks at all.
+    //
+    // ADMIN ONLY, and undefined rather than an empty array for everybody
+    // else: the panel's button calls markProjectBudgetAssignedService, which
+    // guards on admin, so offering it to a lead would be a button the server
+    // refuses. The read itself is open to any member
+    // (getProjectBudgetGroupsService uses requireProjectAccess), so this is
+    // about not fetching what will not be rendered.
+    // -----------------------------------------------------------------
+    isAdmin ? getProjectBudgetGroupsService(projectId) : undefined,
   ]);
 
   // Through projectBoardForRole rather than a string built here: the proxy
@@ -76,8 +100,6 @@ export default async function DeliveryBoardPage({
       href: projectBoardForRole(user.role, detail.project.id),
     });
   }
-
-  const isAdmin = user.role === USER_ROLES.ADMIN;
 
   return (
     <PortalPage
@@ -109,6 +131,23 @@ export default async function DeliveryBoardPage({
         ) : undefined
       }
     >
+      {/* Above the board, because it is a nudge about what to do next rather
+          than part of the board itself - and it takes itself away for good
+          once planning has been marked finished. */}
+      {isAdmin && budgetGroups ? (
+        <div className="mb-6">
+          <SetupBudgetNudge
+            projectId={detail.project.id}
+            budgetAssignedAt={detail.budgetAssignedAt}
+            groups={budgetGroups}
+            // Every task estimate on the project. `rollup.budgetMinutes` is
+            // that total - see getProjectDetailService, which builds the
+            // rollup from the project's estimates against its logged time.
+            assignedMinutes={detail.rollup.budgetMinutes}
+          />
+        </div>
+      ) : null}
+
       <BoardWorkspace
         projects={links}
         activeProjectId={detail.project.id}
