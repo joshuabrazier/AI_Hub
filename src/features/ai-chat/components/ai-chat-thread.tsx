@@ -12,8 +12,10 @@ import {
   Paperclip,
   SendHorizontal,
   Sparkles,
+  TriangleAlert,
 } from "lucide-react";
 
+import { createStreamDecoder, type StreamEvent } from "@/lib/ai/stream-protocol";
 import { ModelMarkdown } from "@/components/model-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -75,6 +77,31 @@ export function AiChatThread({
   // string means the request is away but no text has come back yet, which
   // is what drives the thinking indicator.
   const [reply, setReply] = useState<string | null>(null);
+
+  // -------------------------------------------------------------------
+  // What the server says it is doing right now.
+  //
+  // THE CHEAPEST RELIABILITY FIX IN THE FEATURE, and it is not a fix to any
+  // code path. Most of what got reported as "the AI keeps failing" was a
+  // wait with nothing to explain it: on a long thread the server spends
+  // twenty or thirty seconds summarising earlier turns before it asks the
+  // model anything, and a static "Thinking..." for half a minute reads as a
+  // page that has died. The same wait labelled "summarising earlier turns"
+  // reads as work.
+  // -------------------------------------------------------------------
+  const [status, setStatus] = useState<string | null>(null);
+
+  // -------------------------------------------------------------------
+  // Why the last reply stopped, in the server's own words.
+  //
+  // INLINE AND PERSISTENT RATHER THAN A TOAST. The reason now names the
+  // phase that overran, what every phase before it spent, and the
+  // underlying error - which is several lines, is worth reading twice, and
+  // is worth being able to copy into a message to somebody. A toast that
+  // vanishes after four seconds is the wrong container for it, and a toast
+  // saying "something went wrong" was the thing being complained about.
+  // -------------------------------------------------------------------
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -198,6 +225,10 @@ export function AiChatThread({
     setDraft("");
     setStaged([]);
     setReply("");
+    setStatus(null);
+    // Cleared on a new send, not on a timer: the previous failure stays
+    // readable for as long as it is the most recent thing that happened.
+    setStreamError(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -216,14 +247,42 @@ export function AiChatThread({
         // The server may or may not have persisted the question before
         // failing, so rather than guess, re-read the truth from the server.
         const problem = await response.json().catch(() => null);
-        toast.error(problem?.error ?? MESSAGES.SOMETHING_WENT_WRONG);
+        setStreamError(problem?.error ?? MESSAGES.SOMETHING_WENT_WRONG);
         setReply(null);
+        setStatus(null);
         router.refresh();
         return;
       }
 
-      const decoder = new TextDecoder();
+      const textDecoder = new TextDecoder();
+      const events = createStreamDecoder();
       const reader = response.body.getReader();
+
+      const apply = (event: StreamEvent) => {
+        if (event.t === "text") {
+          streamed += event.v;
+          setReply(streamed);
+          // Text supersedes any status: there is now an answer to look at.
+          setStatus(null);
+          return;
+        }
+
+        if (event.t === "status") {
+          setStatus(event.v);
+          return;
+        }
+
+        // -------------------------------------------------------------
+        // A FAILURE THAT ARRIVES AFTER THE 200.
+        //
+        // This is the case the old plain-text stream could not express at
+        // all: the route closed the stream, the browser saw a clean end,
+        // and a reply that died two thirds of the way through rendered as a
+        // short answer with nothing to say otherwise. That is what "it just
+        // stops" was.
+        // -------------------------------------------------------------
+        setStreamError(event.v);
+      };
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -231,9 +290,21 @@ export function AiChatThread({
 
         // `stream: true` matters: a multi-byte character can be split across
         // chunk boundaries, and decoding each chunk in isolation would
-        // render a replacement character instead of the letter.
-        streamed += decoder.decode(value, { stream: true });
-        setReply(streamed);
+        // render a replacement character instead of the letter. It has to
+        // happen BEFORE the line splitting, which works on characters.
+        for (const event of events.push(textDecoder.decode(value, { stream: true }))) {
+          apply(event);
+        }
+      }
+
+      for (const event of events.flush()) apply(event);
+
+      if (events.malformed > 0) {
+        // Said rather than swallowed. A damaged line means the answer above
+        // has a hole in it, and a reader who cannot tell will trust it.
+        setStreamError(
+          `${events.malformed} part(s) of the reply arrived damaged and were skipped, so the answer above may be incomplete.`,
+        );
       }
     } catch (error) {
       // An abort is the Stop button, not a failure - whatever arrived is
@@ -242,11 +313,18 @@ export function AiChatThread({
         error instanceof DOMException && error.name === "AbortError";
       if (!aborted) {
         console.error(error);
-        toast.error(MESSAGES.SOMETHING_WENT_WRONG);
+        // A fetch that throws is the network, not the app: the request never
+        // completed, so the server has no reason to have said anything.
+        setStreamError(
+          error instanceof Error
+            ? `The connection to the server failed: ${error.message}`
+            : MESSAGES.SOMETHING_WENT_WRONG,
+        );
       }
     } finally {
       abortRef.current = null;
       setReply(null);
+      setStatus(null);
 
       // Commit whatever arrived so the answer does not blink out between
       // the stream closing and the server render landing.
@@ -355,8 +433,11 @@ export function AiChatThread({
                   attachments: [],
                 }}
                 isStreaming
+                statusLabel={status}
               />
             )}
+
+            {streamError !== null && <StreamFailure reason={streamError} />}
           </ul>
         )}
 
@@ -581,9 +662,14 @@ export function AiChatThread({
 function MessageRow({
   message,
   isStreaming = false,
+  // What the server says it is doing, while there is nothing to show yet.
+  // Null falls back to the generic word, which is all a finished turn or a
+  // server without phases can offer.
+  statusLabel = null,
 }: {
   message: AiChatMessageDTO;
   isStreaming?: boolean;
+  statusLabel?: string | null;
 }) {
   const isUser = message.role === AI_CHAT_ROLES.USER;
 
@@ -627,9 +713,15 @@ function MessageRow({
         <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
           {/* A moving indicator rather than the word alone: a tool call adds
               a second round trip, so this can sit for several seconds and
-              static text reads as a page that has stopped. */}
+              static text reads as a page that has stopped.
+
+              AND IT SAYS WHAT IS HAPPENING, not just that something is. On a
+              long thread the server spends real time summarising earlier
+              turns before the model is asked anything, and a fixed
+              "Thinking..." through thirty seconds of that is why people
+              reported a working feature as broken. */}
           <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-          Thinking...
+          {statusLabel ?? "Thinking"}...
         </p>
       ) : (
         // The model's half, rendered as markdown - which is the format it
@@ -721,5 +813,60 @@ function CopyReply({ content, isStreaming }: { content: string; isStreaming: boo
       {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
       {copied ? "Copied" : "Copy"}
     </Button>
+  );
+}
+
+// -------------------------------------------------------------------
+// WHY THE LAST REPLY STOPPED
+//
+// The whole reason this component exists: "Something went wrong. Please try
+// again later." was what a chat failure looked like for months, while the
+// server had already worked out which phase overran, what every phase before
+// it had spent, and what the underlying error was - and wrote all of it to a
+// table only administrators can read.
+//
+// So the sentence comes down the wire and is shown here, verbatim. It reads
+// like this:
+//
+//   "compaction" ran past its 75.0s budget. Turn: 76.2s total (session 0.1s,
+//   record-question 0.2s, history 0.3s, attachments 0.1s, compaction 75.0s).
+//   Cause: TimeoutError: the request socket timed out after 25000 ms of
+//   inactivity.
+//
+// INLINE AND PERSISTENT RATHER THAN A TOAST, because that is several lines,
+// is worth reading twice, and is worth being able to select and paste into a
+// message to somebody. It clears on the next send, so the most recent thing
+// that happened stays on screen until something else happens.
+//
+// IT IS SERVER TEXT, NOT MODEL TEXT, and it renders as a text node rather
+// than through ModelMarkdown - there is no reason for a diagnostic to carry
+// formatting, and every reason not to give one a second rendering path.
+// -------------------------------------------------------------------
+function StreamFailure({ reason }: { reason: string }) {
+  return (
+    <li
+      className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3"
+      // Announced, because it can arrive minutes after the send while the
+      // reader is looking somewhere else.
+      role="alert"
+    >
+      <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+        <TriangleAlert size={14} className="text-destructive" aria-hidden="true" />
+        The reply did not finish
+      </p>
+
+      {/* Selectable and wrapped rather than truncated. A diagnosis somebody
+          cannot copy is one they have to retype into a message, and a
+          diagnosis cut off at one line is the old generic message with extra
+          steps. */}
+      <p className="mt-1.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
+        {reason}
+      </p>
+
+      <p className="mt-2 text-xs text-muted-foreground">
+        Anything that arrived above has been saved. Sending again starts a new
+        attempt.
+      </p>
+    </li>
   );
 }

@@ -350,12 +350,17 @@ async function summariseTranscript(
   try {
     // STREAMED, and this is not a preference - it is the fix for a real
     // failure. A non-streaming ConverseCommand sends nothing at all until
-    // the model has finished, and the client is configured to abandon a
-    // stream with no activity for READ_TIMEOUT_MS - 120 seconds, in
-    // bedrock-client.ts. Opus writing up to SUMMARY_MAX_TOKENS from an
-    // hour-long transcript takes longer than that, so every summary of a
-    // real meeting timed out, five times over, because `maxAttempts: 5`
-    // retried a request that was never going to be any faster.
+    // the model has finished, so the entire generation reads as one
+    // uninterrupted silence to anything measuring inactivity. Opus writing
+    // up to SUMMARY_MAX_TOKENS from an hour-long transcript takes minutes,
+    // so every summary of a real meeting timed out and was retried by a
+    // request that was never going to be any faster.
+    //
+    // The inactivity measure is BEDROCK_SOCKET_IDLE_MS in bedrock-client.ts.
+    // An earlier version of this note named READ_TIMEOUT_MS and put it at
+    // 120 seconds; that option was `requestTimeout`, which only logs a
+    // warning and never aborted anything, so for a period there was no
+    // inactivity timeout on Bedrock at all. See that file.
     //
     // Streaming puts a token on the socket every few milliseconds, so the
     // inactivity timer never fires. The text is accumulated here; nothing

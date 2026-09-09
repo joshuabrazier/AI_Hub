@@ -801,6 +801,32 @@ export type UpdateTranscriptionFiling = Updateable<TranscriptionFilings>;
 // `systemBlocks` and `messages` are JSONB: read back as parsed arrays,
 // written as JSON strings, same as the audit log's `changes`/`metadata`.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// One turn's phase timeline, as stored.
+//
+// Declared here rather than imported from the guard that produces it,
+// because a stored shape and a runtime shape are allowed to diverge and the
+// database is the one that has to keep reading old rows. A field added to
+// the guard is optional here until every row has it.
+// -------------------------------------------------------------------
+export type TurnPhaseLog = {
+  totalMs: number;
+  currentPhase: string | null;
+  timedOutPhase: string | null;
+  readerLeft: boolean;
+  // Added after the first rows were written, so optional: a row from before
+  // the overall ceiling existed simply does not say.
+  ceilingHit?: boolean;
+  phases: {
+    name: string;
+    ms: number;
+    budgetMs: number;
+    kind: "duration" | "idle";
+    timedOut: boolean;
+  }[];
+  notes: Record<string, string | number | boolean>;
+};
+
 export interface AiChatRequestLogs {
   id: string;
   userId: string;
@@ -838,6 +864,19 @@ export interface AiChatRequestLogs {
   // NULL on success. A failed call is when an admin most wants the payload.
   error: string | null;
   durationMs: number | null;
+  // -----------------------------------------------------------------
+  // The phase timeline: where the duration above actually went.
+  //
+  // duration_ms says a turn took twenty seconds; this says nineteen of them
+  // were spent compacting the thread before the model was asked anything.
+  // Without it the log could describe a failure without being able to
+  // explain one, which is how "the model sent nothing for 20 seconds" stood
+  // as a diagnosis for weeks. See migration 022 for the shape.
+  //
+  // NULL is ordinary: rows written before this existed have none, and a
+  // compaction call is one request inside somebody else's turn.
+  // -----------------------------------------------------------------
+  phases: ColumnType<TurnPhaseLog | null, string | null, string | null>;
   createdAt: Date;
 }
 
