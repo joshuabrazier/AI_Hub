@@ -18,7 +18,16 @@ import {
   startOfWeek,
   weekDates,
   weekDayOf,
+  CreateClientSchema,
   SetUserRateSchema,
+  UpdateClientSchema,
+  UpdateTaskSchema,
+  UpdateTimeEntrySchema,
+  type TimesheetCellDTO,
+  type TimesheetCellEntryDTO,
+  type UpdateClientRequestDTO,
+  type UpdateTaskRequestDTO,
+  type UpdateTimeEntryRequestDTO,
 } from "./delivery.types";
 
 // -------------------------------------------------------------------
@@ -673,5 +682,280 @@ describe("rate fields refuse null rather than reading it as nought", () => {
     const parsed = SetUserRateSchema.safeParse({ ...base, chargeRate: "12.50", costRate: "" });
 
     expect(parsed.success && parsed.data.chargeRate).toBe(1250);
+  });
+});
+
+// -------------------------------------------------------------------
+// ===================================================================
+// THE PATCH SCHEMAS
+// ===================================================================
+//
+// THE SILENT-FAILURE CLASS THIS FILE IS ABOUT, in its purest form. A schema
+// that turns an ABSENT field into NULL deletes what somebody wrote and
+// reports success: the request was valid, the write happened, the toast said
+// saved, and the note is gone. Nobody re-reads a description or an invoice
+// narrative until they need it, so the gap between losing it and finding out
+// is weeks.
+//
+// So each block below asserts the SAME THREE PROPERTIES, and they only mean
+// anything together:
+//
+//   1. an absent field is ABSENT from the parsed output, not null,
+//   2. an empty string survives as a CLEAR, which is null,
+//   3. a real value passes through.
+//
+// EACH WAS CHECKED AGAINST THE WRONG IMPLEMENTATION - the required field
+// these schemas used to have, which parses `{ id }` into `{ id, notes: null
+// }`. Only (1) catches it. A test asserting `toBeNull()` on the cleared case
+// passes against the bug it is meant to catch, and so does a test asserting
+// that the parse merely succeeds - which is why every absent case below
+// tests the KEY with `Object.hasOwn` rather than the value.
+//
+// The distinction is load-bearing the whole way down: Kysely drops an
+// `undefined` out of a `set()` object, so an absent key never reaches the
+// SQL, while a null is written.
+// -------------------------------------------------------------------
+
+const TASK_ID = "t".repeat(32);
+const USER_ID = "u".repeat(32);
+const CLIENT_ID = "c".repeat(32);
+const ENTRY_ID = "e".repeat(32);
+
+describe("UpdateTaskSchema is a patch", () => {
+  it("leaves out every field the payload left out", () => {
+    // THE TEST THE OLD SCHEMA FAILS. It required `title` and `description`,
+    // so this payload did not parse at all - and the shape that made it
+    // parse, a description posted from a form that never had one, is the
+    // bug: a board card carries no description on purpose.
+    const parsed = UpdateTaskSchema.parse({ taskId: TASK_ID });
+
+    expect(parsed).toEqual({ taskId: TASK_ID });
+    expect(Object.hasOwn(parsed, "title")).toBe(false);
+    expect(Object.hasOwn(parsed, "description")).toBe(false);
+    expect(Object.hasOwn(parsed, "assigneeId")).toBe(false);
+  });
+
+  it("tells an absent description from a cleared one", () => {
+    // The pair side by side, because neither half proves anything alone.
+    const untouched = UpdateTaskSchema.parse({ taskId: TASK_ID });
+    const cleared = UpdateTaskSchema.parse({ taskId: TASK_ID, description: "" });
+
+    expect(Object.hasOwn(untouched, "description")).toBe(false);
+    expect(Object.hasOwn(cleared, "description")).toBe(true);
+    expect(cleared.description).toBeNull();
+  });
+
+  it("clears on whitespace too, because a box holding a space is empty", () => {
+    expect(UpdateTaskSchema.parse({ taskId: TASK_ID, description: "   " }).description).toBeNull();
+  });
+
+  it("passes a real description through, trimmed", () => {
+    const parsed = UpdateTaskSchema.parse({ taskId: TASK_ID, description: "  Rewrite the import  " });
+
+    expect(parsed.description).toBe("Rewrite the import");
+  });
+
+  it("refuses null for a description, so a caller with none omits the field", () => {
+    // null is the spelling a caller reaches for when it has no value to
+    // send, and reading it as "delete what is stored" is the bug. Refused
+    // here so the validator says so as loudly as the compiler does.
+    expect(UpdateTaskSchema.safeParse({ taskId: TASK_ID, description: null }).success).toBe(false);
+  });
+
+  it("still refuses an empty title, because a title that is present is being changed", () => {
+    // Optional is not permissive: not sending a title keeps it, sending a
+    // blank one is somebody emptying a field that cannot be empty.
+    expect(UpdateTaskSchema.safeParse({ taskId: TASK_ID, title: "   " }).success).toBe(false);
+    expect(UpdateTaskSchema.parse({ taskId: TASK_ID, title: " Import  " }).title).toBe("Import");
+  });
+
+  it("keeps null on assigneeId, because unassigning is a real edit", () => {
+    // The one field where null is a VALUE rather than a refusal - there is
+    // no empty-string spelling of "nobody" - so all three states are live.
+    const unassigned = UpdateTaskSchema.parse({ taskId: TASK_ID, assigneeId: null });
+    const assigned = UpdateTaskSchema.parse({ taskId: TASK_ID, assigneeId: USER_ID });
+
+    expect(Object.hasOwn(unassigned, "assigneeId")).toBe(true);
+    expect(unassigned.assigneeId).toBeNull();
+    expect(assigned.assigneeId).toBe(USER_ID);
+  });
+
+  it("carries no estimate, however the payload spells one", () => {
+    // `estimate_changes` is append-only, so every estimate change goes
+    // through AdjustTaskEstimateSchema. An estimate arriving on the ordinary
+    // edit would leave the number right and the record of how it moved
+    // missing, which is the case the log exists for.
+    const parsed = UpdateTaskSchema.parse({ taskId: TASK_ID, estimateHours: 8, estimateMinutes: 480 });
+
+    expect(Object.hasOwn(parsed, "estimateHours")).toBe(false);
+    expect(Object.hasOwn(parsed, "estimateMinutes")).toBe(false);
+  });
+
+  it("types an edit that changes one field and says nothing about the rest", () => {
+    // A compile-time assertion as much as a runtime one: if any editable
+    // field goes back to being required, this stops building.
+    const patch: UpdateTaskRequestDTO = { taskId: TASK_ID, description: null };
+
+    expect(patch.description).toBeNull();
+  });
+});
+
+describe("UpdateTimeEntrySchema is a patch", () => {
+  it("leaves out every field the payload left out", () => {
+    // A timesheet cell shows a TOTAL and holds no note. Under the old
+    // schema, correcting an hour from one posted an empty note box and
+    // deleted the narrative a client's invoice is written from.
+    const parsed = UpdateTimeEntrySchema.parse({ timeEntryId: ENTRY_ID });
+
+    expect(parsed).toEqual({ timeEntryId: ENTRY_ID });
+    expect(Object.hasOwn(parsed, "notes")).toBe(false);
+    expect(Object.hasOwn(parsed, "hours")).toBe(false);
+    expect(Object.hasOwn(parsed, "workDate")).toBe(false);
+  });
+
+  it("tells an absent note from a cleared one", () => {
+    const untouched = UpdateTimeEntrySchema.parse({ timeEntryId: ENTRY_ID, hours: 1 });
+    const cleared = UpdateTimeEntrySchema.parse({ timeEntryId: ENTRY_ID, hours: 1, notes: "" });
+
+    expect(Object.hasOwn(untouched, "notes")).toBe(false);
+    expect(Object.hasOwn(cleared, "notes")).toBe(true);
+    expect(cleared.notes).toBeNull();
+  });
+
+  it("passes a real note through, trimmed", () => {
+    const parsed = UpdateTimeEntrySchema.parse({ timeEntryId: ENTRY_ID, notes: "  Onsite workshop  " });
+
+    expect(parsed.notes).toBe("Onsite workshop");
+  });
+
+  it("refuses null for a note", () => {
+    expect(UpdateTimeEntrySchema.safeParse({ timeEntryId: ENTRY_ID, notes: null }).success).toBe(false);
+  });
+
+  it("leaves the work date out when nobody moved the day", () => {
+    // The service re-resolves the captured rate snapshot ONLY when the day
+    // moves. An edit that never mentions the day cannot restate an hour at
+    // today's rate, which is what a required workDate risked every time
+    // somebody fixed a typo in a note.
+    const parsed = UpdateTimeEntrySchema.parse({ timeEntryId: ENTRY_ID, notes: "Fixed the spelling" });
+
+    expect(Object.hasOwn(parsed, "workDate")).toBe(false);
+  });
+
+  it("still converts hours to minutes, and still bounds them, when they are sent", () => {
+    // Optional does not mean unchecked: the conversion still happens once,
+    // at the boundary, and every bound still applies.
+    expect(UpdateTimeEntrySchema.parse({ timeEntryId: ENTRY_ID, hours: 1.5 }).hours).toBe(90);
+    // 0.004 hours rounds to nought minutes, which violates minutes > 0.
+    expect(UpdateTimeEntrySchema.safeParse({ timeEntryId: ENTRY_ID, hours: 0.004 }).success).toBe(false);
+    expect(UpdateTimeEntrySchema.safeParse({ timeEntryId: ENTRY_ID, workDate: "2026-02-31" }).success).toBe(false);
+  });
+
+  it("types an edit that moves the day and says nothing about the note", () => {
+    const patch: UpdateTimeEntryRequestDTO = { timeEntryId: ENTRY_ID, workDate: "2026-06-15" };
+
+    expect(patch.workDate).toBe("2026-06-15");
+  });
+});
+
+describe("UpdateClientSchema is a patch", () => {
+  it("restores a client without touching its name or its notes", () => {
+    // THE BUG THIS CLOSES. ClientSummaryDTO - what the client LIST holds -
+    // carries no notes, so restoring from that list used to post
+    // `notes: null` beside the name and wrote NULL over whatever was stored.
+    const parsed = UpdateClientSchema.parse({ clientId: CLIENT_ID, isActive: true });
+
+    expect(parsed).toEqual({ clientId: CLIENT_ID, isActive: true });
+    expect(Object.hasOwn(parsed, "notes")).toBe(false);
+    expect(Object.hasOwn(parsed, "name")).toBe(false);
+  });
+
+  it("renames a client without touching its status or its notes", () => {
+    const parsed = UpdateClientSchema.parse({ clientId: CLIENT_ID, name: "  Perks  " });
+
+    expect(parsed).toEqual({ clientId: CLIENT_ID, name: "Perks" });
+    expect(Object.hasOwn(parsed, "isActive")).toBe(false);
+    expect(Object.hasOwn(parsed, "notes")).toBe(false);
+  });
+
+  it("tells an absent note from a cleared one", () => {
+    const untouched = UpdateClientSchema.parse({ clientId: CLIENT_ID, name: "Perks" });
+    const cleared = UpdateClientSchema.parse({ clientId: CLIENT_ID, name: "Perks", notes: "" });
+
+    expect(Object.hasOwn(untouched, "notes")).toBe(false);
+    expect(Object.hasOwn(cleared, "notes")).toBe(true);
+    expect(cleared.notes).toBeNull();
+  });
+
+  it("passes a real note through, and refuses null", () => {
+    expect(UpdateClientSchema.parse({ clientId: CLIENT_ID, notes: " Pays on 30 days " }).notes).toBe(
+      "Pays on 30 days",
+    );
+    expect(UpdateClientSchema.safeParse({ clientId: CLIENT_ID, notes: null }).success).toBe(false);
+  });
+
+  it("still refuses an empty name", () => {
+    expect(UpdateClientSchema.safeParse({ clientId: CLIENT_ID, name: "  " }).success).toBe(false);
+  });
+
+  it("types the restore, which is the narrowest edit on that screen", () => {
+    const patch: UpdateClientRequestDTO = { clientId: CLIENT_ID, isActive: true };
+
+    expect(patch.isActive).toBe(true);
+  });
+});
+
+describe("a create still takes null for a text field it has no box for", () => {
+  it("accepts a null note on a create, where there is nothing to overwrite", () => {
+    // Every action is typed on its Request (output) DTO, so a component
+    // holds `string | null` and posts back what it is holding. This was
+    // refused as "expected string, received null" - a validation failure on
+    // a form with no note field to report it against.
+    const parsed = CreateClientSchema.parse({ name: "Perks", notes: null });
+
+    expect(parsed.notes).toBeNull();
+  });
+
+  it("still reads an omitted note and an empty one as the same absence", () => {
+    // On a CREATE all three spellings mean one thing, because there is no
+    // stored value for them to differ about. That is exactly why the patch
+    // builder cannot reuse this one.
+    expect(CreateClientSchema.parse({ name: "Perks" }).notes).toBeNull();
+    expect(CreateClientSchema.parse({ name: "Perks", notes: "  " }).notes).toBeNull();
+  });
+});
+
+describe("TimesheetCellDTO carries enough to edit an entry", () => {
+  it("holds each entry's id, minutes and note", () => {
+    // A compile-time assertion first: a cell that carried only ids could not
+    // fill an edit form in, which is why the dialog behind it could offer
+    // nothing but "clear the day and type it again".
+    const cell: TimesheetCellDTO = {
+      date: "2026-06-15",
+      minutes: 90,
+      entries: [
+        { id: "entry-1", minutes: 60, notes: "Drafted the report" },
+        { id: "entry-2", minutes: 30, notes: null },
+      ],
+    };
+
+    // The ids are still one per entry, so nothing needs a parallel array of
+    // them - two lists that have to agree is how they stop agreeing.
+    expect(cell.entries.map((entry) => entry.id)).toEqual(["entry-1", "entry-2"]);
+    expect(cell.entries.reduce((total, entry) => total + entry.minutes, 0)).toBe(cell.minutes);
+    // An entry with no note is null and never "", which is the single
+    // spelling of absence the schemas above write.
+    expect(cell.entries[1].notes).toBeNull();
+  });
+
+  it("never carries money", () => {
+    // ENFORCED BY THE COMPILER rather than by review: a client's rate card
+    // must not reach everybody who can open a timesheet, which is the line
+    // TimeEntryDTO holds. If a rate is ever added to this DTO, the directive
+    // below stops suppressing anything and the build fails here.
+    // @ts-expect-error - a cell entry must never carry a rate or a value.
+    const withRate: TimesheetCellEntryDTO = { id: "entry-1", minutes: 60, notes: null, chargeRateCents: 15_000 };
+
+    expect(withRate.id).toBe("entry-1");
   });
 });

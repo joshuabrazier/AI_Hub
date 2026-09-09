@@ -593,14 +593,74 @@ export function canEditProjectTasks(role: UserRole, isLead: boolean): boolean {
 //
 // Both mean "nobody wrote anything", and storing both means every query and
 // every component has to check for two versions of the same absence.
+//
+// NULL IS ACCEPTED HERE AS WELL AS ABSENT AND '', and it has to be. Every
+// action in this module is TYPED on its Request (the schema's OUTPUT) DTO,
+// so a component holds `string | null` for one of these fields and posts
+// back exactly what it is holding - `notes: null` is what a create dialog
+// with no note box sends. The schema refused that as "expected string,
+// received null": a validation failure on a form with no field to report it
+// against, which is as close to silent as a refusal gets.
+//
+// Accepting it is only safe because this builder is for a CREATE, where
+// there is nothing yet to overwrite. The patch builder below refuses null
+// for exactly that reason.
 // -------------------------------------------------------------------
 function optionalText(max: number) {
   return z
     .string()
     .trim()
     .max(max)
-    .optional()
+    .nullish()
     .transform((value) => (value && value.length > 0 ? value : null));
+}
+
+// -------------------------------------------------------------------
+// THE PATCH VERSION OF THE ABOVE, and the difference between the two is the
+// difference between an edit that keeps somebody's note and one that
+// deletes it.
+//
+// THREE STATES, AND ALL THREE ARE REACHABLE:
+//
+//   ABSENT       the key is not in the payload, and it is not in the parsed
+//                output either. It means UNCHANGED. Kysely drops an
+//                `undefined` out of a `set()` object, so a field nobody sent
+//                never reaches the SQL and the stored text is untouched.
+//   ''           an empty text box, which means CLEARED. It parses to NULL,
+//                because the rule above still holds: '' and NULL are two
+//                spellings of one absence and only one of them is stored.
+//   'something'  the new value, trimmed.
+//
+// OPTIONAL IS NOT NULLABLE HERE. `notes: null` is REFUSED, and that is the
+// point rather than an oversight. null is the spelling the callers of this
+// module already reach for when they mean "I do not have this field to
+// send" - a board card carries no description, a timesheet cell carries no
+// note - and reading it as "delete what is stored" is the whole bug these
+// builders close. Refusing it makes the COMPILER name every caller that has
+// to decide between omitting the field and clearing it, instead of leaving
+// the decision to whoever reads the diff.
+//
+// (A payload that spells the key out as `undefined` rather than omitting it
+// lands with the key present and holding undefined. Absent and
+// present-but-undefined behave identically everywhere downstream - both are
+// dropped from the update - so the schema does not try to tell them apart.)
+//
+// THE `.optional()` GOES LAST, AFTER THE TRANSFORM, and the order is not
+// cosmetic. Put in front of it, the transform has to handle `undefined`
+// itself and Zod no longer reads the field as optional on the way OUT: the
+// key comes back REQUIRED on the request type, holding `string | null |
+// undefined`, so every caller has to spell out the very field it means to
+// leave alone. Last, the optional short-circuits absence before the
+// transform runs, and the key is optional on both sides - which is the
+// difference between a patch type and a whole-row type with looser values.
+// -------------------------------------------------------------------
+function patchText(max: number) {
+  return z
+    .string()
+    .trim()
+    .max(max, `Please use no more than ${max} characters`)
+    .transform((value) => (value.length > 0 ? value : null))
+    .optional();
 }
 
 // A 'YYYY-MM-DD' that exists and sits inside the sane window. Compared
@@ -784,14 +844,39 @@ export const CreateClientSchema = z.object({
 export type CreateClientInputDTO = z.input<typeof CreateClientSchema>;
 export type CreateClientRequestDTO = z.output<typeof CreateClientSchema>;
 
-// `isActive` is the soft delete for a client. There is no delete: projects
-// reference clients ON DELETE RESTRICT precisely so that removing one cannot
-// take billing history with it.
+// -------------------------------------------------------------------
+// EDIT A CLIENT: rename it, change its notes, retire or restore it.
+//
+// `isActive` is the soft delete. There is no delete: projects reference
+// clients ON DELETE RESTRICT precisely so that removing one cannot take
+// billing history with it.
+//
+// A PATCH, NOT A WHOLE ROW, for the same reason as the two task schemas
+// below. This required `name`, `notes` and `isActive` together, and
+// ClientSummaryDTO - the shape the client LIST holds - carries no notes at
+// all. So restoring a client from that list had to post `notes: null`
+// alongside the name, and the restore wrote NULL over whatever somebody had
+// stored. Nothing on screen said so.
+//
+// THE ALTERNATIVE WAS TO PUT `notes` ON ClientSummaryDTO, and it lost twice.
+// It ships a note nobody renders to every row of a list and a picker, which
+// is the one rule the DTO section states outright; and it fixes the restore
+// by asking every future caller to remember to round-trip a field, where a
+// patch fixes it in the shape. ClientDetailDTO already carries the notes for
+// the form that actually edits them.
+//
+// RESTORE IS NOW `{ clientId, isActive: true }` and cannot touch the name or
+// the notes even from a form read ten minutes ago. Retiring stays on
+// DeactivateClientSchema below: a button that says "retire" should not be
+// able to rename anybody either.
+// -------------------------------------------------------------------
 export const UpdateClientSchema = z.object({
   clientId: clientIdSchema,
-  name: z.string().trim().min(1, "A client needs a name").max(CLIENT_NAME_MAX_CHARS),
-  notes: optionalText(NOTE_MAX_CHARS),
-  isActive: z.boolean(),
+  // Absent leaves the name alone; present, it must still be a real name.
+  name: z.string().trim().min(1, "A client needs a name").max(CLIENT_NAME_MAX_CHARS).optional(),
+  // Absent keeps the stored note, '' clears it. See patchText.
+  notes: patchText(NOTE_MAX_CHARS),
+  isActive: z.boolean().optional(),
 });
 
 export type UpdateClientInputDTO = z.input<typeof UpdateClientSchema>;
@@ -1092,14 +1177,40 @@ export type CreateTaskRequestDTO = z.output<typeof CreateTaskSchema>;
 // place would leave the current number correct and the record of how it got
 // there absent, which is exactly the case the log exists for: when a project
 // goes over, the first question is what moved and who moved it. So changing
-// an estimate is its own mutation.
+// an estimate is its own mutation - AdjustTaskEstimateSchema - and it stays
+// out of this one however convenient the same form would be.
+//
+// A PATCH, NOT A WHOLE ROW. Every editable field is optional and ABSENT
+// MEANS UNCHANGED:
+//
+//   title        absent leaves it; present, it must still be a real title.
+//   description  absent leaves it; '' clears it; text replaces it.
+//   assigneeId   absent leaves it; null unassigns; an id assigns.
+//
+// WHY IT CHANGED. This required `title` and `description`, so an edit form
+// could only be built from a shape carrying both - and TaskCardDTO
+// deliberately carries no description, because a hundred of them on a board
+// would be a megabyte. An edit opened from a card therefore posted an empty
+// box over whatever had been written, and reported success. The description
+// is the one field on a task nobody re-reads until they need it, which is
+// the worst possible field to lose quietly.
+//
+// `assigneeId` IS THE ONE FIELD WHERE NULL IS A VALUE rather than a refusal.
+// Unassigning is a real edit and there is no empty-string spelling of it, so
+// null has to mean something here - which is why it is `.nullable()
+// .optional()` and not the patchText treatment. The service still checks the
+// person is on the project: an id here is a claim, like every other id in
+// this file.
+//
+// A patch naming nothing but the task is allowed and does nothing. It costs
+// one `updated_at` and needs no rule of its own; refusing it would be a
+// second thing to get right for a case no screen produces.
 // -------------------------------------------------------------------
 export const UpdateTaskSchema = z.object({
   taskId: taskIdSchema,
-  title: z.string().trim().min(1, "A task needs a title").max(TASK_TITLE_MAX_CHARS),
-  description: optionalText(DESCRIPTION_MAX_CHARS),
-  // Null clears the assignment. Distinguished from absent by being required.
-  assigneeId: userIdSchema.nullable(),
+  title: z.string().trim().min(1, "A task needs a title").max(TASK_TITLE_MAX_CHARS).optional(),
+  description: patchText(DESCRIPTION_MAX_CHARS),
+  assigneeId: userIdSchema.nullable().optional(),
 });
 
 export type UpdateTaskInputDTO = z.input<typeof UpdateTaskSchema>;
@@ -1263,12 +1374,27 @@ export type LogTimeRequestDTO = z.output<typeof LogTimeSchema>;
 // and logging another, which is what the UI should make somebody do. The
 // work date is editable because getting the day wrong is the ordinary
 // mistake, and the service re-resolves the rate snapshot when it changes.
+//
+// A PATCH, NOT A WHOLE ROW, and the field that forced it is `notes`. This
+// required all three, so editing an entry from a timesheet cell - which
+// shows a total and holds no note - deleted the note the moment somebody
+// corrected an hour. A time entry note is what a client's invoice narrative
+// is written from, so that is somebody's billable explanation gone, with a
+// success toast over it.
+//
+//   workDate  absent leaves the day, and therefore leaves the captured rate
+//             snapshot untouched. That is not a new rule, it is the existing
+//             one the service already applies ("re-resolve only when the day
+//             moves") finally expressible in the request: an edit that never
+//             mentions the day cannot restate an hour at today's rate.
+//   hours     absent leaves the minutes.
+//   notes     absent leaves the note; '' clears it. See patchText.
 // -------------------------------------------------------------------
 export const UpdateTimeEntrySchema = z.object({
   timeEntryId: timeEntryIdSchema,
-  workDate: calendarDateField,
-  hours: entryHoursField,
-  notes: optionalText(NOTE_MAX_CHARS),
+  workDate: calendarDateField.optional(),
+  hours: entryHoursField.optional(),
+  notes: patchText(NOTE_MAX_CHARS),
 });
 
 export type UpdateTimeEntryInputDTO = z.input<typeof UpdateTimeEntrySchema>;
@@ -1861,23 +1987,49 @@ export type TaskDetailDTO = {
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
+// One entry behind one cell: enough to EDIT it, and nothing more.
+//
+// NO RATE, NO VALUE AND NO OWNER, which is the same line TimeEntryDTO holds
+// and for the same reason - effort is project information and price is not,
+// and a client's rate card must not reach everybody who can open a
+// timesheet. The owner is absent because a week belongs to one person: the
+// grid is already scoped to them, so a userId per cell would be a field that
+// can only ever hold one value.
+// -------------------------------------------------------------------
+export type TimesheetCellEntryDTO = {
+  id: string;
+  minutes: number;
+  notes: string | null;
+};
+
+// -------------------------------------------------------------------
 // One day cell of one task's row.
 //
-// `entryIds` IS A LIST, and it has to be. There is no unique index on
+// `entries` IS A LIST, and it has to be. There is no unique index on
 // (task, user, day) - somebody can log an hour in the morning and another
 // after lunch with different notes, and both are real entries. A cell
 // therefore shows a TOTAL, and a caller that wants to edit in place can only
-// do so when the list holds exactly one id; two means opening the day.
+// do so when the list holds exactly one entry; two means opening the day.
 //
 // Modelling this as a single `entryId` would work until the second entry,
 // then silently edit whichever row the query happened to return first.
+//
+// IT CARRIES THE ENTRIES AND NOT JUST THEIR IDS, which is what makes an edit
+// possible at all. A cell used to hold `entryIds: string[]`, so a dialog
+// opened on a day had the handles but neither the hours nor the notes behind
+// them - it could not fill a form in, could not round-trip an edit, and the
+// only honest thing left to offer was "clear the day and type it again".
+// The ids are still here, one per entry; nothing needs a parallel array of
+// them, and two lists that have to agree is how they stop agreeing.
 // -------------------------------------------------------------------
 export type TimesheetCellDTO = {
   // 'YYYY-MM-DD', and always equal to the week's `dates` entry at the same
   // index. Carried anyway so a cell can be passed to a handler on its own.
   date: string;
+  // The total of `entries`, summed server-side so a footer and a cell cannot
+  // disagree.
   minutes: number;
-  entryIds: string[];
+  entries: TimesheetCellEntryDTO[];
 };
 
 export type TimesheetRowDTO = {
