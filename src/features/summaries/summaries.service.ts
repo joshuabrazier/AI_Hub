@@ -214,6 +214,12 @@ async function recordRequest(entry: {
   }
 }
 
+// The longest a summary may take in total, however lively its stream. A
+// detailed summary of a long document is minutes of generation; three of
+// those is not a summary that is nearly ready, it is one that will not
+// arrive.
+const SUMMARY_TOTAL_TIMEOUT_MS = 300_000;
+
 // -------------------------------------------------------------------
 // Produce the summary, streamed.
 //
@@ -232,12 +238,6 @@ async function recordRequest(entry: {
 // Authorization happens BEFORE anything is yielded, so a signed-out caller
 // fails as a status code rather than mid-stream after a 200.
 // -------------------------------------------------------------------
-// The longest a summary may take in total, however lively its stream. A
-// detailed summary of a long document is minutes of generation; three of
-// those is not a summary that is nearly ready, it is one that will not
-// arrive.
-const SUMMARY_TOTAL_TIMEOUT_MS = 300_000;
-
 export async function* streamTextSummaryService(
   requestDTO: SummariseTextRequestDTO,
 ): AsyncGenerator<string, void, undefined> {

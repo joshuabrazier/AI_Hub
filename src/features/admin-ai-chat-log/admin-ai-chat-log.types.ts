@@ -75,6 +75,47 @@ export type AiChatRequestLogDetailDTO = AiChatRequestLogRowDTO & {
   messages: LoggedMessageDTO[];
   inputTokens: number | null;
   cacheWriteTokens: number | null;
+  // -----------------------------------------------------------------
+  // Where the duration went.
+  //
+  // The duration beside it says a call took twenty seconds; this says
+  // nineteen of them were spent compacting the thread before the model was
+  // asked anything. Without it this screen could describe a failure without
+  // being able to explain one, which is how "the model sent nothing for 20
+  // seconds" survived as a diagnosis for weeks.
+  //
+  // Null is ordinary rather than a gap: rows predate the column, and a
+  // compaction call is one request inside somebody else's turn.
+  // -----------------------------------------------------------------
+  phases: LoggedPhaseDTO[] | null;
+  // What the turn as a whole did, beside the individual stages. Null
+  // alongside the phases, for the same reasons.
+  phaseSummary: LoggedPhaseSummaryDTO | null;
+};
+
+export type LoggedPhaseDTO = {
+  name: string;
+  ms: number;
+  budgetMs: number;
+  // "idle" budgets reset on every sign of life; "duration" is a hard
+  // ceiling. Shown because the same elapsed number means different things
+  // under the two, and reading an idle phase as a total is how a healthy
+  // long reply gets mistaken for a slow one.
+  kind: "duration" | "idle";
+  timedOut: boolean;
+};
+
+export type LoggedPhaseSummaryDTO = {
+  totalMs: number;
+  timedOutPhase: string | null;
+  // A reader who closed the tab. Not a fault, and saying so is what stops
+  // the next person investigating a bug that is not there.
+  readerLeft: boolean;
+  // The overall time-to-first-byte ceiling rather than one phase's own
+  // budget: every stage was within its limit and there were too many of
+  // them. A different finding with a different remedy.
+  ceilingHit: boolean;
+  notes: Record<string, string | number | boolean>;
 };
 
 // One entry in the "filter by user" control.
