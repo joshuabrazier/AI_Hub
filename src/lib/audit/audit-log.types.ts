@@ -30,6 +30,50 @@ export const AUDIT_ACTIONS = {
   TEAM_MEMBER_ROLE_CHANGED: "team.member_role_changed",
   TEAM_MEMBER_REMOVED: "team.member_removed",
 
+  // Delivery. A client and a project are the delivery module's own
+  // long-lived records, and retiring or archiving one is a soft delete that
+  // hides work rather than removing it - so what happened has to be
+  // findable afterwards.
+  CLIENT_CREATED: "client.created",
+  CLIENT_UPDATED: "client.updated",
+  CLIENT_STATUS_CHANGED: "client.status_changed",
+  PROJECT_CREATED: "project.created",
+  PROJECT_UPDATED: "project.updated",
+  PROJECT_STATUS_CHANGED: "project.status_changed",
+
+  // Project membership. `project_members` is the security boundary of the
+  // delivery module and `is_lead` is its second gate, so adding somebody,
+  // changing their lead flag and removing them are all AUTHORIZATION
+  // changes - recorded as carefully as a team role change, and for the same
+  // reason. The rate band rides along on the same events because it is what
+  // a client is charged for that person's hours.
+  //
+  // Phases and budget groups deliberately have no actions here: neither
+  // decides who may see anything, and an entry per drag of a board heading
+  // would bury the events above.
+  PROJECT_MEMBER_ADDED: "project.member_added",
+  PROJECT_MEMBER_CHANGED: "project.member_changed",
+  PROJECT_MEMBER_REMOVED: "project.member_removed",
+
+  // Rates, and these two are recorded for a different reason from the six
+  // above. A charge rate is what a client is billed and a cost rate is a pay
+  // proxy, so a change to either is a commercial act by one admin about
+  // another person - the same "name both parties" argument as
+  // ai_chat.request_viewed, and why `subjectUserId` is always set on them.
+  //
+  // A DELETE matters more than a set, and is the reason this pair exists at
+  // all. `user_rates` is effective-dated and a rate resolves to the latest
+  // start on or before the work date, never a later one - so removing the
+  // EARLIEST row of a band leaves work dates with no rate at all, and an
+  // entry backdated into that window afterwards comes back unvalued with
+  // nothing on any screen to say the rate it needed was deleted. The log
+  // entry is the only lasting record of who opened that window.
+  //
+  // The CENTS are recorded in `changes`, because these rows are already
+  // admin-only reading and the figure is the whole substance of the event.
+  USER_RATE_SET: "user_rate.set",
+  USER_RATE_DELETED: "user_rate.deleted",
+
   // AI chat. Reading somebody's request payload means reading their private
   // conversation, so the act is recorded with both parties named.
   AI_CHAT_REQUEST_VIEWED: "ai_chat.request_viewed",
@@ -71,6 +115,10 @@ export const AUDIT_ENTITY_TYPES = {
   USER: "user",
   TEAM: "team",
   TEAM_MEMBER: "team_member",
+  CLIENT: "client",
+  PROJECT: "project",
+  PROJECT_MEMBER: "project_member",
+  USER_RATE: "user_rate",
   AI_CHAT_REQUEST: "ai_chat_request",
   AUTH: "auth",
   SHAREPOINT_DRIVE: "sharepoint_drive",

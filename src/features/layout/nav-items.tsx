@@ -1,9 +1,15 @@
 import {
   AudioLines,
   Briefcase,
+  Building2,
+  CalendarClock,
   ChartColumn,
   Clock,
+  Coins,
   FileText,
+  FolderCog,
+  FolderKanban,
+  FolderPlus,
   FlaskConical,
   FolderSearch,
   House,
@@ -20,6 +26,7 @@ import {
   UserRound,
   Users,
   UsersRound,
+  Wallet,
 } from "lucide-react";
 
 import { ROUTES } from "@/lib/routes";
@@ -98,6 +105,84 @@ const ADMIN_NAV: NavGroup[] = [
         children: [
           { label: "Users", href: ROUTES.ADMIN_USERS, icon: Users, tooltip: "Everyone with an account" },
           { label: "Teams", href: ROUTES.ADMIN_TEAMS, icon: LayoutPanelLeft, tooltip: "Teams and their members" },
+        ],
+      },
+    ],
+  },
+  // -------------------------------------------------------------------
+  // DELIVERY, AND WHY IT IS ITS OWN GROUP RATHER THAN PART OF THE TWO IT
+  // LOOKS LIKE IT BELONGS TO.
+  //
+  // It is not "Time and billing". That group is the Jira-era reporting
+  // screens, which read a different table about work that has already been
+  // logged somewhere else. Delivery is where the work is planned and the
+  // hours are entered. Filing them together would put two things called
+  // some version of "timesheet" under one parent, over two data sets, and
+  // the first person to reconcile a figure between them would be comparing
+  // the wrong two screens.
+  //
+  // It is not "Overview" either. Overview is Home plus the three AI
+  // features, each of which is a tool somebody opens now and then. This is
+  // the day job, and a group of its own is what says so.
+  //
+  // THE SPLIT INSIDE IT IS THE ACCESS MODEL SHOWING THROUGH. Projects and
+  // the timesheet are top-level because MEMBERSHIP decides what they show,
+  // not role - they are the same two entries in all three trees, and the
+  // identical shape is deliberate. Everything under "Delivery admin" is
+  // admin-only: a client is admin-only, a rate is a client's price and a pay
+  // proxy, and the budget report is the one screen in the module carrying
+  // money. Collapsing those four keeps this section three rows tall in the
+  // ordinary case, the same decision Timesheets made below when five
+  // siblings at the top level made it the longest thing in the sidebar.
+  //
+  // "Your timesheet" rather than "Timesheet", because time here is always
+  // your own - no screen in the module offers to log an hour for somebody
+  // else - and because it has to be told apart at a glance from
+  // "Timesheets" under Time and billing.
+  //
+  // The tooltips are load-bearing beyond the sidebar: appKnowledgePrompt
+  // generates what the assistant knows about this app from these entries,
+  // so each one is written as a sentence a person could be given.
+  // -------------------------------------------------------------------
+  {
+    label: "Delivery",
+    items: [
+      {
+        label: "Projects",
+        href: ROUTES.ADMIN_PROJECTS,
+        icon: FolderKanban,
+        tooltip: "The projects you are on, and their boards",
+      },
+      {
+        label: "Your timesheet",
+        href: ROUTES.ADMIN_TIMESHEET,
+        icon: CalendarClock,
+        tooltip: "Log your own week across every project you are on",
+      },
+      {
+        label: "Delivery admin",
+        icon: FolderCog,
+        tooltip: "Clients, new projects, rates and budgets",
+        children: [
+          { label: "Clients", href: ROUTES.ADMIN_CLIENTS, icon: Building2, tooltip: "Who the work is for" },
+          {
+            label: "New project",
+            href: ROUTES.ADMIN_PROJECT_NEW,
+            icon: FolderPlus,
+            tooltip: "Start a project for a client",
+          },
+          {
+            label: "Rates",
+            href: ROUTES.ADMIN_RATES,
+            icon: Coins,
+            tooltip: "Charge and cost rates for each person, by band and start date",
+          },
+          {
+            label: "Budgets",
+            href: ROUTES.ADMIN_DELIVERY_BUDGET,
+            icon: Wallet,
+            tooltip: "One project's budget against the time logged on it",
+          },
         ],
       },
     ],
@@ -208,6 +293,26 @@ const MANAGER_NAV: NavGroup[] = [
       },
     ],
   },
+  // The same two entries as the admin tree, in a group with the same name,
+  // and nothing else in it. A manager is a member of projects like anybody
+  // else; managing a team grants nothing on a project board.
+  {
+    label: "Delivery",
+    items: [
+      {
+        label: "Projects",
+        href: ROUTES.MANAGE_PROJECTS,
+        icon: FolderKanban,
+        tooltip: "The projects you are on, and their boards",
+      },
+      {
+        label: "Your timesheet",
+        href: ROUTES.MANAGE_TIMESHEET,
+        icon: CalendarClock,
+        tooltip: "Log your own week across every project you are on",
+      },
+    ],
+  },
   {
     label: "Your teams",
     items: [
@@ -238,6 +343,26 @@ const MEMBER_NAV: NavGroup[] = [
         tooltip: "Summarise pasted text",
       },
       { label: "Account", href: ROUTES.PORTAL_ACCOUNT, icon: UserCircle, tooltip: "Your details" },
+    ],
+  },
+  // Its own group here too, rather than two more rows under "Your portal".
+  // For a member this is the day job, and a group heading is what separates
+  // the work from the tools and the account details around it.
+  {
+    label: "Delivery",
+    items: [
+      {
+        label: "Projects",
+        href: ROUTES.PORTAL_PROJECTS,
+        icon: FolderKanban,
+        tooltip: "The projects you are on, and their boards",
+      },
+      {
+        label: "Your timesheet",
+        href: ROUTES.PORTAL_TIMESHEET,
+        icon: CalendarClock,
+        tooltip: "Log your own week across every project you are on",
+      },
     ],
   },
 ];

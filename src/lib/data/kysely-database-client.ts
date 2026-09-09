@@ -81,3 +81,31 @@ export const database = new Kysely<Database>({
 });
 
 export type DBClient = Kysely<Database> | Transaction<Database>;
+
+// -------------------------------------------------------------------
+// Run `work` as one unit, joining a transaction the caller already opened
+// rather than opening a second one.
+//
+// Every repository function takes an injectable `db` precisely so a service
+// can put several of them into one transaction, which means any function
+// that needs atomicity of its own may be called either standalone or from
+// inside one. Kysely's `Transaction.transaction()` THROWS ("calling the
+// transaction method for a Transaction is not supported") rather than
+// opening a savepoint, so unconditionally opening one breaks the moment a
+// service composes the call with another write. `isTransaction` is the
+// supported way to ask.
+//
+// Joining is also the behaviour a service wants: its rollback should undo
+// this too. A savepoint - if Kysely offered one - would let us roll back
+// part of the caller's work, and that is the caller's decision to make and
+// not ours.
+//
+// It lives here, beside `DBClient`, because four repositories had written
+// it privately under three names before it was lifted. Import it; do not
+// copy it again.
+// -------------------------------------------------------------------
+export async function runInTransaction<T>(db: DBClient, work: (trx: DBClient) => Promise<T>): Promise<T> {
+  if (db.isTransaction) return await work(db);
+
+  return await db.transaction().execute(work);
+}

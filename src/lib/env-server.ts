@@ -223,6 +223,35 @@ const serverEnvSchema = z.object({
   VAPID_PRIVATE_KEY: z.string().min(1).optional(),
   VAPID_SUBJECT: z.string().min(1).default("mailto:support@example.com"),
 
+  // -------------------------------------------------------------------
+  // Filing meeting notes into SharePoint.
+  //
+  // SHAREPOINT_FILING_FALLBACK_PATH is where a meeting goes when nothing
+  // could be chosen confidently, and it is the ONLY path this app will ever
+  // create. It is validated before use - see parseFolderPath - and unset
+  // means anything ambiguous is left unfiled rather than guessed at, which
+  // is a legitimate permanent answer.
+  //
+  // SHAREPOINT_FILING_CONTAINER_PATHS are folders that exist but are not
+  // destinations: "Clients" holds the client folders and a meeting note
+  // belongs in one of those, not in the lobby. Comma separated, matched on
+  // the path as the crawl recorded it.
+  // -------------------------------------------------------------------
+  SHAREPOINT_FILING_FALLBACK_PATH: z.string().optional(),
+  SHAREPOINT_FILING_CONTAINER_PATHS: z
+    .string()
+    .optional()
+    .transform((value) =>
+      (value ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    ),
+  // How deep to offer folders from. Three reaches Clients/Acme and also
+  // Clients/Acme/Meetings, which is a better destination than the client
+  // root when a client has one.
+  SHAREPOINT_FILING_MAX_DEPTH: z.coerce.number().int().min(1).max(6).default(3),
+
   // Bearer token the background transcription sweep requires. The endpoint
   // is inert (503) until it is set, exactly like the retention job.
   TRANSCRIPTION_SWEEP_SECRET: z.string().min(16).optional(),
@@ -431,6 +460,9 @@ export const envServer = serverEnvSchema.parse({
   AZURE_MEDIA_CONTAINER: process.env.AZURE_MEDIA_CONTAINER,
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
   VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+  SHAREPOINT_FILING_FALLBACK_PATH: process.env.SHAREPOINT_FILING_FALLBACK_PATH,
+  SHAREPOINT_FILING_CONTAINER_PATHS: process.env.SHAREPOINT_FILING_CONTAINER_PATHS,
+  SHAREPOINT_FILING_MAX_DEPTH: process.env.SHAREPOINT_FILING_MAX_DEPTH,
   TRANSCRIPTION_SWEEP_SECRET: process.env.TRANSCRIPTION_SWEEP_SECRET,
   AZURE_SPEECH_KEY: process.env.AZURE_SPEECH_KEY,
   AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION,
