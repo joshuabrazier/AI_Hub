@@ -187,3 +187,69 @@ export async function getSharepointDriveTotalsRepo(
     throw handleError("getSharepointDriveTotalsRepo", error);
   }
 }
+
+// -------------------------------------------------------------------
+// The folders a document could be filed into.
+//
+// This is the CLOSED VOCABULARY the filing decision picks from, so what it
+// returns is the whole universe of destinations - nothing downstream can
+// name a folder that did not come out of here.
+//
+// BOUNDED BY DEPTH, and that is the interesting choice. A crawled library
+// runs to tens of thousands of items and most of its folders are working
+// subdirectories nobody files a meeting note into. Depth also happens to be
+// what makes the list legible to a person reviewing it and small enough to
+// put in a prompt without batching.
+//
+// Tombstones are excluded. A folder somebody deleted is not a destination,
+// and the crawl keeps its row so that deletion is visible rather than silent.
+// -------------------------------------------------------------------
+export interface SharepointFolderOption {
+  itemId: string;
+  path: string;
+  name: string;
+  depth: number;
+}
+
+export async function listSharepointFoldersRepo(
+  driveId: string,
+  options: { maxDepth: number; limit: number },
+  db: DBClient = database,
+): Promise<SharepointFolderOption[]> {
+  try {
+    const rows = await db
+      .selectFrom("sharepointItem")
+      .select(["itemId", "path", "name", "depth"])
+      .where("driveId", "=", driveId)
+      .where("isFolder", "=", true)
+      .where("deletedAt", "is", null)
+      .where("depth", "<=", options.maxDepth)
+      // Both are nullable on the table. A folder with no path cannot be a
+      // destination - there is nothing to address a write at - so it is
+      // excluded here rather than filtered out in TypeScript afterwards,
+      // which would make the limit above count rows that were never
+      // candidates.
+      .where("path", "is not", null)
+      // Shallowest first, then alphabetical. If the limit ever bites, what
+      // survives is the top of the tree - the client and category folders
+      // somebody would actually file into - rather than an arbitrary slice
+      // of somebody's working subdirectories.
+      .orderBy("depth", "asc")
+      .orderBy("path", "asc")
+      .limit(options.limit)
+      .execute();
+
+    // The two predicates above already exclude null path and null depth -
+    // SQL drops a row whose depth compares as unknown - so this narrows the
+    // types rather than changing the result. Written as a filter instead of
+    // an assertion so a future change to those predicates cannot turn a null
+    // into a runtime surprise.
+    return rows.flatMap((row) =>
+      row.path !== null && row.depth !== null
+        ? [{ itemId: row.itemId, path: row.path, name: row.name, depth: row.depth }]
+        : [],
+    );
+  } catch (error) {
+    throw handleError("listSharepointFoldersRepo", error);
+  }
+}
