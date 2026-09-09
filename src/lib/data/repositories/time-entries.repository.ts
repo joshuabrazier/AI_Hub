@@ -475,41 +475,64 @@ export async function valueUnpricedTimeEntriesForUserRepo(
   db: DBClient = database,
 ): Promise<number> {
   try {
-    // Written as one statement rather than a read-then-write loop: the set
-    // being corrected is every unvalued entry a person has, across every
-    // project, and pulling that back to resolve a rate each would be a query
-    // per hour ever logged.
+    // -----------------------------------------------------------------
+    // THE RESOLUTION IS A CTE, AND IT HAS TO BE.
+    //
+    // The obvious shape is one UPDATE ... FROM with a LATERAL subquery
+    // picking each entry's rate. Postgres REFUSES it:
+    //
+    //   invalid reference to FROM-clause entry for table "te"
+    //
+    // A FROM item in an UPDATE cannot laterally reference the update
+    // TARGET - the target is not in scope for the FROM list the way a
+    // joined table is. It parses far enough to look right and fails at
+    // plan time, which is why this was proven against a database before it
+    // shipped rather than after.
+    //
+    // So the lateral lives in a plain SELECT, where it is legal, and the
+    // UPDATE joins to that by id. One statement still: the set being
+    // corrected is every unvalued entry a person has across every project,
+    // and pulling it back to resolve a rate each would be a query per hour
+    // ever logged.
+    // -----------------------------------------------------------------
     const result = await sql<{ id: string }>`
+      with resolved as (
+        select te.id,
+               case when p.is_billable then r.charge_rate_cents end as charge_rate_cents,
+               r.cost_rate_cents
+          from time_entries te
+          join project_members pm
+            on pm.user_id = te.user_id
+           and pm.project_id = te.project_id
+          join projects p
+            on p.id = te.project_id
+          cross join lateral (
+                 select ur.charge_rate_cents, ur.cost_rate_cents
+                   from user_rates ur
+                  where ur.user_id = te.user_id
+                    and ur.band    = pm.rate_band
+                    and ur.effective_from <= te.work_date
+                  order by ur.effective_from desc
+                  limit 1
+               ) r
+         where te.user_id = ${userId}
+           -- Only rows with something missing, so an entry that is already
+           -- fully valued is not considered at all.
+           and (te.charge_rate_cents is null or te.cost_rate_cents is null)
+      )
       update time_entries te
-         set charge_rate_cents = coalesce(te.charge_rate_cents, r.charge_rate_cents),
-             cost_rate_cents   = coalesce(te.cost_rate_cents, r.cost_rate_cents),
+         set charge_rate_cents = coalesce(te.charge_rate_cents, resolved.charge_rate_cents),
+             cost_rate_cents   = coalesce(te.cost_rate_cents, resolved.cost_rate_cents),
              updated_at        = now()
-        from project_members pm
-        join projects p on p.id = pm.project_id
-        cross join lateral (
-               select case when p.is_billable then ur.charge_rate_cents end as charge_rate_cents,
-                      ur.cost_rate_cents
-                 from user_rates ur
-                where ur.user_id = te.user_id
-                  and ur.band    = pm.rate_band
-                  and ur.effective_from <= te.work_date
-                order by ur.effective_from desc
-                limit 1
-             ) r
-       where te.user_id    = ${userId}
-         and pm.user_id    = te.user_id
-         and pm.project_id = te.project_id
-         -- Only rows with something missing, so an entry that is already
-         -- fully valued is not touched at all.
-         and (te.charge_rate_cents is null or te.cost_rate_cents is null)
-         -- And only where this would actually CHANGE one of them. Without
-         -- it, an entry on a non-billable project with no cost rate is
-         -- rewritten with the values it already had on every rate save,
-         -- bumping updated_at and inflating the count reported to the
-         -- person saving.
+        from resolved
+       where resolved.id = te.id
+         -- Only where this would actually CHANGE one of them. Without it, an
+         -- entry on a non-billable project with no cost rate is rewritten
+         -- with the values it already had on every rate save, bumping
+         -- updated_at and inflating the count reported to the person saving.
          and (
-               (te.charge_rate_cents is null and r.charge_rate_cents is not null)
-            or (te.cost_rate_cents   is null and r.cost_rate_cents   is not null)
+               (te.charge_rate_cents is null and resolved.charge_rate_cents is not null)
+            or (te.cost_rate_cents   is null and resolved.cost_rate_cents   is not null)
          )
        returning te.id
     `.execute(db);
