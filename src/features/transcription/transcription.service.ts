@@ -97,6 +97,8 @@ import {
 } from "@/lib/speech/speech-client";
 
 import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from "./transcription.mappers";
+import { getTranscriptionFilingRepo } from "@/lib/data/repositories/transcription-filing.repository";
+
 import { fileTranscription } from "./filing.service";
 import {
   MAX_MEDIA_BYTES,
@@ -815,6 +817,13 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
     // transcript it can see.
     const activeRow = target ? await getTranscriptionForUserRepo(target.id, user.id) : undefined;
 
+    // Where the notes were filed, if anywhere. A second narrow read rather
+    // than a join, because the list above deliberately does not carry it -
+    // the panel only exists on the row that is open.
+    const activeFiling = activeRow
+      ? await getTranscriptionFilingRepo(activeRow.id, user.id)
+      : undefined;
+
     return {
       isStorageConfigured: isMediaStorageConfigured(),
       isSpeechConfigured: isSpeechConfigured(),
@@ -826,7 +835,7 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
       // one that reports itself as broken.
       isTeamsImportConfigured: isTeamsImportConfigured(),
       transcriptions,
-      active: activeRow ? mapDBTranscriptionToDetailDTO(activeRow) : null,
+      active: activeRow ? mapDBTranscriptionToDetailDTO(activeRow, activeFiling) : null,
     };
   } catch (error) {
     throw handleError("getTranscriptionPageService", error);

@@ -94,6 +94,19 @@ export function appKnowledgePrompt(role: UserRole, userName: string | null): str
     "is fixed in Jira and then re-synced with Refresh from Jira. Time is recorded against a project in Jira, and the app",
     "aggregates it. Charge rates, cost rates and contracted days ARE set in this app, on the Staff screen.",
     "",
+    // Hand-written, unlike the screen list, and worth the staleness risk
+    // for one reason: "where did my meeting notes go" is a question people
+    // ask about a file they cannot find, and "I do not know" sends them
+    // looking through 95 client folders by hand. Kept to what a person needs
+    // in order to check the answer themselves.
+    "MEETING NOTES ARE FILED INTO SHAREPOINT AUTOMATICALLY once a meeting has been transcribed and summarised.",
+    "The app picks the folder: it matches the client named in the meeting title against the client folders it has catalogued,",
+    "and where that is not certain it either asks a model to choose from those same folders or puts the note in a holding folder.",
+    "It NEVER invents a folder except the configured holding one, and it refuses rather than guessing between two clients -",
+    "a note in the wrong client's folder is a confidentiality problem, so being unfiled is the deliberate safer outcome.",
+    "The transcription screen shows where each note went and why. If somebody says a note is in the wrong place, the fix is",
+    "to move it in SharePoint; the app does not move or delete what it has uploaded.",
+    "",
     "WORDS THIS BUSINESS USES:",
     ...GLOSSARY.map((line) => `- ${line}`),
     "",

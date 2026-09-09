@@ -2,6 +2,7 @@ import z from "zod";
 
 import { TABLE_ID_LENGTH } from "@/lib/constants";
 import type {
+  TranscriptionFilingStatus,
   TranscriptionSegment,
   TranscriptionSource,
   TranscriptionStatus,
@@ -334,7 +335,49 @@ export type TranscriptionDetailDTO = TranscriptionSummaryDTO & {
   transcript: string | null;
   segments: TranscriptionSegment[];
   summary: string | null;
+  // Null when SharePoint filing is not set up, or when this row predates it.
+  // A missing filing record is not a failure and must not read as one.
+  filing: TranscriptionFilingDTO | null;
 };
+
+// -------------------------------------------------------------------
+// Where this meeting's notes went in SharePoint, and why.
+//
+// SHOWN, NOT MERELY STORED, and that is the point of it existing as a DTO
+// at all. Three mechanisms of very different confidence choose the
+// destination - a client-name match, a model's judgement over inconsistent
+// folder names, or a holding folder because nothing was certain - and
+// "notes about client A are in client B's folder" is a confidentiality
+// question. A decision the reader cannot see the basis of cannot be
+// checked, so both the how and the why travel to the screen.
+// -------------------------------------------------------------------
+export type TranscriptionFilingDTO = {
+  status: TranscriptionFilingStatus;
+  folderPath: string | null;
+  decidedVia: string | null;
+  reason: string | null;
+  fileName: string | null;
+  fileWebUrl: string | null;
+  filedAt: Date | null;
+  error: string | null;
+};
+
+// How the destination was decided, in a sentence a reader can weigh.
+//
+// A LOOKUP WITH A FALLBACK rather than an exhaustive record, matching
+// rndSource: the column is free text on purpose, so a value nobody expected
+// should show up as itself in the interface instead of rendering blank.
+const DECIDED_VIA_LABELS: Record<string, string> = {
+  "client-name": "The folder name matches the client",
+  model: "Chosen by the assistant from the folders in the library",
+  fallback: "Filed in the holding folder because nothing was certain",
+};
+
+export function filingDecisionLabel(decidedVia: string | null): string | null {
+  if (!decidedVia) return null;
+
+  return DECIDED_VIA_LABELS[decidedVia] ?? `Decided by "${decidedVia}"`;
+}
 
 // -------------------------------------------------------------------
 // One Teams meeting somebody could import.
