@@ -864,22 +864,22 @@ export async function getTimesheetWeekService(
 
     // Keyed on task and day, so a cell is one lookup rather than a scan of
     // the week per row.
-    const cells = new Map<string, { minutes: number; entryIds: string[] }>();
+    const cells = new Map<string, { minutes: number; entries: { id: string; minutes: number; notes: string | null }[] }>();
 
     for (const entry of entries) {
       const key = `${entry.taskId}|${entry.workDate}`;
       const cell = cells.get(key);
 
-      // ENTRY IDS ARE A LIST, because there is no unique index on
+      // ENTRIES ARE A LIST, because there is no unique index on
       // (task, user, day) and there should not be: an hour before lunch and
       // another after it, with different notes, are two real entries. The
       // cell shows the total, and a caller can only edit in place when the
       // list holds exactly one.
       if (cell) {
         cell.minutes += entry.minutes;
-        cell.entryIds.push(entry.id);
+        cell.entries.push({ id: entry.id, minutes: entry.minutes, notes: entry.notes });
       } else {
-        cells.set(key, { minutes: entry.minutes, entryIds: [entry.id] });
+        cells.set(key, { minutes: entry.minutes, entries: [{ id: entry.id, minutes: entry.minutes, notes: entry.notes }] });
       }
     }
 
@@ -895,7 +895,7 @@ export async function getTimesheetWeekService(
           return {
             date,
             minutes: cell?.minutes ?? 0,
-            entryIds: cell?.entryIds ?? [],
+            entries: cell?.entries ?? [],
           };
         });
 
@@ -1033,7 +1033,7 @@ export async function addTimesheetRowService(
       // Seven empty cells in the week's own order, so the row renders beside
       // rows that came from the week read without the caller building cells
       // of its own.
-      days: weekDates(anchor, weekStartsOn).map((date) => ({ date, minutes: 0, entryIds: [] })),
+      days: weekDates(anchor, weekStartsOn).map((date) => ({ date, minutes: 0, entries: [] })),
       totalMinutes: 0,
     };
   } catch (error) {
