@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { FILING_SYSTEM_PROMPT, buildFilingPrompt } from "./filing.prompt";
+import { FILING_SYSTEM_PROMPT, MAX_FOLDER_OPTIONS, buildFilingPrompt } from "./filing.prompt";
 import type { CandidateFolder } from "./filing-destination";
 
 function folder(path: string): CandidateFolder {
   const name = path.split("/").pop() ?? path;
-  return { itemId: `01ID${path.length}`, path, name };
+  return { itemId: `01ID${path.length}${name}`, path, name };
 }
 
 const FOLDERS = [folder("Clients/Bowhill Engineering"), folder("Internal/AI"), folder("Internal/Operations")];
 
-function prompt(overrides: Partial<Parameters<typeof buildFilingPrompt>[0]> = {}) {
+function build(overrides: Partial<Parameters<typeof buildFilingPrompt>[0]> = {}) {
   return buildFilingPrompt({
     title: "Phase 2 catch-up",
     clientName: null,
@@ -20,6 +20,8 @@ function prompt(overrides: Partial<Parameters<typeof buildFilingPrompt>[0]> = {}
     ...overrides,
   });
 }
+
+const prompt = (overrides: Partial<Parameters<typeof buildFilingPrompt>[0]> = {}) => build(overrides).text;
 
 // -------------------------------------------------------------------
 // The rules that keep a model's answer from becoming a Graph write at a
@@ -102,9 +104,7 @@ describe("buildFilingPrompt", () => {
   });
 
   it("says so plainly when nothing has been catalogued", () => {
-    const text = prompt({ folders: [] });
-
-    expect(text).toContain("(none catalogued)");
+    expect(prompt({ folders: [] })).toContain("(none catalogued)");
   });
 
   it("truncates a long summary on a word boundary", () => {
@@ -115,17 +115,59 @@ describe("buildFilingPrompt", () => {
     expect(text).toContain("...");
     expect(text).not.toMatch(/situa\.\.\./);
   });
+});
 
-  it("caps how many folders are offered", () => {
-    // A library runs to thousands of folders. One filing decision must not
-    // become a very large prompt.
-    const many = Array.from({ length: 500 }, (_, index) => folder(`Clients/Client ${index}`));
+// -------------------------------------------------------------------
+// The cap, sized against the library that actually exists.
+//
+// The first version capped at 120 and would have silently dropped the
+// alphabetical tail of the client list. A client late in the alphabet would
+// never have been offered, and the failure would have looked like the model
+// failing to find them rather than like a truncated list.
+// -------------------------------------------------------------------
+describe("buildFilingPrompt - the folder cap", () => {
+  // Measured from the live library: five folders at the top, ninety-five
+  // items under Clients, plus subfolders beneath AI, Company and Support.
+  const realLibrary = [
+    folder("AI"),
+    folder("Clients"),
+    folder("Company"),
+    folder("Support"),
+    folder("Word Templates"),
+    ...Array.from({ length: 95 }, (_, index) => folder(`Clients/Client ${index}`)),
+    ...Array.from({ length: 36 }, (_, index) => folder(`Company/Area ${index}`)),
+    ...Array.from({ length: 14 }, (_, index) => folder(`Support/Topic ${index}`)),
+    ...Array.from({ length: 5 }, (_, index) => folder(`AI/Thing ${index}`)),
+  ];
 
-    const lines = prompt({ folders: many })
-      .split("\n")
+  it("fits a REAL library without dropping anything", () => {
+    const result = build({ folders: realLibrary });
+
+    expect(result.truncated).toBe(false);
+    for (const entry of realLibrary) expect(result.text).toContain(entry.path);
+  });
+
+  it("still caps a library far larger than that", () => {
+    const many = Array.from({ length: MAX_FOLDER_OPTIONS + 50 }, (_, index) =>
+      folder(`Clients/Client ${index}`),
+    );
+
+    const lines = build({ folders: many })
+      .text.split("\n")
       .filter((line) => line.includes(" = Clients/Client "));
 
-    expect(lines.length).toBeLessThanOrEqual(120);
-    expect(lines.length).toBeGreaterThan(0);
+    expect(lines).toHaveLength(MAX_FOLDER_OPTIONS);
+  });
+
+  it("SAYS when the list was cut, rather than swallowing it", () => {
+    // A model choosing null from a list that was missing the right answer
+    // looks, from outside, exactly like one that read everything and found
+    // nothing. The caller has to be able to tell those apart.
+    const many = Array.from({ length: MAX_FOLDER_OPTIONS + 1 }, (_, index) =>
+      folder(`Clients/Client ${index}`),
+    );
+
+    expect(build({ folders: many }).truncated).toBe(true);
+    expect(build({ folders: realLibrary }).truncated).toBe(false);
   });
 });
