@@ -53,7 +53,6 @@ import {
   type LogTimeRequestDTO,
   type TimeEntryDTO,
   type TimesheetCellDTO,
-  type TimesheetCellEntryDTO,
   type TimesheetRowDTO,
   type TimesheetWeekDTO,
   type TimesheetWeekOptions,
@@ -621,13 +620,7 @@ export async function updateTimeEntryService(requestDTO: UpdateTimeEntryRequestD
 
     requireEntryControl(entry, access, actor);
 
-    // ABSENT MEANS THE DAY HAS NOT MOVED, so it resolves to the stored one
-    // rather than being validated. Only a date somebody actually supplied is
-    // a claim about when the work happened, and the comparison below then
-    // correctly finds nothing changed - which is what leaves the rate
-    // snapshot alone.
-    const workDate =
-      requestDTO.workDate === undefined ? entry.workDate : requireWorkDateNotInFuture(requestDTO.workDate);
+    const workDate = requireWorkDateNotInFuture(requestDTO.workDate);
 
     // Left out of the patch entirely when the day has not moved, so the
     // stored snapshot is untouched rather than rewritten with the value it
@@ -871,7 +864,7 @@ export async function getTimesheetWeekService(
 
     // Keyed on task and day, so a cell is one lookup rather than a scan of
     // the week per row.
-    const cells = new Map<string, { minutes: number; entries: TimesheetCellEntryDTO[] }>();
+    const cells = new Map<string, { minutes: number; entries: { id: string; minutes: number; notes: string | null }[] }>();
 
     for (const entry of entries) {
       const key = `${entry.taskId}|${entry.workDate}`;
@@ -882,22 +875,11 @@ export async function getTimesheetWeekService(
       // another after it, with different notes, are two real entries. The
       // cell shows the total, and a caller can only edit in place when the
       // list holds exactly one.
-      //
-      // The MINUTES AND NOTES travel with each id, not just the id. A dialog
-      // holding only handles could not fill its own form in - it would have
-      // to re-read what it was already given, and the only honest thing it
-      // could offer instead was "clear the day and type it again".
-      const cellEntry: TimesheetCellEntryDTO = {
-        id: entry.id,
-        minutes: entry.minutes,
-        notes: entry.notes,
-      };
-
       if (cell) {
         cell.minutes += entry.minutes;
-        cell.entries.push(cellEntry);
+        cell.entries.push({ id: entry.id, minutes: entry.minutes, notes: entry.notes });
       } else {
-        cells.set(key, { minutes: entry.minutes, entries: [cellEntry] });
+        cells.set(key, { minutes: entry.minutes, entries: [{ id: entry.id, minutes: entry.minutes, notes: entry.notes }] });
       }
     }
 

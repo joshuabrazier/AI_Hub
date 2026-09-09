@@ -43,9 +43,8 @@ import type { TimesheetTaskOption } from "./timesheet-catalogue";
 // IT ADDS AN ENTRY, AND IT DOES NOT EDIT ONE. That is a deliberate answer to
 // something the DTOs cannot supply rather than a feature left out:
 //
-//   A cell carries `minutes` and a LIST of `entryIds`, and nothing else. It
-//   does not carry the note on an entry, and no read on this feature would
-//   hand one over - a week is seven columns of totals.
+//   A cell carries `minutes` and the entries behind that total. A day can
+//   legitimately hold several entries, so clearing it must remove each one.
 //
 //   `UpdateTimeEntrySchema` requires `notes`, and an absent one means NULL.
 //   There is no way to say "leave the note alone". So an edit form here
@@ -53,8 +52,8 @@ import type { TimesheetTaskOption } from "./timesheet-catalogue";
 //   the entry the moment somebody corrected an hour - and that note is what
 //   a client's invoice narrative is written from.
 //
-// So a cell ADDS, which is honest: a day legitimately holds several entries,
-// which is why `entryIds` is a list at all. Correcting a wrong figure is
+// So a cell ADDS, which is honest: a day legitimately holds several entries.
+// Correcting a wrong figure is
 // clear-the-day and type it again, confirmed and named, so nothing is lost
 // without somebody being told what they are removing. Editing one entry in
 // place belongs on the task panel, where its note is on screen.
@@ -145,8 +144,8 @@ export function TimesheetCellDialog({
   const clearDay = () =>
     startTransition(async () => {
       try {
-        for (const entry of cell.entries) {
-          const response = await deleteTimeEntryAction({ timeEntryId: entry.id });
+        for (const { id: timeEntryId } of cell.entries) {
+          const response = await deleteTimeEntryAction({ timeEntryId });
 
           if (!response.success) {
             toast.error(response.formError ?? MESSAGES.SOMETHING_WENT_WRONG);

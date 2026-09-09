@@ -521,7 +521,7 @@ describe("getTimesheetWeekService", () => {
     expect(week.weekStart).toBe("2026-06-15");
   });
 
-  it("builds rows from the ENTRIES, totals a day with two entries, and carries both whole", async () => {
+  it("builds rows from the entries, totals a day with two entries, and retains their details", async () => {
     signedInAsMember();
     mockEntriesInRange.mockResolvedValue([
       entry({ id: "entry-1", workDate: "2026-06-16", minutes: 60 }),
@@ -533,10 +533,6 @@ describe("getTimesheetWeekService", () => {
     const week = await getTimesheetWeekService("2026-06-15");
 
     expect(week.rows).toHaveLength(1);
-    // The cell TOTALS the day and carries each entry whole. The minutes and
-    // notes travel with the id because a dialog opened on this day has to
-    // fill its own form in - handles alone left it able to offer nothing but
-    // "clear the day and type it again".
     expect(week.rows[0].days[1]).toEqual({
       date: "2026-06-16",
       minutes: 90,
