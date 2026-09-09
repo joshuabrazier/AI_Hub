@@ -85,7 +85,7 @@ const ADMIN_NAV: NavGroup[] = [
         label: "Transcription",
         href: ROUTES.ADMIN_TRANSCRIPTION,
         icon: AudioLines,
-        tooltip: "Transcribe and summarise a meeting",
+        tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
       },
       {
         label: "Summaries",
@@ -261,7 +261,7 @@ const ADMIN_NAV: NavGroup[] = [
             label: "SharePoint",
             href: ROUTES.ADMIN_SHAREPOINT,
             icon: FolderSearch,
-            tooltip: "Catalogue a document library",
+            tooltip: "Catalogue a document library and set up filing",
           },
         ],
       },
@@ -283,7 +283,7 @@ const MANAGER_NAV: NavGroup[] = [
         label: "Transcription",
         href: ROUTES.MANAGE_TRANSCRIPTION,
         icon: AudioLines,
-        tooltip: "Transcribe and summarise a meeting",
+        tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
       },
       {
         label: "Summaries",
@@ -334,7 +334,7 @@ const MEMBER_NAV: NavGroup[] = [
         label: "Transcription",
         href: ROUTES.PORTAL_TRANSCRIPTION,
         icon: AudioLines,
-        tooltip: "Transcribe and summarise a meeting",
+        tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
       },
       {
         label: "Summaries",

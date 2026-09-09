@@ -1,4 +1,4 @@
-import type { Transcription } from "@/lib/data/kysely-database-types";
+import type { Transcription, TranscriptionFiling } from "@/lib/data/kysely-database-types";
 
 import { TITLE_MAX_CHARS } from "./transcription.types";
 import type { TranscriptionDetailDTO, TranscriptionSummaryDTO } from "./transcription.types";
@@ -22,7 +22,13 @@ type TranscriptionListRow = Omit<Transcription, "transcript" | "segments" | "sum
 // of text cannot fill the column, and it renders as a text node like
 // everything else.
 // -------------------------------------------------------------------
-export function mapDBTranscriptionToSummaryDTO(row: TranscriptionListRow): TranscriptionSummaryDTO {
+export function mapDBTranscriptionToSummaryDTO(
+  row: TranscriptionListRow,
+  // Passed in rather than looked up, so rendering a list of forty rows is
+  // one filing query rather than forty. Undefined is the ordinary case for
+  // anything unfinished, unconfigured, or older than the feature.
+  filing?: TranscriptionFiling,
+): TranscriptionSummaryDTO {
   return {
     id: row.id,
     title: row.title,
@@ -33,6 +39,7 @@ export function mapDBTranscriptionToSummaryDTO(row: TranscriptionListRow): Trans
     error: row.error,
     createdAt: row.createdAt,
     completedAt: row.completedAt,
+    filingStatus: filing?.status ?? null,
   };
 }
 
@@ -45,7 +52,13 @@ export function mapDBTranscriptionToSummaryDTO(row: TranscriptionListRow): Trans
 // DTO that cannot express them is a better guarantee than remembering not
 // to send them.
 // -------------------------------------------------------------------
-export function mapDBTranscriptionToDetailDTO(row: Transcription): TranscriptionDetailDTO {
+export function mapDBTranscriptionToDetailDTO(
+  row: Transcription,
+  // Passed in rather than looked up, because a mapper that queried would put
+  // a database read behind every render of a component. Undefined is the
+  // ordinary case: filing is not configured, or the row predates it.
+  filing?: TranscriptionFiling,
+): TranscriptionDetailDTO {
   return {
     ...mapDBTranscriptionToSummaryDTO(row),
     transcript: row.transcript,
@@ -53,6 +66,18 @@ export function mapDBTranscriptionToDetailDTO(row: Transcription): Transcription
     // finished, and on one the service could not separate speakers in.
     segments: row.segments ?? [],
     summary: row.summary,
+    filing: filing
+      ? {
+          status: filing.status,
+          folderPath: filing.folderPath,
+          decidedVia: filing.decidedVia,
+          reason: filing.reason,
+          fileName: filing.fileName,
+          fileWebUrl: filing.fileWebUrl,
+          filedAt: filing.filedAt,
+          error: filing.error,
+        }
+      : null,
   };
 }
 

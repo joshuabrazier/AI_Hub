@@ -8,6 +8,7 @@ import { handleServerApiError } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
 import { ServerApiResponse } from "@/lib/types";
 
+import { getFilingSettingsService } from "./filing-settings.service";
 import {
   findSharepointLibrariesService,
   listSharepointDrivesService,
@@ -19,6 +20,7 @@ import {
   DriveIdSchema,
   FindLibrariesSchema,
   NominateLibrarySchema,
+  type FilingSettingsDTO,
   type SharepointDriveDTO,
   type SharepointSiteLookup,
   type StartCrawlResultDTO,
@@ -128,5 +130,28 @@ export async function getSharepointDrivesAction(): Promise<ServerApiResponse<Sha
     return { success: true, data } satisfies ServerApiResponse<SharepointDriveDTO[]>;
   } catch (error) {
     return handleServerApiError("getSharepointDrivesAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Whether filing meeting notes is set up, and what it would do.
+//
+// Its own action rather than folded into the drives read above, because the
+// two answer different questions and one of them is allowed to fail without
+// taking the other down: a library that cannot be listed is a broken page,
+// and a filing panel that cannot be assembled is a missing panel on a page
+// that still works.
+//
+// The service re-checks the admin role. This is not the guard.
+// -------------------------------------------------------------------
+export async function getFilingSettingsAction(): Promise<ServerApiResponse<FilingSettingsDTO>> {
+  try {
+    await requireUserRole([USER_ROLES.ADMIN]);
+
+    const data = await getFilingSettingsService();
+
+    return { success: true, data } satisfies ServerApiResponse<FilingSettingsDTO>;
+  } catch (error) {
+    return handleServerApiError("getFilingSettingsAction", error);
   }
 }

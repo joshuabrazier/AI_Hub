@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { AudioLines, FileText, RefreshCw, Sparkles, TriangleAlert } from "lucide-react";
+import { AudioLines, ExternalLink, FileText, FolderOpen, Loader2, RefreshCw, Sparkles, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { ModelMarkdown } from "@/components/model-markdown";
@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MESSAGES } from "@/lib/constants";
 import {
+  TRANSCRIPTION_FILING_STATUSES,
+  TRANSCRIPTION_FILING_STATUS_LABELS,
   TRANSCRIPTION_IN_FLIGHT_STATUSES,
   TRANSCRIPTION_STATUSES,
   TRANSCRIPTION_STATUS_LABELS,
@@ -23,10 +25,18 @@ import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 
 import {
   downloadTranscriptAction,
+  retryTranscriptionFilingAction,
   retryTranscriptionSummaryAction,
   startTranscriptionAction,
 } from "../transcription.actions";
-import { formatDuration, formatTimestamp, speakerLabel, type TranscriptionDetailDTO } from "../transcription.types";
+import {
+  filingDecisionLabel,
+  formatDuration,
+  formatTimestamp,
+  speakerLabel,
+  type TranscriptionDetailDTO,
+  type TranscriptionFilingDTO,
+} from "../transcription.types";
 import { TranscriptionProgress } from "./transcription-progress";
 
 // -------------------------------------------------------------------
@@ -83,6 +93,47 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
 
         setCurrent(response.data);
         toast.success(MESSAGES.TRANSCRIPTION_STARTED);
+        router.refresh();
+      } catch (error) {
+        handleFrontendErrorWithToast(error);
+      }
+    });
+
+  // -------------------------------------------------------------------
+  // File these notes now.
+  //
+  // Two cases behind one button. A filing that ended nowhere or failed is
+  // terminal on purpose - the sweep does not retry those, because a folder
+  // somebody deleted fails identically every few minutes forever - so a
+  // person has to say try again. And a transcription older than the feature
+  // has no filing record at all, which is every meeting anybody had recorded
+  // before this shipped.
+  //
+  // It does not take a folder, and there is no way to give it one: the
+  // destination is chosen by the same rules as an automatic filing, so a
+  // retry cannot put a note somewhere those rules would refuse to.
+  // -------------------------------------------------------------------
+  const fileNow = () =>
+    startTransition(async () => {
+      try {
+        const response = await retryTranscriptionFilingAction({ transcriptionId: current.id });
+
+        if (!response.success) {
+          toast.error(response.formError ?? MESSAGES.SOMETHING_WENT_WRONG);
+          return;
+        }
+
+        // The outcome is not always success, and saying which is the point.
+        // "Nowhere to file it" is a real answer that a green tick would
+        // misreport, and the panel below carries the reason.
+        if (response.data === TRANSCRIPTION_FILING_STATUSES.FILED) {
+          toast.success("Filed in SharePoint.");
+        } else if (response.data === null) {
+          toast.error("SharePoint filing is not set up on this environment.");
+        } else {
+          toast.warning(TRANSCRIPTION_FILING_STATUS_LABELS[response.data]);
+        }
+
         router.refresh();
       } catch (error) {
         handleFrontendErrorWithToast(error);
@@ -292,6 +343,15 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
             </TabsContent>
           </Tabs>
         ) : null}
+
+        {/* Shown on every completed transcription, not only on ones that
+            have a filing record. A row with no record is the case somebody
+            most needs a button for: it predates the feature, so nothing will
+            ever file it on its own and there would be nothing on screen to
+            say so. */}
+        {isCompleted ? (
+          <FilingNote filing={current.filing} onFileNow={fileNow} isBusy={isPending} />
+        ) : null}
       </div>
     </div>
   );
@@ -368,5 +428,136 @@ function TranscriptFootnote({ isNamed = false }: { isNamed?: boolean }) {
         ? "Transcribed automatically by Microsoft Teams, so it will contain mistakes. Speakers are named from who was signed in to the meeting."
         : "Transcribed automatically, so it will contain mistakes. Speakers are separated by voice and numbered - the service does not know who anybody is."}
     </p>
+  );
+}
+
+// -------------------------------------------------------------------
+// Where these notes went in SharePoint, and why.
+//
+// SHOWN RATHER THAN MERELY RECORDED, because a decision the reader cannot
+// see the basis of cannot be checked. Three mechanisms of very different
+// confidence choose the folder - the client's name matching a folder's, a
+// model reading a library of inconsistently named folders, or a holding
+// folder because nothing was certain - and the difference between them is
+// the difference between "obviously right" and "worth a look".
+//
+// FOUR STATES, FOUR SENTENCES. "Not filed" and "could not be filed" are
+// different problems with different remedies: the first is waiting on a
+// person to decide something, the second on somebody to fix a permission.
+// Collapsing them into one grey line is how a confidentiality question gets
+// mistaken for a spinner that never stopped.
+//
+// The folder path is a SNAPSHOT from when the decision was made. Folders get
+// renamed and moved; the link is the live answer and the path is the one we
+// acted on.
+// -------------------------------------------------------------------
+function FilingNote({
+  filing,
+  onFileNow,
+  isBusy,
+}: {
+  // Null means no filing record at all: filing is not configured, or this
+  // transcription finished before the feature existed. Neither is a failure
+  // and neither must read like one - but both need a way out, which is the
+  // button.
+  filing: TranscriptionFilingDTO | null;
+  onFileNow: () => void;
+  isBusy: boolean;
+}) {
+  const decision = filing ? filingDecisionLabel(filing.decidedVia) : null;
+
+  const fileNowButton = (label: string) => (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="mt-3"
+      onClick={onFileNow}
+      disabled={isBusy}
+      loading={isBusy}
+    >
+      <FolderOpen size={14} aria-hidden="true" />
+      {label}
+    </Button>
+  );
+
+  // No record. Offered rather than explained away: every meeting recorded
+  // before this feature shipped is in this state, and without an offer they
+  // stay that way forever with nothing on screen to say why.
+  if (!filing) {
+    return (
+      <div className="mt-5 border-t border-border pt-4">
+        <p className="text-xs text-muted-foreground">
+          These notes have not been filed in SharePoint. That is normal for anything recorded before filing
+          was set up.
+        </p>
+        {fileNowButton("File in SharePoint")}
+      </div>
+    );
+  }
+
+  if (filing.status === TRANSCRIPTION_FILING_STATUSES.PENDING) {
+    return (
+      <p className="mt-5 flex items-center gap-2 border-t border-border pt-4 text-xs text-muted-foreground">
+        <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+        Filing these notes in SharePoint.
+      </p>
+    );
+  }
+
+  if (filing.status === TRANSCRIPTION_FILING_STATUSES.FILED) {
+    return (
+      <div className="mt-5 border-t border-border pt-4">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <FolderOpen size={13} className="text-muted-foreground" aria-hidden="true" />
+          <span className="text-muted-foreground">Filed in</span>
+          <span className="break-all font-medium text-foreground">{filing.folderPath ?? "SharePoint"}</span>
+
+          {filing.fileWebUrl ? (
+            <a
+              href={filing.fileWebUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+            >
+              Open
+              <ExternalLink size={12} aria-hidden="true" />
+            </a>
+          ) : null}
+        </div>
+
+        {/* The how and the why, together. Either alone is unfalsifiable. */}
+        {decision ? <p className="mt-1.5 text-xs text-muted-foreground">{decision}</p> : null}
+        {filing.reason ? (
+          <p className="mt-0.5 break-words text-xs text-muted-foreground">{filing.reason}</p>
+        ) : null}
+      </div>
+    );
+  }
+
+  const isNowhere = filing.status === TRANSCRIPTION_FILING_STATUSES.NOWHERE;
+
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <p className="flex items-center gap-2 text-xs font-medium text-foreground">
+        <TriangleAlert size={13} className="text-muted-foreground" aria-hidden="true" />
+        {isNowhere ? "These notes have not been filed" : "These notes could not be filed"}
+      </p>
+      <p className="mt-1 break-words text-xs text-muted-foreground">
+        {/* The reason first, because on a 'nowhere' row it IS the remedy -
+            "no folder matches this client" tells somebody what to do. */}
+        {filing.reason ?? filing.error ?? "No destination could be chosen."}
+        {isNowhere ? " The transcript is here either way." : ""}
+      </p>
+      {!isNowhere && filing.error && filing.reason ? (
+        <p className="mt-0.5 break-words text-xs text-muted-foreground">{filing.error}</p>
+      ) : null}
+
+      {/* Neither of these states is retried by the sweep - a folder somebody
+          deleted fails identically forever - so the only way out is a person
+          deciding to try again after fixing whatever the sentence above
+          names. */}
+      {fileNowButton("Try filing again")}
+    </div>
   );
 }

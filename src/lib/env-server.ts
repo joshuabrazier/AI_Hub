@@ -238,6 +238,19 @@ const serverEnvSchema = z.object({
   // the path as the crawl recorded it.
   // -------------------------------------------------------------------
   SHAREPOINT_FILING_FALLBACK_PATH: z.string().optional(),
+  // WHICH LIBRARY, when more than one has been nominated for crawling.
+  //
+  // Only consulted then. One nominated library is the answer on its own, and
+  // asking somebody to name it in an environment variable to confirm what
+  // they already picked in the UI is the kind of configuration nobody
+  // maintains. With several and no answer here, filing refuses and names
+  // them rather than choosing - a meeting note in the wrong LIBRARY is the
+  // same confidentiality problem as one in the wrong folder, one level up.
+  //
+  // Matched case-insensitively against the library name, or "Site / Library"
+  // when two sites have a library of the same name. NOT a drive id: those are
+  // opaque strings nobody can check by eye, and a typo in one is invisible.
+  SHAREPOINT_FILING_LIBRARY: z.string().optional(),
   SHAREPOINT_FILING_CONTAINER_PATHS: z
     .string()
     .optional()
@@ -461,6 +474,7 @@ export const envServer = serverEnvSchema.parse({
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
   VAPID_SUBJECT: process.env.VAPID_SUBJECT,
   SHAREPOINT_FILING_FALLBACK_PATH: process.env.SHAREPOINT_FILING_FALLBACK_PATH,
+  SHAREPOINT_FILING_LIBRARY: process.env.SHAREPOINT_FILING_LIBRARY,
   SHAREPOINT_FILING_CONTAINER_PATHS: process.env.SHAREPOINT_FILING_CONTAINER_PATHS,
   SHAREPOINT_FILING_MAX_DEPTH: process.env.SHAREPOINT_FILING_MAX_DEPTH,
   TRANSCRIPTION_SWEEP_SECRET: process.env.TRANSCRIPTION_SWEEP_SECRET,

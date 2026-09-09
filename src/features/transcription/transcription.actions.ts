@@ -1,6 +1,7 @@
 "use server";
 
 import { requireUser } from "@/lib/auth/session-auth-server";
+import type { TranscriptionFilingStatus } from "@/lib/data/kysely-database-types";
 import { handleServerApiError } from "@/lib/handle-errors";
 import { validateRequest } from "@/lib/server-requests";
 import { ServerApiResponse } from "@/lib/types";
@@ -17,6 +18,7 @@ import {
   retryTranscriptionSummaryService,
   startTranscriptionService,
 } from "./transcription.service";
+import { retryTranscriptionFilingService } from "./filing.service";
 import {
   CreateTranscriptionRequestDTO,
   CreateTranscriptionSchema,
@@ -274,5 +276,33 @@ export async function cancelTeamsAutoImportAction(
     return { success: true, data: null };
   } catch (error) {
     return handleServerApiError("cancelTeamsAutoImportAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// File these notes into SharePoint now.
+//
+// Covers a retry of a filing that ended nowhere or failed - neither of which
+// the sweep picks up, deliberately, because a folder somebody deleted fails
+// identically forever - and the backfill of any transcription that finished
+// before filing existed.
+//
+// The service resolves the owner from the session and refuses anything that
+// is not theirs. This is the outer gate only.
+// -------------------------------------------------------------------
+export async function retryTranscriptionFilingAction(
+  requestDTO: TranscriptionIdRequestDTO,
+): Promise<ServerApiResponse<TranscriptionFilingStatus | null>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(TranscriptionIdSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const status = await retryTranscriptionFilingService(validatedRequest.data);
+
+    return { success: true, data: status } satisfies ServerApiResponse<TranscriptionFilingStatus | null>;
+  } catch (error) {
+    return handleServerApiError("retryTranscriptionFilingAction", error);
   }
 }

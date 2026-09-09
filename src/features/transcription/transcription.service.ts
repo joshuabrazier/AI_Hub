@@ -2,7 +2,6 @@ import "server-only";
 
 import { ConverseStreamCommand, type Message, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
 import { generateId } from "better-auth";
-import { revalidatePath } from "next/cache";
 
 import {
   armTeamsAutoImportRepo,
@@ -97,6 +96,10 @@ import {
 } from "@/lib/speech/speech-client";
 
 import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from "./transcription.mappers";
+import { getTranscriptionFilingsForUserRepo } from "@/lib/data/repositories/transcription-filing.repository";
+
+import { fileTranscription } from "./filing.service";
+import { revalidateTranscriptionViews } from "./transcription.revalidate";
 import {
   MAX_MEDIA_BYTES,
   MAX_SUMMARY_ATTEMPTS,
@@ -152,14 +155,6 @@ import {
 // at any realistic volume is pennies a month. It is served by streaming it
 // back through this app, never as a signed URL; see the download route.
 // -------------------------------------------------------------------
-
-// The feature is mounted in all three areas, so a change has to refresh all
-// three: which one the caller is looking at is not knowable here.
-function revalidateTranscriptionViews(): void {
-  revalidatePath(ROUTES.ADMIN_TRANSCRIPTION);
-  revalidatePath(ROUTES.MANAGE_TRANSCRIPTION);
-  revalidatePath(ROUTES.PORTAL_TRANSCRIPTION);
-}
 
 // Said by both guards below, so the two cannot drift apart. Aimed at a
 // developer, because that is the only person who can ever see it - a
@@ -347,12 +342,17 @@ async function summariseTranscript(
   try {
     // STREAMED, and this is not a preference - it is the fix for a real
     // failure. A non-streaming ConverseCommand sends nothing at all until
-    // the model has finished, and the client is configured to abandon a
-    // stream with no activity for READ_TIMEOUT_MS - 120 seconds, in
-    // bedrock-client.ts. Opus writing up to SUMMARY_MAX_TOKENS from an
-    // hour-long transcript takes longer than that, so every summary of a
-    // real meeting timed out, five times over, because `maxAttempts: 5`
-    // retried a request that was never going to be any faster.
+    // the model has finished, so the entire generation reads as one
+    // uninterrupted silence to anything measuring inactivity. Opus writing
+    // up to SUMMARY_MAX_TOKENS from an hour-long transcript takes minutes,
+    // so every summary of a real meeting timed out and was retried by a
+    // request that was never going to be any faster.
+    //
+    // The inactivity measure is BEDROCK_SOCKET_IDLE_MS in bedrock-client.ts.
+    // An earlier version of this note named READ_TIMEOUT_MS and put it at
+    // 120 seconds; that option was `requestTimeout`, which only logs a
+    // warning and never aborted anything, so for a period there was no
+    // inactivity timeout on Bedrock at all. See that file.
     //
     // Streaming puts a token on the socket every few milliseconds, so the
     // inactivity timer never fires. The text is accumulated here; nothing
@@ -471,6 +471,41 @@ async function notifyFinished(transcription: Transcription, userId: string): Pro
 }
 
 // -------------------------------------------------------------------
+// The two things that happen when a row stops moving: tell the person, and
+// put the notes in SharePoint.
+//
+// ONE HELPER RATHER THAN TWO CALLS AT FOUR SITES. There are four ways a
+// transcription reaches a terminal state - a Speech failure, a summary given
+// up on, the poll finishing one, the sweep finishing one - and filing added
+// at three of them would work perfectly until somebody noticed one kind of
+// meeting never got filed. Working out which of the four it was would then
+// take an afternoon.
+//
+// NEITHER HALF MAY THROW. The transcript is already stored by the time this
+// runs, and losing a finished job over a push service or an unreachable
+// SharePoint would be exactly backwards. notifyFinished is best-effort by
+// construction; fileTranscription catches its own and reports into its own
+// row. The catches here are the third belt, for whatever either of them
+// fails to hold.
+//
+// Filing a FAILED row is a no-op inside fileTranscription rather than a
+// condition here, so the rule lives with the thing that owns it.
+// -------------------------------------------------------------------
+async function finishTranscription(transcription: Transcription, userId: string): Promise<void> {
+  try {
+    await notifyFinished(transcription, userId);
+  } catch (error) {
+    console.error(`finishTranscription: could not notify about ${transcription.id}`, error);
+  }
+
+  try {
+    await fileTranscription(transcription, userId);
+  } catch (error) {
+    console.error(`finishTranscription: could not file ${transcription.id}`, error);
+  }
+}
+
+// -------------------------------------------------------------------
 // Move one in-flight row along.
 //
 // Called for every unfinished row when the page loads, and again while the
@@ -509,7 +544,7 @@ async function advanceTranscription(
       error: message.slice(0, MAX_ERROR_CHARS),
     });
 
-    await notifyFinished(updated ?? transcription, userId);
+    await finishTranscription(updated ?? transcription, userId);
 
     return updated ?? transcription;
   };
@@ -567,7 +602,7 @@ async function advanceTranscription(
         summaryStartedAt: null,
       });
 
-      if (givenUp) await notifyFinished(givenUp, userId);
+      if (givenUp) await finishTranscription(givenUp, userId);
 
       return givenUp ?? current;
     }
@@ -585,7 +620,7 @@ async function advanceTranscription(
 
     // Only the run that WON the claim notifies. Two sweeps arriving together
     // would otherwise send the same person the same notification twice.
-    if (updated) await notifyFinished(updated, userId);
+    if (updated) await finishTranscription(updated, userId);
 
     // The summary failed but attempts remain. The lease is released so the
     // next sweep can try again rather than waiting for it to expire - a
@@ -734,7 +769,7 @@ async function advanceTranscription(
     completedAt: new Date(),
   });
 
-  if (completed) await notifyFinished(completed, userId);
+  if (completed) await finishTranscription(completed, userId);
 
   return completed ?? stored;
 }
@@ -766,7 +801,22 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
     const user = await requireUser();
 
     const rows = await getTranscriptionsForUserRepo(user.id);
-    const transcriptions = rows.map(mapDBTranscriptionToSummaryDTO);
+
+    // ONE QUERY FOR THE WHOLE LIST, not one per row. Filing is the part of
+    // this feature that happens with nobody watching, so its status belongs
+    // on every row rather than only on the one that happens to be open - a
+    // status you have to open something to see is one you only find when you
+    // already suspect it.
+    const filings = await getTranscriptionFilingsForUserRepo(
+      rows.map((row) => row.id),
+      user.id,
+    );
+
+    const filingByTranscription = new Map(filings.map((filing) => [filing.transcriptionId, filing]));
+
+    const transcriptions = rows.map((row) =>
+      mapDBTranscriptionToSummaryDTO(row, filingByTranscription.get(row.id)),
+    );
 
     const requested = transcriptionId
       ? transcriptions.find((item) => item.id === transcriptionId)
@@ -779,6 +829,11 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
     // transcript it can see.
     const activeRow = target ? await getTranscriptionForUserRepo(target.id, user.id) : undefined;
 
+    // The open row's filing, taken from the list read above rather than
+    // fetched again: it is the same row, and a second query could disagree
+    // with the first if a sweep landed between them.
+    const activeFiling = activeRow ? filingByTranscription.get(activeRow.id) : undefined;
+
     return {
       isStorageConfigured: isMediaStorageConfigured(),
       isSpeechConfigured: isSpeechConfigured(),
@@ -790,7 +845,7 @@ export async function getTranscriptionPageService(transcriptionId?: string): Pro
       // one that reports itself as broken.
       isTeamsImportConfigured: isTeamsImportConfigured(),
       transcriptions,
-      active: activeRow ? mapDBTranscriptionToDetailDTO(activeRow) : null,
+      active: activeRow ? mapDBTranscriptionToDetailDTO(activeRow, activeFiling) : null,
     };
   } catch (error) {
     throw handleError("getTranscriptionPageService", error);

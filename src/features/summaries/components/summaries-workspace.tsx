@@ -2,7 +2,9 @@
 
 import { useRef, useState } from "react";
 
-import { Copy, FileText, Sparkles, StopCircle } from "lucide-react";
+import { Copy, FileText, Sparkles, StopCircle, TriangleAlert } from "lucide-react";
+
+import { createStreamDecoder, type StreamEvent } from "@/lib/ai/stream-protocol";
 import { toast } from "sonner";
 
 import { ModelMarkdown } from "@/components/model-markdown";
@@ -53,6 +55,12 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
   const [summary, setSummary] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
 
+  // Why the last attempt stopped, in the server's own words. Inline rather
+  // than a toast: it is worth reading twice and worth being able to copy, and
+  // a toast reading "something went wrong" was the thing being complained
+  // about.
+  const [streamError, setStreamError] = useState<string | null>(null);
+
   // Held so Stop can abort a request that may have a minute left to run.
   const abortRef = useRef<AbortController | null>(null);
 
@@ -73,6 +81,9 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
     abortRef.current = controller;
 
     setIsStreaming(true);
+    // Cleared on a new attempt rather than on a timer, so the last thing that
+    // happened stays readable until something else does.
+    setStreamError(null);
     // Cleared up front. Leaving the previous summary on screen while a new
     // one streams in underneath it is the kind of thing that gets the wrong
     // one copied.
@@ -102,23 +113,54 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
       }
 
       const reader = response.body.getReader();
-      const decoder = new TextDecoder();
+      const textDecoder = new TextDecoder();
+      const events = createStreamDecoder();
+
+      const apply = (event: StreamEvent) => {
+        if (event.t === "text") {
+          setSummary((previous) => previous + event.v);
+          return;
+        }
+
+        // A failure that arrived after the 200. Shown rather than swallowed:
+        // a summary that stops mid-sentence looks finished, and one of
+        // somebody's contract presented as whole when it is not is worse
+        // than no summary at all.
+        if (event.t === "error") setStreamError(event.v);
+      };
 
       // Appended chunk by chunk. `stream: true` on decode matters: a
       // multi-byte character can be split across chunk boundaries, and
-      // decoding each one independently would produce replacement
-      // characters mid-word.
+      // decoding each one independently would produce replacement characters
+      // mid-word. It has to run BEFORE the line splitting, which works on
+      // characters.
       for (;;) {
         const { done, value } = await reader.read();
 
         if (done) break;
 
-        setSummary((previous) => previous + decoder.decode(value, { stream: true }));
+        for (const event of events.push(textDecoder.decode(value, { stream: true }))) apply(event);
+      }
+
+      for (const event of events.flush()) apply(event);
+
+      if (events.malformed > 0) {
+        setStreamError(
+          `${events.malformed} part(s) of the summary arrived damaged and were skipped, so what is shown may be incomplete.`,
+        );
       }
     } catch (error) {
       // An abort is somebody pressing Stop, not a failure. Whatever arrived
       // before it stays on screen.
       if (error instanceof DOMException && error.name === "AbortError") return;
+
+      // A fetch that throws is the network rather than the app, so it gets
+      // its own sentence instead of the generic one.
+      setStreamError(
+        error instanceof Error
+          ? `The connection to the server failed: ${error.message}`
+          : MESSAGES.SOMETHING_WENT_WRONG,
+      );
 
       handleFrontendErrorWithToast(error);
     } finally {
@@ -255,6 +297,31 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
               </Button>
             ) : null}
           </div>
+
+          {streamError !== null && (
+            <div
+              className="border-b border-destructive/30 bg-destructive/5 px-4 py-3"
+              // Announced, because it can arrive a minute after the send
+              // while the reader is looking at the source text.
+              role="alert"
+            >
+              <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <TriangleAlert size={14} className="text-destructive" aria-hidden="true" />
+                {summary ? "The summary did not finish" : "The summary could not be produced"}
+              </p>
+              {/* Selectable and wrapped. A diagnosis somebody has to retype
+                  is one they will not pass on. */}
+              <p className="mt-1.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
+                {streamError}
+              </p>
+              {summary ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  What is shown below stops where it stopped. Nothing is saved either way, so treat it as
+                  incomplete rather than short.
+                </p>
+              ) : null}
+            </div>
+          )}
 
           <div className="min-w-0 flex-1 p-4">
             {summary ? (

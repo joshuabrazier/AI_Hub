@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
 
 import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
+import {
+  encodeStreamEvent,
+  STREAM_CONTENT_TYPE,
+  type StreamEvent,
+} from "@/lib/ai/stream-protocol";
+import { createTurnGuard } from "@/lib/ai/turn-guard";
 import { getVerifiedApiSession } from "@/lib/auth/session-auth-server";
 import { isDisplayError } from "@/lib/errors";
 import { MESSAGES } from "@/lib/constants";
 import { validateRequest } from "@/lib/server-requests";
 
-import { createStallGuard } from "@/lib/stall-guard";
-
 import { streamAiChatReplyService } from "@/features/ai-chat/ai-chat.service";
-import {
-  CHAT_FIRST_TOKEN_TIMEOUT_MS,
-  CHAT_STALL_TIMEOUT_MS,
-  SendAiChatMessageSchema,
-} from "@/features/ai-chat/ai-chat.types";
+import { CHAT_FIRST_BYTE_CEILING_MS, SendAiChatMessageSchema } from "@/features/ai-chat/ai-chat.types";
 
 // The Bedrock client and Kysely both need Node, and a streamed reply must
 // never be cached.
@@ -73,44 +73,57 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  // The generator authorizes before it yields anything, so a conversation
-  // that is not the caller's fails here - before any stream is opened and
-  // before the model is called. Started eagerly for exactly that reason: an
-  // authorization failure has to be an HTTP status, not an error delivered
-  // mid-stream after the client already saw a 200.
   // -----------------------------------------------------------------
-  // TWO REASONS TO STOP, AND NEITHER OF THEM IS "THIS IS TAKING A WHILE".
+  // THREE REASONS TO STOP, AND NONE OF THEM IS "THIS IS TAKING A WHILE".
   //
-  //   SILENCE   the model has sent nothing for CHAT_STALL_TIMEOUT_MS. The
-  //             clock resets on every chunk, so a long reply runs as long as
-  //             it needs and only a dead request is cut. See the note on
-  //             that constant for why bounding total duration instead would
-  //             truncate the answers worth waiting for.
-  //   THE READER  `request.signal` aborts when the browser goes away - a
-  //             closed tab, a navigation, or the load balancer cutting an
-  //             idle connection. Without it the server carried on calling
-  //             Bedrock long after there was anybody to answer, which is
-  //             most of where those twenty-four minutes went.
+  //   A PHASE OVERRAN     each stage of a turn has its own budget and its own
+  //                       name, so the failure says which one. This replaced
+  //                       a single clock that covered the database, the
+  //                       attachment downloads and a whole compaction model
+  //                       call under a name about the model's first token,
+  //                       and therefore reported "the model sent nothing"
+  //                       before the model had been asked.
   //
-  // The guard carries both, so whichever happens first stops the work.
+  //   THE CEILING         nothing reached the reader before Azure's own idle
+  //                       timeout got close. If the platform wins that race
+  //                       the connection is severed mid-flight and the app
+  //                       never learns it happened.
+  //
+  //   THE READER LEFT     `request.signal` aborts when the browser goes away
+  //                       - a closed tab, a navigation, or the load balancer
+  //                       cutting an idle connection. Without it the server
+  //                       carried on calling Bedrock long after there was
+  //                       anybody to answer.
+  //
+  // The guard carries all three, and knows which one happened - which is the
+  // difference between a message and a diagnosis.
   // -----------------------------------------------------------------
-  const stall = createStallGuard(CHAT_STALL_TIMEOUT_MS, request.signal, CHAT_FIRST_TOKEN_TIMEOUT_MS);
+  const guard = createTurnGuard(request.signal, { firstByteCeilingMs: CHAT_FIRST_BYTE_CEILING_MS });
 
-  // The guard hears the STREAM, not just the text that comes out of it. A
-  // tool round yields nothing for its whole duration - see the note on
-  // onActivity - so without this a healthy model deciding to look up a
-  // timesheet figure is indistinguishable from a dead request.
-  const replies = streamAiChatReplyService(validatedRequest.data, stall.signal, () => stall.progress());
+  const replies = streamAiChatReplyService(validatedRequest.data, guard);
 
-  let first: IteratorResult<string, void>;
+  // -----------------------------------------------------------------
+  // Started eagerly, because an authorization failure has to be an HTTP
+  // status rather than an error delivered mid-stream after the client has
+  // already seen a 200. The service authorizes before its first yield, so
+  // anything that must answer with a status code has already run by the time
+  // this resolves.
+  //
+  // Everything AFTER this point is delivered in-band as an `error` event.
+  // That is not a compromise, it is strictly more capable: a reply that fails
+  // three minutes in cannot have its status code changed, and the old code
+  // handled that case by closing the stream - which the browser cannot tell
+  // apart from a reply that finished. People reported it as "it just stops".
+  // -----------------------------------------------------------------
+  let first: IteratorResult<StreamEvent, void>;
   try {
     first = await replies.next();
-    // The model has spoken. Everything after this is measured from here.
-    stall.progress();
   } catch (error) {
-    stall.dispose();
-    // handleError in the service has already logged this with context.
-    const message = isDisplayError(error) ? error.message : MESSAGES.SOMETHING_WENT_WRONG;
+    guard.dispose();
+
+    // The service has already logged this with its full timeline and written
+    // it to the request log. This is the reader's copy of the same sentence.
+    const message = isDisplayError(error) ? error.message : guard.describe(error);
     const status = isDisplayError(error) ? 400 : 502;
 
     return NextResponse.json({ error: message }, { status });
@@ -120,29 +133,51 @@ export async function POST(request: Request): Promise<Response> {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      try {
-        if (!first.done && first.value) {
-          controller.enqueue(encoder.encode(first.value));
-        }
+      const send = (event: StreamEvent) => {
+        controller.enqueue(encoder.encode(encodeStreamEvent(event)));
 
-        for await (const chunk of replies) {
-          // Every chunk is a sign of life, and buys the reply another full
-          // window. This is what lets a long answer finish.
-          stall.progress();
-          controller.enqueue(encoder.encode(chunk));
+        // Anything reaching the reader resets the platform's idle clock, so
+        // the overall ceiling has done its job and stops applying. From here
+        // the per-phase budgets are the only limit, which is what lets a long
+        // answer run as long as it keeps talking.
+        guard.firstByteReached();
+      };
+
+      try {
+        if (!first.done) send(first.value);
+
+        for await (const event of replies) {
+          send(event);
         }
 
         controller.close();
       } catch (error) {
-        // The reply was already streaming when this failed, so the status is
-        // long since sent. Close the stream rather than error it: the client
-        // keeps the partial answer, which the service has also persisted.
-        console.error("[POST /api/ai-chat/stream] failed mid-stream", error);
+        // -------------------------------------------------------------
+        // THE REPLY WAS ALREADY STREAMING, SO THE STATUS IS LONG SENT.
+        //
+        // This used to close the stream and log to the server, which meant
+        // the reader kept a partial answer with no indication that anything
+        // had gone wrong. The reason now goes down the wire: the client shows
+        // it and keeps the partial text, which the service has also
+        // persisted.
+        // -------------------------------------------------------------
+        const reason = isDisplayError(error) ? error.message : guard.describe(error);
+
+        console.error(`[POST /api/ai-chat/stream] failed mid-stream: ${reason}`);
+
+        try {
+          controller.enqueue(encoder.encode(encodeStreamEvent({ t: "error", v: reason })));
+        } catch {
+          // The reader has already gone, which is the one case where there is
+          // nobody to tell. Not worth a log line of its own - the service has
+          // recorded the failure either way.
+        }
+
         controller.close();
       } finally {
         // However this ended. A timer left armed would fire into a finished
         // request and hold the event loop open for its full window.
-        stall.dispose();
+        guard.dispose();
       }
     },
 
@@ -157,10 +192,11 @@ export async function POST(request: Request): Promise<Response> {
 
   return new Response(stream, {
     headers: {
-      // Plain text, not SSE: the payload is one continuous answer, so there
-      // is nothing to frame into events and no reason to make the client
-      // parse a protocol to read it.
-      "Content-Type": "text/plain; charset=utf-8",
+      // Newline-delimited JSON rather than plain text. The payload is not
+      // just the answer any more: it also carries what the server is doing
+      // while there is no answer yet, and why it stopped if it stopped. See
+      // stream-protocol.ts.
+      "Content-Type": STREAM_CONTENT_TYPE,
       "Cache-Control": "no-store, no-transform",
       // Stops intermediate proxies buffering the whole reply and defeating
       // the streaming.

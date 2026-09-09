@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import type { SharepointCrawlStatus } from "@/lib/data/kysely-database-types";
+import type {
+  SharepointCrawlStatus,
+  TranscriptionFilingStatus,
+} from "@/lib/data/kysely-database-types";
 
 // -------------------------------------------------------------------
 // SharePoint inventory - DTOs and input schemas.
@@ -157,3 +160,53 @@ export interface StartCrawlResultDTO {
   pagesDone: number;
   finished: boolean;
 }
+
+// -------------------------------------------------------------------
+// Whether filing meeting notes into SharePoint is set up, and what it would
+// do if a meeting finished right now.
+//
+// COUNTS, NEVER CONTENT. See the note on the service: an admin can act on
+// the configuration and on the shape of the failures, and a meeting title
+// belongs to the person whose meeting it was.
+//
+// Every "problem" field is a SENTENCE rather than a boolean, because each
+// one is somebody's environment variable to fix and the message is the whole
+// remedy. A screen that says "misconfigured" has told nobody anything.
+// -------------------------------------------------------------------
+export type FilingSettingsDTO = {
+  // False means no library is nominated at all, which is filing being OFF
+  // rather than broken. Different remedy, so it is a different word.
+  isEnabled: boolean;
+
+  library: {
+    driveId: string | null;
+    // "Site / Library", as a person would recognise it. Never a bare drive
+    // id: those are opaque and a typo in one is invisible.
+    name: string | null;
+    // Why no library could be chosen - none nominated, several with nothing
+    // saying which, or a configured name matching nothing.
+    problem: string | null;
+  };
+
+  // How many catalogued folders filing could actually choose between, after
+  // the container paths are excluded. Zero with a library chosen means the
+  // crawl has not run.
+  folderCount: number;
+  // The catalogue is larger than the prompt can carry, so the model tier
+  // chooses from a partial list. The deterministic client-name match still
+  // sees every folder, which is why this is a caveat and not a failure.
+  folderCountExceedsPromptCap: boolean;
+  maxDepth: number;
+  excludedContainerPaths: string[];
+
+  // Unset is a legitimate permanent answer: anything ambiguous is then left
+  // unfiled and reported rather than guessed at.
+  fallbackPath: string | null;
+  // Set but invalid, which is worse than unset - it looks configured and
+  // fails at the moment a meeting needed a home.
+  fallbackProblem: string | null;
+
+  isModelTierAvailable: boolean;
+
+  counts: Record<TranscriptionFilingStatus, number>;
+};

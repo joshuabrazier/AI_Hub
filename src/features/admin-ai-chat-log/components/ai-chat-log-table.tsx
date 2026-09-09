@@ -25,7 +25,12 @@ import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import { cn } from "@/lib/utils";
 
 import { getAiChatRequestLogDetailAction } from "../admin-ai-chat-log.actions";
-import type { AiChatLogPageDTO, AiChatRequestLogDetailDTO } from "../admin-ai-chat-log.types";
+import type {
+  AiChatLogPageDTO,
+  AiChatRequestLogDetailDTO,
+  LoggedPhaseDTO,
+  LoggedPhaseSummaryDTO,
+} from "../admin-ai-chat-log.types";
 
 // -------------------------------------------------------------------
 // AiChatLogTable
@@ -255,6 +260,10 @@ function RequestPayload({ detail }: { detail: AiChatRequestLogDetailDTO }) {
         </div>
       )}
 
+      {detail.phases && detail.phaseSummary && (
+        <PhaseTimeline phases={detail.phases} summary={detail.phaseSummary} />
+      )}
+
       {detail.truncated && (
         <div className="flex items-start gap-2 rounded-lg border border-data-caution/40 bg-data-caution-surface p-3 text-sm text-data-caution-text">
           <FileWarning size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
@@ -357,4 +366,128 @@ function Fact({ label, value, mono = false }: { label: string; value: string; mo
       <dd className={cn("text-foreground", mono && "font-mono text-xs tabular-nums")}>{value}</dd>
     </div>
   );
+}
+
+// ===================================================================
+// WHERE THE TIME WENT
+//
+// The panel this whole investigation was missing. The duration figure above
+// says a call took twenty-one seconds; this says nineteen of them were spent
+// compacting the conversation before the model was asked anything - which is
+// the difference between knowing a call was slow and knowing why.
+//
+// A BAR PER PHASE, SCALED TO THE SLOWEST, because the useful reading is
+// comparative. "compaction 19.6s" means nothing until you can see beside it
+// that reading the history took 0.3s, and a table of numbers makes the eye
+// do work a bar does for free.
+//
+// THE BUDGET IS SHOWN, NOT JUST THE ELAPSED TIME. A phase at 19.6s of a 75s
+// budget is healthy; the same 19.6s against a 20s budget is a phase about to
+// fail, and those are opposite findings from the same number.
+//
+// AND THE KIND IS SHOWN, because an idle budget and a duration budget mean
+// different things. An idle phase that ran for four minutes was streaming
+// happily the whole time and is not slow at all. Reading it as a total is
+// exactly the mistake that produced a wall-clock deadline and truncated
+// every long reply.
+// ===================================================================
+function PhaseTimeline({
+  phases,
+  summary,
+}: {
+  phases: LoggedPhaseDTO[];
+  summary: LoggedPhaseSummaryDTO;
+}) {
+  // Scaled to the slowest phase rather than to the turn total, so a turn
+  // dominated by one stage still shows the small ones as visible slivers
+  // instead of nothing at all.
+  const slowest = Math.max(...phases.map((phase) => phase.ms), 1);
+
+  const notes = Object.entries(summary.notes);
+
+  return (
+    <section className="rounded-lg border border-border bg-muted/40 p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Where the time went
+        </h3>
+        <p className="font-mono text-xs text-muted-foreground">{formatMs(summary.totalMs)} total</p>
+      </div>
+
+      {/* The finding, when there is one. Said before the bars, because
+          somebody opening a failed row is looking for this sentence and
+          should not have to read a chart to find it. */}
+      {summary.readerLeft && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          The reader disconnected before the reply finished. Not a fault.
+        </p>
+      )}
+
+      {summary.ceilingHit && (
+        <p className="mt-2 text-xs text-foreground">
+          Nothing reached the reader before the overall ceiling. Every stage was inside its own budget;
+          there were too many of them.
+        </p>
+      )}
+
+      <ul className="mt-3 space-y-1.5">
+        {phases.map((phase, index) => (
+          // Indexed as well as named: a turn with tool rounds enters
+          // model-reply more than once, and two rows with the same name are
+          // two different stretches of time rather than a duplicate.
+          <li key={`${phase.name}-${index}`} className="grid grid-cols-[9rem_1fr_auto] items-center gap-2">
+            <span className="truncate font-mono text-xs text-muted-foreground" title={phase.name}>
+              {phase.name}
+            </span>
+
+            <span className="h-2 rounded-full bg-border/60" aria-hidden="true">
+              <span
+                className={cn(
+                  "block h-2 rounded-full",
+                  phase.timedOut ? "bg-destructive" : "bg-primary/60",
+                )}
+                style={{ width: `${Math.max(2, (phase.ms / slowest) * 100)}%` }}
+              />
+            </span>
+
+            <span className="font-mono text-xs tabular-nums text-foreground">
+              {formatMs(phase.ms)}
+              <span className="text-muted-foreground">
+                {" / "}
+                {formatMs(phase.budgetMs)}
+                {phase.kind === "idle" ? " idle" : ""}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {summary.timedOutPhase !== null && !summary.ceilingHit && (
+        <p className="mt-3 text-xs text-foreground">
+          <span className="font-mono">{summary.timedOutPhase}</span> is the phase whose budget ran out.
+        </p>
+      )}
+
+      {/* Counts, not content. What the turn was carrying is often the
+          explanation for why a phase was slow - forty turns and six
+          attachments is a different call from two and none. */}
+      {notes.length > 0 && (
+        <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-border pt-2">
+          {notes.map(([key, value]) => (
+            <div key={key} className="flex items-baseline gap-1.5">
+              <dt className="text-xs text-muted-foreground">{key}</dt>
+              <dd className="font-mono text-xs text-foreground">{String(value)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </section>
+  );
+}
+
+// Seconds once a phase is past a second, milliseconds below that. A phase
+// reported as "0.1s" hides the difference between 60ms and 140ms, which is
+// the difference between a warm connection and a cold one.
+function formatMs(ms: number): string {
+  return ms < 1_000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }

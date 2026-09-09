@@ -29,3 +29,11 @@ export const APP_TIME_ZONE = envClient.NEXT_PUBLIC_APP_TIME_ZONE;
 export function todayInAppZone(): string {
   return formatInTimeZone(new Date(), APP_TIME_ZONE, "yyyy-MM-dd");
 }
+
+// The calendar date a given instant fell on, in the app zone, as
+// "yyyy-MM-dd". Same rule as above applied to a stored timestamp rather than
+// to now: a meeting at 9am Adelaide is stored as the previous day in UTC, so
+// deriving its date with toISOString would file it under yesterday.
+export function dateInAppZone(value: Date): string {
+  return formatInTimeZone(value, APP_TIME_ZONE, "yyyy-MM-dd");
+}

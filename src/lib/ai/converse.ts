@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ConverseCommand, type Message, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
+import { ConverseStreamCommand, type Message, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
 import { generateId } from "better-auth";
 
 import {
@@ -56,6 +56,40 @@ export class BedrockNotConfiguredError extends Error {
   }
 }
 
+// -------------------------------------------------------------------
+// A TOTAL ceiling, and it is the ONLY bound that works on this failure.
+//
+// A CORRECTION, written from production logs. The request handler's
+// socketTimeout was meant to be the real detector of a dead call, with this
+// as a backstop for the rarer case of a stream that trickles. It is the
+// other way round: measured in production, a stalled Bedrock call ran to
+// this ceiling every time with socketTimeout at 25s never firing once. The
+// socket is NOT idle during one - an AWS event stream carries periodic
+// frames, so the connection stays perfectly busy while the model produces
+// nothing at all.
+//
+// So an idle timeout cannot see this failure, and total duration is the only
+// quantity that can. That makes this ceiling load-bearing rather than
+// defensive, which is why it is now sized per call instead of one number for
+// everything: a 300-token folder suggestion and a 4,000-token summary are
+// not the same wait, and giving the first the second's budget is how one
+// filing decision cost two minutes and then did it three more times.
+//
+// DERIVED, NOT PICKED. Slowest observed generation rate, plus an allowance
+// for prefill on a large prompt. Raising a caller's token cap raises its
+// ceiling with it.
+// -------------------------------------------------------------------
+const SLOWEST_TOKENS_PER_SECOND = 30;
+const PREFILL_ALLOWANCE_MS = 30_000;
+
+export function converseCeilingFor(maxTokens: number): number {
+  return Math.ceil((maxTokens / SLOWEST_TOKENS_PER_SECOND) * 1000) + PREFILL_ALLOWANCE_MS;
+}
+
+// The default, for a caller that has not thought about it. Matches
+// DEFAULT_MAX_TOKENS below.
+const DEFAULT_TIMEOUT_MS = converseCeilingFor(1_500);
+
 export interface ConverseTextParams {
   // Whose spend this is. Required, because the log row is per user and an
   // unattributed call is one nobody can be asked about.
@@ -65,6 +99,15 @@ export interface ConverseTextParams {
   prompt: string;
   maxTokens?: number;
   temperature?: number;
+  // The caller's own deadline or cancellation, where it has one. Combined
+  // with the ceiling rather than replacing it, so a caller cannot
+  // accidentally remove the only bound on the call by passing a signal that
+  // never fires.
+  abortSignal?: AbortSignal;
+  // A tighter total ceiling than the default. Worth setting whenever the
+  // reply is short: the ceiling is what a stalled call actually costs, and
+  // that cost is paid on every retry above it.
+  timeoutMs?: number;
 }
 
 export interface ConverseTextResult {
@@ -92,9 +135,32 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
     cacheWriteTokens: null,
   };
 
+  const ceilingMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  // AbortSignal.any needs Node 18.17 / 20.3; this app is on Node 20.
+  const timeout = AbortSignal.timeout(ceilingMs);
+  const abortSignal = params.abortSignal
+    ? AbortSignal.any([params.abortSignal, timeout])
+    : timeout;
+
   try {
+    // -----------------------------------------------------------------
+    // STREAMED, THOUGH THE CALLER WANTS ONE BLOCK OF TEXT.
+    //
+    // A non-streaming ConverseCommand holds the socket open and completely
+    // silent for the whole time the model spends generating. That is fine
+    // until the request handler has a socketTimeout - which it now does,
+    // because without one nothing in this app could detect a dead Bedrock
+    // stream at all - and then every one of these calls looks like a stall
+    // and is aborted mid-generation.
+    //
+    // So this streams and reassembles. Identical tokens, identical price,
+    // identical result to the caller, and it means ONE timeout policy is
+    // correct for every call site. bedrock-client.ts states the constraint;
+    // this is one of the two places that had to change to satisfy it.
+    // -----------------------------------------------------------------
     const response = await getBedrockClient().send(
-      new ConverseCommand({
+      new ConverseStreamCommand({
         modelId: BEDROCK_MODEL_ID,
         system,
         messages,
@@ -103,21 +169,34 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
           temperature: params.temperature ?? DEFAULT_TEMPERATURE,
         },
       }),
+      { abortSignal },
     );
 
-    usage = {
-      inputTokens: response.usage?.inputTokens ?? null,
-      outputTokens: response.usage?.outputTokens ?? null,
-      cacheReadTokens: response.usage?.cacheReadInputTokens ?? null,
-      cacheWriteTokens: response.usage?.cacheWriteInputTokens ?? null,
-    };
+    if (!response.stream) throw new Error("Bedrock returned no stream");
 
-    // Converse returns content as blocks even for a plain text reply, and a
-    // stop reason of max_tokens still carries the text produced so far.
-    const text = (response.output?.message?.content ?? [])
-      .map((block) => ("text" in block && block.text ? block.text : ""))
-      .join("")
-      .trim();
+    let assembled = "";
+
+    for await (const event of response.stream) {
+      const chunk = event.contentBlockDelta?.delta?.text;
+      if (chunk) assembled += chunk;
+
+      // Usage arrives once, on its own event. All four are recorded: with
+      // caching in play `inputTokens` is only the uncached remainder, and
+      // reading it alone understates what a call cost.
+      if (event.metadata?.usage) {
+        usage = {
+          inputTokens: event.metadata.usage.inputTokens ?? null,
+          outputTokens: event.metadata.usage.outputTokens ?? null,
+          cacheReadTokens: event.metadata.usage.cacheReadInputTokens ?? null,
+          cacheWriteTokens: event.metadata.usage.cacheWriteInputTokens ?? null,
+        };
+      }
+    }
+
+    // A stop reason of max_tokens still carries the text produced so far,
+    // which is why this trusts what arrived rather than checking how it
+    // ended.
+    const text = assembled.trim();
 
     await recordConverseRequest({ ...params, system, messages, usage, error: null, startedAt });
 
@@ -125,7 +204,10 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
 
     return { text, usage };
   } catch (error) {
-    const described = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    // The SDK throws its own bare AbortError and discards the reason, so a
+    // call that hit the ceiling above and one the caller cancelled would
+    // otherwise be indistinguishable in the log. Said explicitly.
+    const described = describeConverseFailure(error, params.abortSignal, timeout, ceilingMs);
 
     // Logged before rethrowing, and separately from the success path, so a
     // failed call is on the record with whatever usage it had reported.
@@ -133,6 +215,40 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
 
     throw handleError("converseText", error);
   }
+}
+
+// -------------------------------------------------------------------
+// Which of the three things that can stop one of these calls happened.
+//
+// Same argument as the chat turn guard, in miniature: "AbortError: Request
+// aborted" names neither the cause nor the remedy, and the three cases have
+// three different ones - wait, look at the caller, or look at Bedrock.
+// -------------------------------------------------------------------
+function describeConverseFailure(
+  error: unknown,
+  callerSignal: AbortSignal | undefined,
+  timeout: AbortSignal,
+  ceilingMs: number,
+): string {
+  const isAbort = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+
+  if (isAbort) {
+    if (timeout.aborted) {
+      // Says the ceiling, because "ran to the full budget" and "failed
+      // quickly" are different problems and the SDK's own AbortError cannot
+      // tell them apart.
+      return (
+        `TimeoutError: the model accepted the request and produced nothing for the full ` +
+        `${Math.round(ceilingMs / 1000)}s allowed, so it was stopped.`
+      );
+    }
+
+    if (callerSignal?.aborted) {
+      return "AbortError: the caller cancelled this model call.";
+    }
+  }
+
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
 // -------------------------------------------------------------------

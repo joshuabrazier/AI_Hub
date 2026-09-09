@@ -129,6 +129,12 @@ export const AI_CHAT_REQUEST_KINDS = {
   // same model on the organisation's account, so it belongs in the same
   // record rather than in a second log nobody remembers to read.
   TRANSCRIPTION: "transcription",
+  // Choosing which SharePoint folder a meeting's notes belong in. Its own
+  // kind rather than sharing 'transcription', because the two say different
+  // things about the same meeting: one is what the summary cost, this is
+  // what the app thought about where the note should live. A note in the
+  // wrong client's folder is investigated by reading the second.
+  MEETING_FILING: "meeting_filing",
 } as const;
 
 export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_CHAT_REQUEST_KINDS];
@@ -141,6 +147,7 @@ export const AI_CHAT_REQUEST_KIND_LABELS: Record<AiChatRequestKind, string> = {
   [AI_CHAT_REQUEST_KINDS.TIMESHEET_QUERY]: "Timesheet question",
   [AI_CHAT_REQUEST_KINDS.TEXT_SUMMARY]: "Text summary",
   [AI_CHAT_REQUEST_KINDS.TRANSCRIPTION]: "Meeting summary",
+  [AI_CHAT_REQUEST_KINDS.MEETING_FILING]: "Meeting filing",
 };
 
 // -------------------------------------------------------------------
@@ -712,6 +719,75 @@ export type NewTranscription = Insertable<Transcriptions>;
 export type UpdateTranscription = Updateable<Transcriptions>;
 
 // -------------------------------------------------------------------
+// Where a meeting's notes were filed in SharePoint, and why
+//
+// ONE ROW PER TRANSCRIPTION, and the unique constraint behind it is the
+// whole idempotency story: SharePoint accepts a second upload of the same
+// name as a new version rather than an error, so without a record of "this
+// one is done" a retrying sweep would fill a folder with copies of one
+// meeting. See migration 019.
+//
+// WHY IS AS LOAD-BEARING AS WHERE. Three mechanisms of very different
+// confidence choose the destination, and "notes about client A are in
+// client B's folder" is a confidentiality question that cannot be answered
+// by the answer alone. Same argument as worklogFact.rndSource.
+// -------------------------------------------------------------------
+export const TRANSCRIPTION_FILING_STATUSES = {
+  // Chosen but not uploaded, or a previous attempt failed and will be
+  // retried.
+  PENDING: "pending",
+  FILED: "filed",
+  // Nothing could be chosen AND no fallback folder is configured, so there
+  // is nowhere to put it. NOT an error: it means a person has to decide
+  // something, and inventing a folder is a write nobody asked for.
+  NOWHERE: "nowhere",
+  // Graph refused in a way that will not fix itself.
+  FAILED: "failed",
+} as const;
+
+export type TranscriptionFilingStatus =
+  (typeof TRANSCRIPTION_FILING_STATUSES)[keyof typeof TRANSCRIPTION_FILING_STATUSES];
+
+export const TRANSCRIPTION_FILING_STATUS_LABELS: Record<TranscriptionFilingStatus, string> = {
+  [TRANSCRIPTION_FILING_STATUSES.PENDING]: "Filing",
+  [TRANSCRIPTION_FILING_STATUSES.FILED]: "Filed in SharePoint",
+  [TRANSCRIPTION_FILING_STATUSES.NOWHERE]: "Nowhere to file it",
+  [TRANSCRIPTION_FILING_STATUSES.FAILED]: "Could not be filed",
+};
+
+export interface TranscriptionFilings {
+  id: string;
+  transcriptionId: string;
+  // Denormalised from transcriptions deliberately: every read here is
+  // scoped by owner, and the upload runs on that person's own delegated
+  // token.
+  userId: string;
+  driveId: string | null;
+  folderItemId: string | null;
+  // A SNAPSHOT of the path at the moment the decision was made. Folders get
+  // renamed and moved, and "where we put it" has to stay answerable.
+  folderPath: string | null;
+  // 'client-name' | 'model' | 'fallback'. Text rather than an enum, matching
+  // rndSource: a value nobody expected should surface as a finding in the
+  // read model, not fail the write.
+  decidedVia: string | null;
+  reason: string | null;
+  status: Generated<TranscriptionFilingStatus>;
+  attempts: Generated<number>;
+  fileItemId: string | null;
+  fileWebUrl: string | null;
+  fileName: string | null;
+  error: string | null;
+  filedAt: Date | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+export type TranscriptionFiling = Selectable<TranscriptionFilings>;
+export type NewTranscriptionFiling = Insertable<TranscriptionFilings>;
+export type UpdateTranscriptionFiling = Updateable<TranscriptionFilings>;
+
+// -------------------------------------------------------------------
 // AI Chat Request Logs
 // What was ACTUALLY sent to the model, for admin review.
 //
@@ -725,6 +801,32 @@ export type UpdateTranscription = Updateable<Transcriptions>;
 // `systemBlocks` and `messages` are JSONB: read back as parsed arrays,
 // written as JSON strings, same as the audit log's `changes`/`metadata`.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// One turn's phase timeline, as stored.
+//
+// Declared here rather than imported from the guard that produces it,
+// because a stored shape and a runtime shape are allowed to diverge and the
+// database is the one that has to keep reading old rows. A field added to
+// the guard is optional here until every row has it.
+// -------------------------------------------------------------------
+export type TurnPhaseLog = {
+  totalMs: number;
+  currentPhase: string | null;
+  timedOutPhase: string | null;
+  readerLeft: boolean;
+  // Added after the first rows were written, so optional: a row from before
+  // the overall ceiling existed simply does not say.
+  ceilingHit?: boolean;
+  phases: {
+    name: string;
+    ms: number;
+    budgetMs: number;
+    kind: "duration" | "idle";
+    timedOut: boolean;
+  }[];
+  notes: Record<string, string | number | boolean>;
+};
+
 export interface AiChatRequestLogs {
   id: string;
   userId: string;
@@ -762,6 +864,19 @@ export interface AiChatRequestLogs {
   // NULL on success. A failed call is when an admin most wants the payload.
   error: string | null;
   durationMs: number | null;
+  // -----------------------------------------------------------------
+  // The phase timeline: where the duration above actually went.
+  //
+  // duration_ms says a turn took twenty seconds; this says nineteen of them
+  // were spent compacting the thread before the model was asked anything.
+  // Without it the log could describe a failure without being able to
+  // explain one, which is how "the model sent nothing for 20 seconds" stood
+  // as a diagnosis for weeks. See migration 022 for the shape.
+  //
+  // NULL is ordinary: rows written before this existed have none, and a
+  // compaction call is one request inside somebody else's turn.
+  // -----------------------------------------------------------------
+  phases: ColumnType<TurnPhaseLog | null, string | null, string | null>;
   createdAt: Date;
 }
 
@@ -1620,6 +1735,7 @@ export interface Database {
   aiChatRequestLogs: AiChatRequestLogs;
   teamsAutoImport: TeamsAutoImports;
   transcriptions: Transcriptions;
+  transcriptionFiling: TranscriptionFilings;
   pushSubscriptions: PushSubscriptions;
   sessionTwoFactor: SessionTwoFactors;
   auditLogs: AuditLogs;
