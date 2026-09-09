@@ -186,13 +186,58 @@ export function getBedrockClient(): BedrockRuntimeClient {
       socketTimeout: BEDROCK_SOCKET_IDLE_MS,
       connectionTimeout: CONNECT_TIMEOUT_MS,
     },
-    // Adaptive retries back off with jitter on throttling and transient
-    // 5xx. AccessDenied and ValidationException are not retried by design:
-    // the first means the key is wrong, revoked, or pointed at the wrong
-    // region, and the second means the request is malformed. Retrying
-    // either just burns time.
     maxAttempts: MAX_ATTEMPTS,
-    retryMode: "adaptive",
+    // -----------------------------------------------------------------
+    // STANDARD, NOT ADAPTIVE, AND THIS ONE WORD WAS A PRODUCTION FAULT.
+    //
+    // Adaptive mode adds a CLIENT-SIDE RATE LIMITER on top of the backoff,
+    // and its behaviour is not what the name suggests. From
+    // @smithy/core's DefaultRateLimiter:
+    //
+    //   async acquireTokenBucket(amount) {
+    //     if (!this.enabled) return;
+    //     this.refillTokenBucket();
+    //     while (amount > this.availableTokens) {
+    //       const delay = ((amount - this.availableTokens) / this.fillRate) * 1000;
+    //       await new Promise((resolve) => setTimeoutFn(resolve, delay));
+    //       this.refillTokenBucket();
+    //     }
+    //     ...
+    //   }
+    //
+    // Three properties of that, each bad here and worse together:
+    //
+    //   1. IT SLEEPS BEFORE THE REQUEST IS SENT. No socket is open while it
+    //      waits, so socketTimeout cannot see it and neither can anything
+    //      else at the transport layer. A call can spend its entire
+    //      caller-side ceiling in this loop having never reached AWS - which
+    //      is exactly the signature we measured: the full ceiling elapsed,
+    //      $metadata reporting attempts: 2 and totalRetryDelay: 94ms,
+    //      because the limiter's sleep is not retry delay and is not counted.
+    //
+    //   2. IT LATCHES ON AND NEVER OFF. enableTokenBucket() sets enabled =
+    //      true on the first throttling response, and nothing in the file
+    //      ever sets it false again. One throttled burst degrades every
+    //      later call.
+    //
+    //   3. THE CLIENT IS A PROCESS-WIDE SINGLETON (see cachedClient below),
+    //      so the limiter is shared by chat, summaries, transcription and
+    //      filing alike. A sweep firing a burst of background calls could
+    //      therefore slow down somebody's chat reply, with nothing in either
+    //      feature to explain why.
+    //
+    // Standard mode retries with exponential backoff and jitter and NO
+    // pre-send rate limiting, so a throttle arrives as a fast, named
+    // ThrottlingException. That is the outcome worth having: a name tells
+    // somebody to ask AWS for a quota increase, and an unexplained sixty
+    // seconds does not.
+    //
+    // AccessDenied and ValidationException are not retried in either mode,
+    // by design: the first means the key is wrong, revoked or pointed at the
+    // wrong region, and the second means the request is malformed. Retrying
+    // either just burns time.
+    // -----------------------------------------------------------------
+    retryMode: "standard",
   });
 
   return cachedClient;
