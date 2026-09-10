@@ -15,6 +15,7 @@ import { SetupMembersPanel, type SetupAssignablePerson } from "./components/setu
 import { SetupPhasesPanel } from "./components/setup-phases-panel";
 import { SetupProjectArchiveButton } from "./components/setup-project-archive-button";
 import { SetupProjectEditDialog } from "./components/setup-project-edit-dialog";
+import { SetupPlanWithAi } from "./components/setup-plan-with-ai";
 import { SetupProjectCreateForm } from "./components/setup-project-create-form";
 import { SetupDone, SetupStep } from "./components/setup-step";
 import {
@@ -69,8 +70,18 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
     return (
       <PortalPage
         title="New project"
-        description="Start a project for a client. Members, phases and budget groups come next."
+        description="Start from a brief, or fill it in yourself."
       >
+        {/* -----------------------------------------------------------
+            ABOVE THE FORM, because it replaces it rather than assisting
+            it. Somebody who has the brief in an email should not read
+            past a form they are not going to fill in - and somebody who
+            does not have one should meet a single line and then the form.
+            Collapsed until asked for, so it is an offer rather than a
+            detour.
+            ----------------------------------------------------------- */}
+        <SetupPlanWithAi />
+
         <SetupProjectCreateForm clients={clients} />
       </PortalPage>
     );

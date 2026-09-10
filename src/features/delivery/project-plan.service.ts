@@ -6,6 +6,7 @@ import { recordAuditEvent } from "@/lib/audit/audit-log.service";
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from "@/lib/audit/audit-log.types";
 import { database, runInTransaction } from "@/lib/data/kysely-database-client";
 import {
+  AI_CHAT_REQUEST_KINDS,
   PROJECT_STATUSES,
   RATE_BANDS,
   TASK_COLUMNS,
@@ -22,11 +23,19 @@ import { addProjectRepo, setProjectMembersRepo } from "@/lib/data/repositories/p
 import { addTaskRepo } from "@/lib/data/repositories/tasks.repository";
 import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
+import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
+import { converseCeilingFor, converseText } from "@/lib/ai/converse";
 import {
+  ProjectPlanDraftSchema,
   resolveProjectPlan,
   type ProjectPlanDraft,
   type ResolvedProjectPlan,
 } from "@/lib/delivery/project-plan";
+import {
+  buildProjectPlanPrompt,
+  MAX_BRIEF_CHARS,
+  PROJECT_PLAN_SYSTEM_PROMPT,
+} from "@/lib/delivery/project-plan.prompt";
 
 // ===================================================================
 // APPLY A RESOLVED PLAN: ONE TRANSACTION, OR NOTHING
@@ -315,4 +324,120 @@ async function getActiveAssignableUsersRepo(): Promise<{ id: string; name: strin
   // A de-identified account keeps its row and loses its name. It cannot be
   // named in a plan, which is correct - there is nothing to name it by.
   return rows.flatMap((row) => (row.name ? [{ id: row.id, name: row.name }] : []));
+}
+
+// ===================================================================
+// READ A PASTED BRIEF INTO A PLAN
+//
+// The model's half of "Create with AI". Somebody pastes a scope of work, a
+// quote, an email or three lines they typed, and this hands back a plan they
+// can look at. It writes nothing.
+//
+// TWO STEPS, AND THE SECOND DOES NOT TRUST THE FIRST. The model turns prose
+// into names; resolveProjectPlan turns names into ids against catalogues
+// this app read for itself. So a model that invents a client, names a person
+// who left, or answers with something that is not a plan at all cannot get
+// past the second step - the worst it can do is produce a draft that is
+// reported as wrong, which is the outcome a person is here to catch.
+//
+// A MALFORMED REPLY IS A FAILURE, NOT SOMETHING TO SALVAGE. Guessing at a
+// half-parsed plan is how somebody ends up reviewing three tasks when the
+// brief described twelve, and approving it because three looked plausible.
+// ===================================================================
+export async function draftProjectPlanService(
+  brief: string,
+  actor: { id: string; role: UserRole },
+): Promise<ResolvedProjectPlan> {
+  try {
+    if (actor.role !== USER_ROLES.ADMIN) {
+      throw new DisplayErrorMessage("Only an administrator can create a project.");
+    }
+
+    const trimmed = brief.trim();
+
+    if (!trimmed) {
+      throw new DisplayErrorMessage("Paste the project details first.");
+    }
+
+    if (trimmed.length > MAX_BRIEF_CHARS) {
+      throw new DisplayErrorMessage(
+        `That brief is ${trimmed.length.toLocaleString()} characters, and ${MAX_BRIEF_CHARS.toLocaleString()} is the most this can read at once. Trim it to the scope and the tasks.`,
+      );
+    }
+
+    if (!isBedrockConfigured()) {
+      throw new DisplayErrorMessage("AI is not configured on this environment.");
+    }
+
+    const [clients, people] = await Promise.all([
+      getClientsRepo({ includeInactive: false }),
+      getActiveAssignableUsersRepo(),
+    ]);
+
+    const catalogue = {
+      clients: clients.map((client) => ({ id: client.id, name: client.name })),
+      people: people.map((person) => ({ id: person.id, name: person.name })),
+    };
+
+    const prompt = buildProjectPlanPrompt({ brief: trimmed, ...catalogue });
+
+    const result = await converseText({
+      userId: actor.id,
+      kind: AI_CHAT_REQUEST_KINDS.PROJECT_PLAN,
+      system: PROJECT_PLAN_SYSTEM_PROMPT,
+      prompt: prompt.text,
+      maxTokens: PROJECT_PLAN_MAX_TOKENS,
+      timeoutMs: converseCeilingFor(PROJECT_PLAN_MAX_TOKENS),
+    });
+
+    const parsed = ProjectPlanDraftSchema.safeParse(parsePlanReply(result.text));
+
+    if (!parsed.success) {
+      throw new DisplayErrorMessage(
+        "The brief could not be read into a plan. Try again, or say the client, the phases and the tasks more plainly.",
+      );
+    }
+
+    const plan = resolveProjectPlan(parsed.data, catalogue);
+
+    // Truncation is reported alongside the resolver's own warnings rather
+    // than swallowed. A model that could not use a real name because it was
+    // never shown one looks exactly like one that ignored the list.
+    if (prompt.truncated) {
+      plan.warnings.push(
+        "There are more clients or people than could be shown to the model at once, so it may not have used a name that exists. Check the client and the assignees.",
+      );
+    }
+
+    return plan;
+  } catch (error) {
+    throw handleError("draftProjectPlanService", error);
+  }
+}
+
+// A plan for a real project, with room for a description on every task.
+// Larger than the filing decision's 300 by an order of magnitude, because
+// this is the reply rather than a choice from a list.
+const PROJECT_PLAN_MAX_TOKENS = 8_000;
+
+// -------------------------------------------------------------------
+// Tolerant of a fence and of a sentence either side of the object, and of
+// nothing else. The same parser as the timesheet ask box and the filing
+// decision, for the same reason: a reply less structured than an object with
+// braces round it is a genuine failure rather than something to rescue.
+// -------------------------------------------------------------------
+function parsePlanReply(text: string): unknown {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = (fenced ? fenced[1] : text).trim();
+
+  const firstBrace = candidate.indexOf("{");
+  const lastBrace = candidate.lastIndexOf("}");
+
+  if (firstBrace === -1 || lastBrace <= firstBrace) return null;
+
+  try {
+    return JSON.parse(candidate.slice(firstBrace, lastBrace + 1));
+  } catch {
+    return null;
+  }
 }

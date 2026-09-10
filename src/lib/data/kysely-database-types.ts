@@ -110,6 +110,12 @@ export const AI_CHAT_REQUEST_KINDS = {
   // what the app thought about where the note should live. A note in the
   // wrong client's folder is investigated by reading the second.
   MEETING_FILING: "meeting_filing",
+  // Reading a pasted project brief into a plan. Its own kind rather than
+  // sharing 'text_summary': both take a document, but a summary hands back
+  // prose and this hands back a structure that becomes a project. "What did
+  // the model propose to create" is a different question from "what did it
+  // summarise".
+  PROJECT_PLAN: "project_plan",
 } as const;
 
 export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_CHAT_REQUEST_KINDS];
@@ -123,6 +129,7 @@ export const AI_CHAT_REQUEST_KIND_LABELS: Record<AiChatRequestKind, string> = {
   [AI_CHAT_REQUEST_KINDS.TEXT_SUMMARY]: "Text summary",
   [AI_CHAT_REQUEST_KINDS.TRANSCRIPTION]: "Meeting summary",
   [AI_CHAT_REQUEST_KINDS.MEETING_FILING]: "Meeting filing",
+  [AI_CHAT_REQUEST_KINDS.PROJECT_PLAN]: "Project plan",
 };
 
 // -------------------------------------------------------------------
