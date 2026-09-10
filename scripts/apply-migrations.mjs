@@ -45,12 +45,25 @@ import pg from "pg";
 // -------------------------------------------------------------------
 // Migrations that destroy data. Never applied unless named.
 //
-// This one drops the timesheet summary and report tables. That is correct
-// for any environment running current code - the features were removed -
-// but "correct" and "reversible" are different things, and the rows in
-// those tables cannot be reconstructed.
+// ADD TO THIS SET WHENEVER A MIGRATION DROPS ANYTHING. It is the only thing
+// standing between `--apply` and a table, and it is easy to forget - 024 was
+// written and shipped before it was listed here, which meant an ordinary
+// `--apply` would have dropped two tables with no gate at all.
+//
+//   010  drops the timesheet summary and report tables. Correct for any
+//        environment running current code - the features were removed - but
+//        "correct" and "reversible" are different things, and timesheet_report
+//        rows cannot be reconstructed. Export before running.
+//
+//   024  drops teams and team_members, the team_role type, and the team
+//        columns on user_invitations and audit_logs. Correct for the same
+//        reason - teams are gone from the base - and equally final: the
+//        memberships are the data.
 // -------------------------------------------------------------------
-const DESTRUCTIVE = new Set(["010_drop_timesheet_summary_and_report.sql"]);
+const DESTRUCTIVE = new Set([
+  "010_drop_timesheet_summary_and_report.sql",
+  "024_drop_teams.sql",
+]);
 
 const databaseUrl = process.env.DATABASE_URL;
 
