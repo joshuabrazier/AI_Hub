@@ -113,7 +113,8 @@ export function AiChatLogTable({ page }: { page: AiChatLogPageDTO }) {
           </span>
           <p className="mt-3 text-sm font-medium text-foreground">Nothing to show</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Requests appear here as soon as somebody uses AI chat.
+            Requests appear here as soon as anything asks the model - a chat turn, a meeting or text
+            summary, a filing decision or a timesheet question.
           </p>
         </div>
       ) : (

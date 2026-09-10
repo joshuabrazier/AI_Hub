@@ -5,6 +5,7 @@ import { FolderKanban, ListTodo } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PortalPage from "@/features/layout/portal-page";
 import { requireUser } from "@/lib/auth/session-auth-server";
+import { USER_ROLES } from "@/lib/data/kysely-database-types";
 import {
   PROJECT_STATUSES,
   PROJECT_STATUS_LABELS,
@@ -43,6 +44,11 @@ export default async function DeliveryProjectsPage({ eyebrow }: { eyebrow: strin
   // are built from.
   const user = await requireUser();
 
+  // The empty state differs: an admin on no projects has something to DO
+  // about it, and telling them to ask an administrator is telling them to ask
+  // themselves.
+  const isAdmin = user.role === USER_ROLES.ADMIN;
+
   const [projects, myWork] = await Promise.all([getMyProjectsService(), getMyWorkService()]);
 
   return (
@@ -58,7 +64,11 @@ export default async function DeliveryProjectsPage({ eyebrow }: { eyebrow: strin
         <BoardEmptyState
           icon={<FolderKanban size={18} aria-hidden="true" />}
           title="You are not on any projects yet"
-          detail="Projects appear here once an administrator adds you to one. From there you get its board, and you can log your time against its tasks."
+          detail={
+            isAdmin
+              ? "This lists the projects you are a member of, which is the working set rather than everything. Create one, or add yourself to an existing project from its setup screen."
+              : "Projects appear here once an administrator adds you to one. From there you get its board, and you can log your time against its tasks."
+          }
         />
       ) : (
         <div className="space-y-8">

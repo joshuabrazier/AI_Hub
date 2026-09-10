@@ -45,6 +45,7 @@ import {
   deleteProjectBudgetGroupRepo,
   getProjectBudgetGroupRepo,
   getProjectBudgetGroupsRepo,
+  getAllProjectsRepo,
   getProjectByIdRepo,
   getProjectForMemberRepo,
   getProjectMembersRepo,
@@ -944,6 +945,43 @@ export async function getMyProjectsService(): Promise<ProjectSummaryDTO[]> {
     );
   } catch (error) {
     throw handleError("getMyProjectsService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// EVERY project, for an admin choosing one.
+//
+// WHY THIS EXISTS BESIDE getMyProjectsService. That one is the NAV read and
+// is deliberately memberships-only - an admin on two projects who
+// administers forty wants the two. It is the wrong read for a PICKER, and
+// the budget report was using it: an admin who was not a member of a project
+// had no way to open its report at all, while the page told them those
+// projects "are reached from their own board" - a link that had been removed
+// from the board. Two wrongs pointing at each other.
+//
+// ADMIN ONLY, because the one screen that picks from it is. The budget
+// report itself guards on requireRatesAdmin, so a narrower list here would
+// hide projects from somebody the service would then happily serve.
+//
+// ARCHIVED PROJECTS ARE INCLUDED, unlike the nav read. Archiving is this
+// module's soft delete and the report is where somebody asks what a finished
+// project cost - excluding them would hide exactly the ones worth reporting
+// on. The nav excludes them because a sidebar that keeps every project
+// anybody has ever finished grows without limit; a picker has a search box.
+//
+// `canEditTasks` is the admin's blanket true. It is not a membership answer
+// here - there may be no membership row - and the DTO carries it because
+// every consumer of ProjectSummaryDTO expects it.
+// -------------------------------------------------------------------
+export async function getAllProjectsForAdminService(): Promise<ProjectSummaryDTO[]> {
+  try {
+    const user = await requireUserRole([USER_ROLES.ADMIN]);
+
+    const projects = await getAllProjectsRepo({ sort: "alphabetical", includeArchived: true });
+
+    return projects.map((project) => mapProjectSummary(project, canEditProjectTasks(user.role, false)));
+  } catch (error) {
+    throw handleError("getAllProjectsForAdminService", error);
   }
 }
 

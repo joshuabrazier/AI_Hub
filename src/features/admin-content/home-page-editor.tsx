@@ -648,7 +648,7 @@ function FeaturesSection({ features, isIgnored }: { features: LandingFeatures; i
                 name={`items.${index}.title`}
                 id={`feature-${index}-title`}
                 label="Title"
-                placeholder="e.g. Teams and membership"
+                placeholder="e.g. Projects and membership"
                 disabled={isPending}
               />
               <FormTextareaField

@@ -41,8 +41,8 @@ export const DEFAULT_LANDING_HIGHLIGHTS: LandingHighlights = [
   },
   {
     icon: "users",
-    title: "Organised by team",
-    body: "Group people the way your work is actually structured, and give each team its own manager.",
+    title: "Organised by project",
+    body: "People are put on the projects they work on, and a project lead runs the board for theirs.",
   },
   {
     icon: "lock",
@@ -62,13 +62,13 @@ export const DEFAULT_LANDING_FEATURES: LandingFeatures = {
   items: [
     {
       icon: "users",
-      title: "Teams and membership",
-      description: "Group people the way the work is structured, and hand each team to the manager who runs it.",
+      title: "Projects and membership",
+      description: "People are added to the projects they work on, and a lead runs the board for theirs.",
     },
     {
       icon: "shield",
-      title: "Invite-only accounts",
-      description: "Nobody signs themselves up. Staff carry mandatory two-factor, and members can opt in to it.",
+      title: "Sign in with Microsoft",
+      description: "Accounts come from your own directory, on the domains you allow. No separate password to manage.",
     },
     {
       icon: "messages",
@@ -78,7 +78,7 @@ export const DEFAULT_LANDING_FEATURES: LandingFeatures = {
     {
       icon: "lock",
       title: "Access control",
-      description: "Admins, team managers and members each see exactly their own scope, enforced server-side.",
+      description: "Admins, managers and members each see exactly their own scope, enforced server-side.",
     },
     {
       icon: "activity",

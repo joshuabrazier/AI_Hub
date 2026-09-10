@@ -30,7 +30,9 @@ export default async function AdminDashboardPage() {
       <SignInSuccessToast />
 
       {/* Headline counts. Each one links to the page that owns it. */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* Three, since the Teams tile went. Sized to what is here rather
+          than left at four, which put a quarter-width hole on the right. */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         <StatTile
           icon={Users}
           value={dashboard.stats.activeMembers}

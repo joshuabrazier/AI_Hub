@@ -19,7 +19,11 @@ export type EmailPreview = {
 // Placeholder links and data used purely to render the previews. Nothing here
 // touches a real account, and none of it leaves this page.
 const SAMPLE = {
-  inviteUrl: "https://portal.example/accept-invite/sample-token",
+  // /sign-in, because that is what generateInvitationLink actually sends
+  // now: the token-bearing accept-invite flow went with password sign-in, and
+  // a preview showing /accept-invite/<token> describes an email nobody has
+  // received for months.
+  inviteUrl: "https://portal.example/sign-in",
   verifyUrl: "https://portal.example/verify-email?token=sample-token",
   portalUrl: "https://portal.example/portal",
 };
@@ -38,7 +42,7 @@ export function buildEmailPreviews(): EmailPreview[] {
       key: "invitation",
       name: "Invitation",
       audience: "Anyone being invited to the product",
-      trigger: "When an admin invites somebody from the Users screen. Sign-up is invite-only, so every account starts here.",
+      trigger: "When an admin invites somebody from the Users screen. An invitation is not a gate - anybody in the tenant on an allowed domain gets an account on first sign-in - it sets the role they land with.",
       subject: "You have been invited",
       html: AdminUserInvitationEmailTemplate({
         inviteUrl: SAMPLE.inviteUrl,

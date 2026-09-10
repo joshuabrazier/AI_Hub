@@ -14,7 +14,7 @@ export default async function AdminContentPage() {
         <PortalPage
           eyebrow="Admin"
           title="Site content"
-          description="Edit your contact details, the text on your public pages, and the documents members sign. Changes go live as soon as you save. The home page has its own editor."
+          description="Edit your contact details and the text on your public pages - About, Privacy policy and Terms. Changes go live as soon as you save. The home page has its own editor."
         >
           <div className="space-y-6">
             <ContactDetailsForm contact={content.contact} />

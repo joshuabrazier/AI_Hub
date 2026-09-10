@@ -142,11 +142,16 @@ export function ProductivityChart({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Week stepping is links, not state: a week is a real URL that can
-                be bookmarked and sent to the person whose week it is. */}
+            {/* Stepping is links, not state: a period is a real URL that can
+                be bookmarked and sent to the person whose period it is.
+
+                THE LABELS NAME THE GRANULARITY rather than saying "week".
+                These step by whatever is selected - week, fortnight, month or
+                year - so a screen reader was told "Previous week" while the
+                button moved a year. */}
             <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
               <Button asChild variant="ghost" size="icon" className="size-8">
-                <Link href={previousHref} aria-label="Previous week" scroll={false}>
+                <Link href={previousHref} aria-label={`Previous ${period.granularity}`} scroll={false}>
                   <ChevronLeft aria-hidden />
                 </Link>
               </Button>
@@ -155,14 +160,14 @@ export function ProductivityChart({
 
               {period.hasNext ? (
                 <Button asChild variant="ghost" size="icon" className="size-8">
-                  <Link href={nextHref} aria-label="Next week" scroll={false}>
+                  <Link href={nextHref} aria-label={`Next ${period.granularity}`} scroll={false}>
                     <ChevronRight aria-hidden />
                   </Link>
                 </Button>
               ) : (
                 // Disabled rather than hidden, so the control does not move
-                // around as you step back through the weeks.
-                <Button variant="ghost" size="icon" className="size-8" disabled aria-label="Next week">
+                // around as you step back through the periods.
+                <Button variant="ghost" size="icon" className="size-8" disabled aria-label={`Next ${period.granularity}`}>
                   <ChevronRight aria-hidden />
                 </Button>
               )}

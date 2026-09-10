@@ -17,11 +17,10 @@ export default async function PortalHomePage() {
     <PortalPage
       eyebrow="Your portal"
       title={home.firstName ? `Welcome back, ${home.firstName}` : "Welcome back"}
-      description="Anything waiting for you."
+      description="Where to go next."
     >
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <QuickLinksCard />
-      </div>
+      {/* One card since YourTeamsCard went, so no two-column grid to sit in. */}
+      <QuickLinksCard />
     </PortalPage>
   );
 }

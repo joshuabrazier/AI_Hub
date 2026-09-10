@@ -194,9 +194,13 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
         <SetupPhasesPanel
           projectId={detail.project.id}
           phases={detail.phases}
-          // The server's own answer to "lead or admin", never re-derived
-          // from a role in a component.
-          canEditTasks={detail.project.canEditTasks}
+          // The server's own answer to "lead or admin", never re-derived from
+          // a role in a component - AND the archived check, which it does not
+          // carry: canEditProjectTasks looks at role and lead, never at
+          // status. Without this the banner above says phases cannot be
+          // changed while Add, Rename, Reorder and Delete all stay live, and
+          // the service refuses each one only after somebody has filled it in.
+          canEditTasks={detail.project.canEditTasks && !isArchived}
         />
 
         {/* -----------------------------------------------------------

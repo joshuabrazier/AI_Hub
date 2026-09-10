@@ -5,6 +5,7 @@ import { Clock, Loader2, Paperclip, Pencil, Timer, Trash2, UserRound } from "luc
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { MESSAGES } from "@/lib/constants";
@@ -162,6 +163,7 @@ export function BoardTaskPanel({
   const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editingEntry, setEditingEntry] = useState<TimeEntryDTO | null>(null);
+  const [deletingEntry, setDeletingEntry] = useState<TimeEntryDTO | null>(null);
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
@@ -416,7 +418,7 @@ export function BoardTaskPanel({
                     entry={entry}
                     canEdit={canEditEntry(entry)}
                     onEdit={setEditingEntry}
-                    onDelete={deleteEntry}
+                    onDelete={setDeletingEntry}
                     isDeleting={deletingEntryId === entry.id}
                   />
                 ))}
@@ -562,6 +564,42 @@ export function BoardTaskPanel({
           onSaved={() => void refresh()}
         />
       ) : null}
+
+      {/* -------------------------------------------------------------
+          DELETING AN HOUR ASKS FIRST.
+
+          It did not, and it was the only destructive act in the module that
+          did not: deleting a task, a phase, a rate, a budget group and
+          removing a member are all confirmed. This one went straight from a
+          small trash icon to a hard DELETE - `deleteTimeEntryRepo` removes
+          the row outright, there is no soft delete and no undo - and the
+          hours it takes are what a client is invoiced from.
+
+          The note is named because the note is the part that cannot be
+          reconstructed: the figure could be retyped from a timesheet, the
+          sentence explaining what the time went on could not.
+          ------------------------------------------------------------- */}
+      <ConfirmDialog
+        open={deletingEntry !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingEntry(null);
+        }}
+        title="Delete this time entry?"
+        description={
+          deletingEntry
+            ? `${formatMinutesAsClock(deletingEntry.minutes)} on ${deletingEntry.workDate} will be removed from this task and from the timesheet it was logged on.${
+                deletingEntry.notes ? ` Its note - "${deletingEntry.notes}" - goes with it.` : ""
+              }`
+            : ""
+        }
+        confirmLabel="Delete entry"
+        pendingLabel="Deleting..."
+        isPending={deletingEntryId !== null}
+        onConfirm={() => {
+          if (deletingEntry) deleteEntry(deletingEntry);
+          setDeletingEntry(null);
+        }}
+      />
     </Sheet>
   );
 }

@@ -24,7 +24,6 @@ import {
   UserCircle,
   UserRound,
   Users,
-  UsersRound,
   Wallet,
 } from "lucide-react";
 
@@ -97,13 +96,14 @@ const ADMIN_NAV: NavGroup[] = [
   {
     label: "People",
     items: [
+      // FLAT, NOT A COLLAPSIBLE GROUP. It held Users and Teams; Teams went,
+      // and a disclosure triangle that opens onto one link is a click for
+      // nothing.
       {
-        label: "People",
-        icon: UsersRound,
-        tooltip: "Users and invitations",
-        children: [
-          { label: "Users", href: ROUTES.ADMIN_USERS, icon: Users, tooltip: "Everyone with an account" },
-        ],
+        label: "Users",
+        href: ROUTES.ADMIN_USERS,
+        icon: Users,
+        tooltip: "Everyone with an account, and pending invitations",
       },
     ],
   },
@@ -269,13 +269,16 @@ const ADMIN_NAV: NavGroup[] = [
 
 // -------------------------------------------------------------------
 // Manager - the same shape as the admin area, but every screen is scoped to
-// the teams an admin assigned them to. No platform settings, no other teams.
+// the projects they are a member of. No platform settings.
+//
+// NO "HOME" ITEM. /manage is a redirect to projects now that its teams
+// landing page has gone, so a Home row would be a second way to reach the
+// row directly under it.
 // -------------------------------------------------------------------
 const MANAGER_NAV: NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { label: "Home", href: ROUTES.MANAGE, icon: House, tooltip: "Home" },
       { label: "AI chat", href: ROUTES.MANAGE_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
       {
         label: "Transcription",

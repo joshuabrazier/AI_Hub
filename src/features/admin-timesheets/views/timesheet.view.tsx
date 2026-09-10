@@ -52,7 +52,10 @@ export default async function TimesheetView(request: TimesheetRequest) {
           <ProductivityChart
             series={periodSeries}
             period={period}
-            title="Hours this week"
+            // The period's OWN label, not a hardcoded "week". The default
+            // granularity is a month, and fortnight and year are offered too,
+            // so this card was headed "Hours this week" above a month of bars.
+            title={`Hours - ${period.label}`}
             previousHref={periodHref(ROUTES.ADMIN_TIMESHEETS_ENTRIES, filters, period.previousStart)}
             nextHref={periodHref(ROUTES.ADMIN_TIMESHEETS_ENTRIES, filters, period.nextStart)}
           />
