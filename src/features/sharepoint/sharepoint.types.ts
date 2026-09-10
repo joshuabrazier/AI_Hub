@@ -199,6 +199,13 @@ export type FilingSettingsDTO = {
   maxDepth: number;
   excludedContainerPaths: string[];
 
+  // The folder made inside whichever folder was matched. Always populated,
+  // because unset means the default rather than "no subfolder".
+  subfolderName: string | null;
+  // Set but not a usable folder name, which is worse than unset: it looks
+  // configured and then quietly files everything one level too high.
+  subfolderProblem: string | null;
+
   // Unset is a legitimate permanent answer: anything ambiguous is then left
   // unfiled and reported rather than guessed at.
   fallbackPath: string | null;

@@ -36,20 +36,12 @@ export function AuditDetailsDialog({
             <div className="space-y-4">
               {entry.summary && <p className="text-sm text-foreground">{entry.summary}</p>}
 
-              {(entry.subjectUserName || entry.teamName) && (
+              {entry.subjectUserName && (
                 <dl className="grid gap-2 rounded-lg border border-border p-3 text-sm sm:grid-cols-2">
-                  {entry.subjectUserName && (
-                    <div>
-                      <dt className="text-xs font-medium uppercase text-muted-foreground">Person</dt>
-                      <dd className="text-foreground">{entry.subjectUserName}</dd>
-                    </div>
-                  )}
-                  {entry.teamName && (
-                    <div>
-                      <dt className="text-xs font-medium uppercase text-muted-foreground">Team</dt>
-                      <dd className="text-foreground">{entry.teamName}</dd>
-                    </div>
-                  )}
+                  <div>
+                    <dt className="text-xs font-medium uppercase text-muted-foreground">Person</dt>
+                    <dd className="text-foreground">{entry.subjectUserName}</dd>
+                  </div>
                 </dl>
               )}
 

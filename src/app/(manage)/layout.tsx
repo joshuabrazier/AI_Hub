@@ -14,9 +14,9 @@ import { USER_ROLES } from "@/lib/data/kysely-database-types";
 // role has to be admitted here on purpose.
 //
 // This says only "you may see the manager area". It says nothing about WHICH
-// teams: that is resolved from the session by requireManagementScope /
-// requireTeamManagement inside every service the area calls, never from the
-// team id in the URL.
+// records: that is resolved from the SESSION inside every service the area
+// calls - a project by its membership, everything else by the signed-in
+// person - never from an id in the URL.
 // -------------------------------------------------------------------
 export default async function ManageLayout({ children }: { children: React.ReactNode }) {
   await requireUserRole([USER_ROLES.ADMIN, USER_ROLES.MANAGER]);

@@ -57,13 +57,21 @@ import type { TimesheetProjectOption, TimesheetTaskOption } from "./timesheet-ca
 // the board read - is true, and the service checks again on the write. Both
 // are needed. A screen that offers a button the server refuses is as bad as
 // one that hides a button it would have allowed.
+//
+// USED FROM THE TIMESHEET AND FROM THE BOARD, which is why it is no longer
+// called TimesheetEstimateDialog. It was reachable only from the timesheet,
+// so changing what a card was expected to take meant leaving the board -
+// which is where somebody is standing when they find out it will take
+// longer. Its props are still the catalogue's shapes: the board folds its
+// own single project into one through buildTimesheetCatalogue, so both
+// callers describe a task to it the same way.
 // -------------------------------------------------------------------
 
 type EstimateMode = "project" | "transfer";
 
 const HOURS_STEP = "0.25";
 
-export function TimesheetEstimateDialog({
+export function EstimateAdjustDialog({
   project,
   task,
   onOpenChange,

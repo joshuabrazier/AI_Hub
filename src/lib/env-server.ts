@@ -238,6 +238,14 @@ const serverEnvSchema = z.object({
   // the path as the crawl recorded it.
   // -------------------------------------------------------------------
   SHAREPOINT_FILING_FALLBACK_PATH: z.string().optional(),
+  // The folder created INSIDE whichever folder was matched, so a meeting
+  // note does not land in the middle of a client folder among their
+  // contracts and drawings.
+  //
+  // A NAME, NOT A PATH, and validated as one: notes go exactly one folder
+  // deep. Unset means the default rather than "no subfolder" - an empty
+  // setting is far more likely to be an accident than an instruction.
+  SHAREPOINT_FILING_SUBFOLDER: z.string().optional(),
   // WHICH LIBRARY, when more than one has been nominated for crawling.
   //
   // Only consulted then. One nominated library is the answer on its own, and
@@ -474,6 +482,7 @@ export const envServer = serverEnvSchema.parse({
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
   VAPID_SUBJECT: process.env.VAPID_SUBJECT,
   SHAREPOINT_FILING_FALLBACK_PATH: process.env.SHAREPOINT_FILING_FALLBACK_PATH,
+  SHAREPOINT_FILING_SUBFOLDER: process.env.SHAREPOINT_FILING_SUBFOLDER,
   SHAREPOINT_FILING_LIBRARY: process.env.SHAREPOINT_FILING_LIBRARY,
   SHAREPOINT_FILING_CONTAINER_PATHS: process.env.SHAREPOINT_FILING_CONTAINER_PATHS,
   SHAREPOINT_FILING_MAX_DEPTH: process.env.SHAREPOINT_FILING_MAX_DEPTH,

@@ -12,9 +12,9 @@ import {
 } from "../kysely-database-types";
 
 // -------------------------------------------------------------------
-// Sign-up is invite-only. An invitation optionally carries the team the
-// invitee should land in and the role they take inside it, so acceptance no
-// longer has to infer a group from whoever sent the invite.
+// An invitation says what ROLE the person lands with, and nothing else. It
+// used to carry a team as well; teams are gone from the base, so acceptance
+// applies a role and stops there.
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
@@ -37,10 +37,10 @@ export async function getUserInvitationByTokenRepo(
 // The most recent PENDING invitation for an email. Only pending rows count:
 // an email can have several invitations, and a revoked or expired one is
 // newer than the still-valid one it superseded. Matching on email alone
-// would let the revoked row win on created_at and place the user in its team.
+// would let the revoked row win on created_at and apply its role.
 //
 // Even so, an email lookup is a fallback, not the authority. The link the
-// user actually clicked identifies exactly one invitation, so team placement
+// user actually clicked identifies exactly one invitation, so the role
 // must come from the token row (getUserInvitationByTokenRepo) - that is the
 // only row that can be shown to be the one accepted. Two concurrent pending
 // invitations to the same address are indistinguishable by email.
@@ -98,36 +98,7 @@ export async function getPendingMemberUserInvitationsRepo(db: DBClient = databas
 }
 
 // -------------------------------------------------------------------
-// Pending invitations addressed at a set of teams - what a manager may see,
-// which is the teams they manage rather than one team. Invitations with no
-// team are excluded: they belong to nobody's team scope.
-// -------------------------------------------------------------------
-export async function getPendingInvitationsForTeamsRepo(
-  teamIds: string[],
-  db: DBClient = database,
-): Promise<UserInvitation[]> {
-  try {
-    // An empty `in` list is a SQL syntax error, and an empty scope must
-    // return nothing rather than every pending invitation.
-    if (teamIds.length === 0) return [];
-
-    return await db
-      .selectFrom("userInvitations")
-      .selectAll()
-      .where("teamId", "in", teamIds)
-      .where("status", "=", INVITATION_STATUS.PENDING)
-      .orderBy("createdAt", "desc")
-      .execute();
-  } catch (error) {
-    throw handleError("getPendingInvitationsForTeamsRepo", error);
-  }
-}
-
-// -------------------------------------------------------------------
 // Add an invitation. `role` is the platform role and is server-assigned;
-// teamId/teamRole are optional, and a teamRole without a teamId is rejected
-// by a CHECK constraint rather than silently stored.
-// -------------------------------------------------------------------
 export async function addUserInvitationRepo(
   newUserInvitation: NewUserInvitation,
   db: DBClient = database,

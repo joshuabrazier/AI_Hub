@@ -440,6 +440,47 @@ export function formatMinutesAsHours(minutes: number): string {
 
 // -------------------------------------------------------------------
 // ===================================================================
+// WHERE A DROPPED CARD LANDS
+// ===================================================================
+//
+// The destination column's whole ordered id list, with the moved card at the
+// slot it was dropped in.
+//
+// IT LIVES HERE, NOT IN THE SERVICE, AND THAT IS THE POINT. It was exported
+// from delivery-board.service.ts, which carries `import "server-only"` - so
+// the board could not use it, and showing a drag immediately needed the rule
+// written a second time in a client component. Two implementations of where
+// a card lands is how the card the browser shows and the card the server
+// saved end up one slot apart, which looks like the board jumping.
+//
+// So the SERVICE and the BOARD import the same function: the browser applies
+// it to draw the move at once, the service applies it to the rows, and there
+// is no arrangement in which they can disagree.
+//
+// EVERY INTERESTING CASE IS A BOUNDARY, which is why it is tested directly:
+// a card dropped below the last one, a stale position from a board that has
+// since changed, and a card dragged WITHIN its own column - where removing it
+// before inserting is what stops it landing one slot short of where it was
+// let go.
+//
+// The position is CLAMPED rather than refused. It is an index into a list the
+// browser last saw some milliseconds ago; a drop past the end of a column
+// somebody else has just emptied means "last", and refusing it would undo a
+// drag for a reason nobody could act on.
+// -------------------------------------------------------------------
+export function placeIdAtPosition(
+  orderedIds: readonly string[],
+  taskId: string,
+  position: number,
+): string[] {
+  const without = orderedIds.filter((id) => id !== taskId);
+  const index = Math.min(Math.max(0, Math.trunc(position)), without.length);
+
+  return [...without.slice(0, index), taskId, ...without.slice(index)];
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
 // BUDGET ROLLUP
 // ===================================================================
 //
@@ -508,6 +549,164 @@ export function budgetProgress(budgetMinutes: number, loggedMinutes: number): Bu
     barPercent: Math.min(100, Math.max(0, percentUsed)),
     isOverBudget: remaining < 0,
   };
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
+// CHARGED TIME, SPENT TIME, AND WHAT IT NOW LOOKS LIKE IT WILL TAKE
+// ===================================================================
+//
+// THREE FIGURES, NOT TWO, AND THE THIRD IS THE POINT. `budgetProgress`
+// above answers "how much of the budget is gone", which is the right
+// question for a task card or a per-person pool. It is not enough for a
+// project, because a project has two different numbers that both call
+// themselves the budget:
+//
+//   CHARGED   what the client agreed to pay for. Set once, at the start,
+//             and it does not move because work took longer - that is the
+//             whole nature of a fixed quote.
+//
+//   FORECAST  what it now looks like it will take, which is the sum of the
+//             task estimates and CLIMBS as people revise them. On a project
+//             going badly this is the first number to move, and it moves
+//             long before the logged hours catch up.
+//
+// A bar drawn against charged time alone says "66% spent" on a project
+// already forecast to overrun by a fortnight, and says it right up until it
+// does. A bar drawn against the estimates alone moves the goalposts every
+// time somebody re-estimates, so it reads as healthy forever. Neither is a
+// lie exactly, and neither is any use.
+//
+// So this carries both comparisons and the surfaces draw them together: the
+// filled part is what has been SPENT, and a marker sits where the FORECAST
+// falls. Ideally they and the charged figure coincide; in practice they
+// rarely do, and the gap is the finding.
+//
+// NULL WHEN NOTHING HAS BEEN CHARGED, throughout, for the reason
+// remainingMinutes is null in the two-figure version and an unknown cost is
+// null rather than nought: nobody has said what this project was sold for,
+// which is not the same as it having been sold for nothing. A percentage
+// against nought is Infinity, or a full bar if it is guarded - and both
+// read as "all spent" when the truth is "nobody recorded the quote".
+// -------------------------------------------------------------------
+export type ChargedRollupDTO = {
+  /**
+   * What the client is paying for. Null when nobody has assigned it.
+   *
+   * NOT to be confused with `chargeableCents`, which is money. This is TIME,
+   * and the two are only related through somebody's hourly rate.
+   */
+  chargedMinutes: number | null;
+  loggedMinutes: number;
+  /**
+   * The sum of the task estimates, which is what the work is NOW expected to
+   * take in total. Zero when nothing has been estimated - a real answer
+   * rather than an unknown, because a project with no tasks genuinely has no
+   * forecast rather than a forecast nobody has recorded.
+   */
+  forecastMinutes: number;
+
+  // ---- Spent against charged. The same five fields budgetProgress hands a
+  // ---- bar, so a component can draw either from one habit.
+  remainingMinutes: number | null;
+  overMinutes: number;
+  percentUsed: number | null;
+  barPercent: number;
+  isOverBudget: boolean;
+
+  // ---- Forecast against charged: the question this type exists for.
+  /** Positive when the work is expected to overrun what was charged. */
+  forecastVarianceMinutes: number | null;
+  forecastPercent: number | null;
+  /** Clamped 0-100, for a marker on the bar rather than a fill. */
+  forecastBarPercent: number;
+  isForecastOverBudget: boolean;
+};
+
+/**
+ * The three-figure rollup, from charged, logged and forecast minutes.
+ *
+ * Percentages are rounded to one decimal place HERE, once, for the reason
+ * budgetProgress rounds: unrounded they render as 66.66666666666667 in one
+ * component and 66.7 in another, and the same project then appears to
+ * disagree with itself.
+ *
+ * A forecast is NOT flagged as an overrun when nothing has been charged.
+ * There is nothing to overrun, and painting it red blames whoever estimated
+ * the work for the omission of whoever was meant to record the quote - the
+ * same line budgetProgress draws about a budget of nought.
+ */
+export function chargedProgress(
+  chargedMinutes: number | null,
+  loggedMinutes: number,
+  forecastMinutes: number,
+): ChargedRollupDTO {
+  const logged = Math.max(0, Math.round(loggedMinutes));
+  const forecast = Math.max(0, Math.round(forecastMinutes));
+
+  // Nought is treated as unassigned rather than as a quote of no time. A
+  // project sold for nothing is not a thing anybody records, and the
+  // alternative is a bar that reads as fully spent the moment it is created.
+  const charged =
+    chargedMinutes === null ? null : Math.max(0, Math.round(chargedMinutes)) || null;
+
+  if (charged === null) {
+    return {
+      chargedMinutes: null,
+      loggedMinutes: logged,
+      forecastMinutes: forecast,
+      remainingMinutes: null,
+      overMinutes: 0,
+      percentUsed: null,
+      barPercent: 0,
+      isOverBudget: false,
+      forecastVarianceMinutes: null,
+      forecastPercent: null,
+      forecastBarPercent: 0,
+      isForecastOverBudget: false,
+    };
+  }
+
+  const remaining = charged - logged;
+  const percentUsed = Math.round((logged / charged) * 1000) / 10;
+  const forecastPercent = Math.round((forecast / charged) * 1000) / 10;
+  const variance = forecast - charged;
+
+  return {
+    chargedMinutes: charged,
+    loggedMinutes: logged,
+    forecastMinutes: forecast,
+    remainingMinutes: remaining,
+    overMinutes: remaining < 0 ? -remaining : 0,
+    percentUsed,
+    barPercent: Math.min(100, Math.max(0, percentUsed)),
+    isOverBudget: remaining < 0,
+    forecastVarianceMinutes: variance,
+    forecastPercent,
+    forecastBarPercent: Math.min(100, Math.max(0, forecastPercent)),
+    isForecastOverBudget: variance > 0,
+  };
+}
+
+/**
+ * Add up what the phases were charged, for a project budgeted per phase.
+ *
+ * NULL WHEN NOT ONE PHASE HAS AN AMOUNT, and a total when any of them do.
+ * That asymmetry is deliberate: a project part-way through being budgeted
+ * has a real partial total worth showing, but one where nobody has started
+ * has no quote at all - and a total of nought would read as "sold for
+ * nothing" rather than "not filled in yet".
+ *
+ * Phases with no amount contribute nothing and are named separately on the
+ * screen, because a total that silently omits three phases is the
+ * plausible-wrong-number this module refuses everywhere else.
+ */
+export function sumChargedMinutes(charged: readonly (number | null)[]): number | null {
+  const assigned = charged.filter((minutes): minutes is number => minutes !== null);
+
+  if (assigned.length === 0) return null;
+
+  return assigned.reduce((total, minutes) => total + Math.max(0, Math.round(minutes)), 0);
 }
 
 // -------------------------------------------------------------------
@@ -2266,6 +2465,29 @@ export type BudgetGroupReportDTO = {
   marginCents?: number | null;
 };
 
+// -------------------------------------------------------------------
+// HOW MANY HOURS BLANKED THE TOTAL.
+//
+// PRESENT ONLY WHERE THE MONEY IS, and absent for the same reason the cents
+// are: a reader who may not see a figure has no business knowing how many
+// entries went into it either.
+//
+// It exists because "Not valued" was the whole answer, and it reads
+// identically for one hour logged before somebody's rate existed and for a
+// project nobody has ever priced. The first is a note to yourself; the second
+// is a rate card to fill in. Nothing on the screen distinguished them, which
+// is how a report doing exactly what it was designed to do came to be
+// reported as broken.
+//
+// PER SIDE, because on a non-billable project every charge snapshot is null
+// by design - a single combined count would be permanently non-zero there and
+// would cry wolf on the one project where a blank charge is correct.
+//
+// PROJECT LEVEL ONLY. A group's blank has the same cause as the project's and
+// the remedy is the same rate card, so repeating the count per row would be
+// the same sentence several times. The project line is where somebody looks
+// first.
+// -------------------------------------------------------------------
 export type BudgetReportDTO = {
   projectId: string;
   projectTitle: string;
@@ -2284,6 +2506,10 @@ export type BudgetReportDTO = {
   chargeableCents?: number | null;
   costCents?: number | null;
   marginCents?: number | null;
+  /** Entries with no charge snapshot. Present only when charge is. */
+  unvaluedChargeEntries?: number;
+  /** Entries with no cost snapshot. Present only when cost is. */
+  unvaluedCostEntries?: number;
 };
 
 // -------------------------------------------------------------------

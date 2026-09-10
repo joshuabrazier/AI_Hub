@@ -56,7 +56,7 @@ export default async function SharepointPage() {
         <PortalPage
           eyebrow="Admin"
           title="SharePoint"
-          description="Catalogue a document library so its structure can be reviewed, and file meeting notes into it. The crawl only reads; filing adds files and, if configured, one holding folder. Nothing is ever renamed, overwritten or deleted."
+          description="Catalogue a document library so its structure can be reviewed, and file meeting notes into it. The crawl only reads. Filing adds a file, a folder for the notes inside whichever folder was matched, and the holding folder if one is configured. Nothing is ever renamed, overwritten or deleted."
         >
           <NominateLibraryForm />
 

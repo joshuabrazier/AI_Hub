@@ -1,5 +1,3 @@
-import type { TeamRole } from "@/lib/data/kysely-database-types";
-
 // -------------------------------------------------------------------
 // Member portal home DTOs
 //
@@ -8,17 +6,8 @@ import type { TeamRole } from "@/lib/data/kysely-database-types";
 // identity, so there is nothing to tamper with.
 // -------------------------------------------------------------------
 
-// A team the member belongs to. `teamRole` is their role INSIDE the team.
-export type PortalTeamDTO = {
-  teamId: string;
-  teamName: string;
-  teamRole: TeamRole;
-  isActive: boolean;
-};
-
 export type PortalHomeDTO = {
   // What to greet them by, from the session. Null when their account has no
   // usable name.
   firstName: string | null;
-  teams: PortalTeamDTO[];
 };

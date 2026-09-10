@@ -10,7 +10,6 @@ import {
   addAdminUserInvitationService,
   cancelAdminInvitationService,
   getAdminUsersService,
-  getInvitableTeamsService,
   resetUserTwoFactorService,
   updateAdminUserService,
 } from "./admin-users.service";
@@ -20,7 +19,6 @@ import {
   AdminUserResponseDTO,
   CancelAdminUserInvitationRequestDTO,
   CancelAdminUserInvitationSchema,
-  InvitableTeamDTO,
   ResetUserTwoFactorRequestDTO,
   ResetUserTwoFactorSchema,
   UpdateAdminUserRequestDTO,
@@ -48,21 +46,6 @@ export async function getAdminUsersAction(): Promise<ServerApiResponse<AdminUser
     return { success: true, data: users } satisfies ServerApiResponse<AdminUserResponseDTO[]>;
   } catch (error) {
     return handleServerApiError("getAdminUsersAction", error);
-  }
-}
-
-// -------------------------------------------------------------------
-// The teams an invitation can place somebody into (admin only).
-// -------------------------------------------------------------------
-export async function getInvitableTeamsAction(): Promise<ServerApiResponse<InvitableTeamDTO[]>> {
-  try {
-    await requireUserRole([USER_ROLES.ADMIN]);
-
-    const teams = await getInvitableTeamsService();
-
-    return { success: true, data: teams } satisfies ServerApiResponse<InvitableTeamDTO[]>;
-  } catch (error) {
-    return handleServerApiError("getInvitableTeamsAction", error);
   }
 }
 

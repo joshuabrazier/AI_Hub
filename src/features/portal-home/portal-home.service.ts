@@ -2,10 +2,8 @@ import "server-only";
 
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
-import { getTeamMembershipsForUserRepo } from "@/lib/data/repositories/team-members.repository";
 import { handleError } from "@/lib/handle-errors";
 
-import { mapDBTeamMembershipToPortalTeamDTO } from "./portal-home.mappers";
 import { PortalHomeDTO } from "./portal-home.types";
 
 // -------------------------------------------------------------------
@@ -25,13 +23,11 @@ export async function getPortalHomeService(): Promise<PortalHomeDTO> {
   try {
     const user = await requireUserRole([USER_ROLES.MEMBER]);
 
-    const memberships = await getTeamMembershipsForUserRepo(user.id);
 
     const firstName = user.name?.trim().split(" ")[0] || null;
 
     return {
       firstName,
-      teams: memberships.map(mapDBTeamMembershipToPortalTeamDTO),
     };
   } catch (error) {
     throw handleError("getPortalHomeService", error);

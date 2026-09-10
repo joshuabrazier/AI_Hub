@@ -5,9 +5,10 @@ import { handleError } from "@/lib/handle-errors";
 import { STAFF_ROLES, USER_ROLES, UpdateUser, User } from "../kysely-database-types";
 
 // -------------------------------------------------------------------
-// Every person is a user - there is no separate member profile table. Which
-// teams a user belongs to is a team_members question, so it lives in
-// team-members.repository, not here.
+// Every person is a user - there is no separate member profile table, and no
+// grouping table either: teams were removed from the base, and what a person
+// can reach is decided by their role plus the project memberships in
+// projects.repository.
 //
 // Role literals always come from USER_ROLES / STAFF_ROLES. Spelling a role
 // out as a string would compile happily and then match nothing the next time

@@ -12,45 +12,35 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { MESSAGES } from "@/lib/constants";
-import { TEAM_ROLE_OPTIONS, USER_ROLES, USER_ROLE_LABELS, USER_ROLE_OPTIONS } from "@/lib/data/kysely-database-types";
+import { USER_ROLES, USER_ROLE_LABELS, USER_ROLE_OPTIONS } from "@/lib/data/kysely-database-types";
 
 import { addAdminUserInvitationAction } from "../admin-users.actions";
 import {
   AddAdminUserInvitationRequestDTO,
   AddAdminUserInvitationSchema,
-  InvitableTeamDTO,
 } from "../admin-users.types";
 
 type AdminUserInvitationDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  invitableTeams: InvitableTeamDTO[];
 };
 
 type FormValues = AddAdminUserInvitationRequestDTO;
-
-// The select has no "none" value of its own, so a sentinel stands in for
-// "no team". It is mapped back to undefined before submitting, and never
-// reaches the server.
-const NO_TEAM = "__none__";
 
 const DEFAULT_VALUES: FormValues = {
   name: "",
   email: "",
   userRole: USER_ROLES.MEMBER,
-  teamId: undefined,
-  teamRole: undefined,
 };
 
 // -------------------------------------------------------------------
 // Invite somebody to the product.
 //
-// The platform role decides which AREA they land in; the optional team and
-// team role decide what they can reach inside it. Both are only proposals
-// here - the server re-checks the team exists and is active, and assigns the
-// role itself.
+// The platform role decides which AREA they land in, and it is the only thing
+// an invitation carries: it used to propose a team as well, and teams are gone
+// from the base. The role is a proposal here - the server assigns it.
 // -------------------------------------------------------------------
-export function AdminUsersInvitationDialog({ open, onOpenChange, invitableTeams }: AdminUserInvitationDialogProps) {
+export function AdminUsersInvitationDialog({ open, onOpenChange }: AdminUserInvitationDialogProps) {
   const [confirmed, setConfirmed] = useState(false);
 
   const form = useForm<FormValues>({
@@ -58,15 +48,8 @@ export function AdminUsersInvitationDialog({ open, onOpenChange, invitableTeams 
     defaultValues: DEFAULT_VALUES,
   });
 
-  const { name, email, userRole, teamId } = useWatch({ control: form.control });
-
-  const hasTeam = !!teamId && teamId !== NO_TEAM;
+  const { name, email, userRole } = useWatch({ control: form.control });
   const canSubmit = !!name?.trim() && !!email?.trim() && !!userRole && confirmed;
-
-  const teamOptions = [
-    { value: NO_TEAM, label: "No team" },
-    ...invitableTeams.map((team) => ({ value: team.id, label: team.name })),
-  ];
 
   const resetForm = () => {
     form.reset(DEFAULT_VALUES);
@@ -82,18 +65,7 @@ export function AdminUsersInvitationDialog({ open, onOpenChange, invitableTeams 
   const onSubmit = (values: FormValues) =>
     submit(
       values,
-      () => {
-        // Map the sentinel back to "no team", and drop the team role with it -
-        // a team role on its own is rejected by both the schema and the
-        // database, so it must never be sent.
-        const teamChosen = values.teamId && values.teamId !== NO_TEAM ? values.teamId : undefined;
-
-        return addAdminUserInvitationAction({
-          ...values,
-          teamId: teamChosen,
-          teamRole: teamChosen ? values.teamRole : undefined,
-        });
-      },
+      () => addAdminUserInvitationAction(values),
       MESSAGES.USER_INVITATION_SENT,
     );
 
@@ -127,23 +99,8 @@ export function AdminUsersInvitationDialog({ open, onOpenChange, invitableTeams 
         name="userRole"
         label="Role"
         options={USER_ROLE_OPTIONS}
-        description="Admins see everything. Managers see the teams they are assigned to. Members see their own portal."
+        description="Admins see everything. Managers see the projects they are on. Members see their own portal."
       />
-
-      {/* Optional team placement. Managers get nothing to manage until an
-          admin puts them in a team as its manager, so this is where that
-          usually starts. */}
-      <FormSelectField
-        control={form.control}
-        name="teamId"
-        label="Team (optional)"
-        placeholder="No team"
-        options={teamOptions}
-      />
-
-      {hasTeam && (
-        <FormSelectField control={form.control} name="teamRole" label="Role in this team" options={TEAM_ROLE_OPTIONS} />
-      )}
 
       <div className="rounded-md border p-3">
         <p className="text-sm text-muted-foreground">

@@ -1,7 +1,7 @@
 import z from "zod";
 
 import { TABLE_ID_LENGTH } from "@/lib/constants";
-import { TEAM_ROLES, USER_ROLES, type TeamRole, type UserRole } from "@/lib/data/kysely-database-types";
+import { USER_ROLES, type UserRole } from "@/lib/data/kysely-database-types";
 
 // -------------------------------------------------------------------
 // Admin Users
@@ -30,16 +30,6 @@ export const ADMIN_USER_DISPLAY_STATUS = {
 
 export type AdminUserDisplayStatusType = (typeof ADMIN_USER_DISPLAY_STATUS)[keyof typeof ADMIN_USER_DISPLAY_STATUS];
 
-// A team the person belongs to, with the role they hold inside it. Shown so an
-// admin can see a manager's actual scope: a manager with no 'manager' team
-// membership can reach /manage but sees nothing there, and that is otherwise
-// impossible to spot from this screen.
-export type AdminUserTeamDTO = {
-  teamId: string;
-  teamName: string;
-  teamRole: TeamRole;
-};
-
 export type AdminUserResponseDTO = {
   id: string;
   name: string;
@@ -47,10 +37,6 @@ export type AdminUserResponseDTO = {
   userRole: UserRole;
   userOrInvitation: UserOrInvitationType;
   displayStatus: AdminUserDisplayStatusType;
-  // Empty for an invitation that names no team, and for anyone in no team.
-  teams: AdminUserTeamDTO[];
-  // Denormalised for the table's search/sort, which work on strings.
-  teamNames: string;
   // Whether they have an app-level second factor set up. Drives whether the
   // reset is offered at all - there is nothing to reset otherwise, and an
   // always-visible destructive button invites a pointless click.
@@ -87,25 +73,14 @@ export const UpdateAdminUserSchema = z.object({
 export type UpdateAdminUserRequestDTO = z.infer<typeof UpdateAdminUserSchema>;
 
 // -------------------------------------------------------------------
-// Invite somebody. The invitation may optionally place them into a team with
-// a team role on acceptance.
-//
-// teamRole only means anything alongside a teamId, matching the CHECK
-// constraint on user_invitations - rejected here as well so the failure is a
-// field error on the form rather than a database error the admin cannot read.
+// Invite somebody. The invitation says what ROLE they land with; teams are
+// gone, so there is nothing else to pre-assign.
 // -------------------------------------------------------------------
-export const AddAdminUserInvitationSchema = z
-  .object({
-    name: z.string().trim().min(1, "Name is required").max(120),
-    email: z.email(),
-    userRole: z.enum(USER_ROLES),
-    teamId: z.string().min(1).optional(),
-    teamRole: z.enum(TEAM_ROLES).optional(),
-  })
-  .refine((data) => data.teamRole === undefined || data.teamId !== undefined, {
-    message: "Choose a team before choosing a role in it",
-    path: ["teamRole"],
-  });
+export const AddAdminUserInvitationSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(120),
+  email: z.email(),
+  userRole: z.enum(USER_ROLES),
+});
 
 export type AddAdminUserInvitationRequestDTO = z.infer<typeof AddAdminUserInvitationSchema>;
 
@@ -114,10 +89,3 @@ export const CancelAdminUserInvitationSchema = z.object({
 });
 
 export type CancelAdminUserInvitationRequestDTO = z.infer<typeof CancelAdminUserInvitationSchema>;
-
-// A team an admin can drop an invitee into. Active teams only - a retired team
-// must not gain new members.
-export type InvitableTeamDTO = {
-  id: string;
-  name: string;
-};

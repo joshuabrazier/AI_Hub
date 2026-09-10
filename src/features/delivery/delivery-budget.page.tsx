@@ -63,7 +63,8 @@ export default async function DeliveryBudgetPage({ projectId }: { projectId?: st
           <CardContent>
             {projects.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                You are not a member of any project. Open a project and follow the budget report link on it.
+                You are not a member of any project, so there is nothing to report on yet. An
+                administrator can add you to one.
               </p>
             ) : (
               <ul className="space-y-2 text-sm">

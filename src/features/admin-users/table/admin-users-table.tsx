@@ -14,7 +14,6 @@ import { cancelAdminInvitationAction } from "../admin-users.actions";
 import {
   ADMIN_USER_DISPLAY_STATUS,
   AdminUserResponseDTO,
-  InvitableTeamDTO,
   USER_OR_INVITATION,
 } from "../admin-users.types";
 import { AdminUsersEditDialog } from "./admin-users-edit-dialog";
@@ -23,7 +22,6 @@ import { getAdminUsersColumns } from "./admin-users-columns";
 
 type AdminUsersTableProps = {
   users: AdminUserResponseDTO[];
-  invitableTeams: InvitableTeamDTO[];
 };
 
 const USER_SORTS: DataTableSort<AdminUserResponseDTO>[] = [
@@ -34,13 +32,13 @@ const USER_SORTS: DataTableSort<AdminUserResponseDTO>[] = [
 // Hoisted so the reference is stable across renders: passed inline these would
 // be a new array/object every render, churning the table's filtered-data memo
 // and bouncing it back to page 1 whenever a dialog opens.
-const USER_SEARCH_KEYS: (keyof AdminUserResponseDTO & string)[] = ["name", "email", "teamNames"];
+const USER_SEARCH_KEYS: (keyof AdminUserResponseDTO & string)[] = ["name", "email"];
 
 const USER_ACTIVE_FILTER: DataTableToggle<AdminUserResponseDTO> = {
   predicate: (user) => user.displayStatus === ADMIN_USER_DISPLAY_STATUS.Active,
 };
 
-export function AdminUsersTable({ users, invitableTeams }: AdminUsersTableProps) {
+export function AdminUsersTable({ users }: AdminUsersTableProps) {
   const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<AdminUserResponseDTO | null>(null);
@@ -54,10 +52,6 @@ export function AdminUsersTable({ users, invitableTeams }: AdminUsersTableProps)
       .map((status) => ({ value: status, label: status }))
       .sort((a, b) => a.label.localeCompare(b.label));
 
-    // No team facet: a facet's getValue resolves to ONE value per row, and
-    // membership is many-to-many, so filtering by team would quietly hide
-    // anyone whose other teams were not the one picked. Searching by team name
-    // is exact instead - `teamNames` carries every team the person is in.
     return [
       { id: "role", label: "Role", options: roles, getValue: (user) => user.userRole },
       { id: "status", label: "Status", options: statuses, getValue: (user) => user.displayStatus },
@@ -107,8 +101,8 @@ export function AdminUsersTable({ users, invitableTeams }: AdminUsersTableProps)
       />
 
       {/* Inviting is not "create the selected row" - it takes the assignable
-          teams rather than a person - so it stays its own dialog. */}
-      <AdminUsersInvitationDialog open={addOpen} onOpenChange={setAddOpen} invitableTeams={invitableTeams} />
+          an invitation rather than a person - so it stays its own dialog. */}
+      <AdminUsersInvitationDialog open={addOpen} onOpenChange={setAddOpen} />
 
       <RowDialog
         row={selectedUser}
