@@ -8,13 +8,19 @@ import { cn } from "@/lib/utils";
 // the area, e.g. "Admin" or "Client". Use `size="narrow"` for centered
 // form-style pages, `size="default"` for wide table/content pages.
 //
-// `size="full"` drops the max width entirely. It is for a screen that is a
-// WORKSPACE rather than a document - one that owns its own internal columns
-// and measures its own reading width, so a cap out here only strands the
-// whole thing in the middle of a wide monitor. The chat is the case it was
-// added for: capping it at max-w-7xl put a 400px gap to the left of the
-// conversation list and left the transcript off-centre. Do not reach for it
-// to make a table or a form wider - those want the cap.
+// `size="full"` is EDGE TO EDGE: no max width and no gutters. It is for a
+// screen that is a WORKSPACE rather than a document - one that owns its own
+// internal columns and measures its own reading width, so both the cap and
+// the padding out here only strand it in the middle of the window. The chat
+// is the case it was added for: max-w-7xl put a 400px gap to the left of the
+// conversation list, and the gutters then drew the whole thing as a card
+// floating on the page rather than as the screen it is. Do not reach for it
+// to make a table or a form wider - those want the cap and the gutters.
+//
+// It expects `headerHidden`. A full page with a visible header would run the
+// eyebrow and title flush into the window edge, which is not a look anything
+// here wants; if a workspace ever needs a header, give the header its own
+// gutters rather than handing the gutters back to the whole page.
 // -------------------------------------------------------------------
 export default function PortalPage({
   eyebrow = "Admin",
@@ -71,12 +77,15 @@ export default function PortalPage({
   return (
     <div
       className={cn(
-        "px-4 sm:px-6 lg:px-10",
+        // Gutters, unless the page is edge to edge - see the note at the top.
+        size !== "full" && "px-4 sm:px-6 lg:px-10",
         // 5rem is the fixed navbar, the same offset CenteredTopLayout uses.
-        fill ? "flex h-[calc(100dvh-5rem)] flex-col overflow-hidden pb-2" : "py-8",
+        fill ? "flex h-[calc(100dvh-5rem)] flex-col overflow-hidden" : "py-8",
         // With no header there is nothing to sit under, so the content starts
-        // near the top rather than a header's distance down.
-        fill && (headerHidden ? "pt-3" : "pt-6"),
+        // near the top rather than a header's distance down. An edge-to-edge
+        // page starts at the top itself, and its own bottom edge is a control
+        // with its own spacing, so it takes neither.
+        fill && size !== "full" && (headerHidden ? "pt-3 pb-2" : "pt-6 pb-2"),
       )}
     >
       <div

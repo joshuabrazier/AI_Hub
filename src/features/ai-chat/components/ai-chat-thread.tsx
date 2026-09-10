@@ -28,6 +28,12 @@ import { AI_CHAT_ROLES } from "@/lib/data/kysely-database-types";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+import {
+  ASSISTANT_NAME,
+  IS_ASSISTANT_NAMED,
+  assistantObject,
+  assistantSubject,
+} from "../assistant-identity";
 import { removeAiChatAttachmentAction } from "../ai-chat.actions";
 import {
   MAX_MESSAGE_CHARS,
@@ -387,8 +393,15 @@ export function AiChatThread({
               <Sparkles size={24} aria-hidden="true" />
             </span>
 
+            {/* WHERE THE NAME IS ACTUALLY LEARNED. Everywhere else it is
+                either fine print under the composer or a divider halfway up
+                a thread, so a deployment that names its assistant and only
+                changes those has named it nowhere anybody looks. "anything"
+                is not filler either - it repeats the line the system prompt
+                opens with, because the commonest thing people got wrong
+                about this feature was assuming it only knew the portal. */}
             <h2 className="mt-4 font-heading text-xl font-semibold text-foreground">
-              What would you like to know?
+              {IS_ASSISTANT_NAMED ? `Ask ${ASSISTANT_NAME} anything` : "What would you like to know?"}
             </h2>
 
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
@@ -420,7 +433,7 @@ export function AiChatThread({
                     <span className="h-px flex-1 bg-border" />
                     <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Archive size={12} aria-hidden="true" />
-                      Everything above is summarised for the assistant
+                      Everything above is summarised for {assistantObject()}
                     </span>
                     <span className="h-px flex-1 bg-border" />
                   </li>
@@ -651,7 +664,7 @@ export function AiChatThread({
             instructions above it. Somebody who already knows Enter sends
             should not read it on every visit. */}
         <p className="mt-2 text-center text-xs text-muted-foreground">
-          The assistant can be wrong. Check anything that matters against the screen it came from.
+          {assistantSubject()} can be wrong. Check anything that matters against the screen it came from.
         </p>
       </div>
     </div>

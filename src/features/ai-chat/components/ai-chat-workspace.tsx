@@ -41,22 +41,24 @@ import { AiChatThread } from "./ai-chat-thread";
 // every render, so putting it in the URL grants nothing.
 //
 // THE TWO COLUMNS ARE TWO SURFACES, not one surface with a gap in it. The
-// list is `bg-secondary`, the thread is `bg-card`, and there is a border
-// between them - the previous version separated them with whitespace alone,
-// which on a wide monitor is one field of white with some links floating in
-// it.
+// list is `bg-secondary`; the thread paints nothing and so wears the page's
+// own background; and there is a border between them. The previous version
+// separated them with whitespace alone, which on a wide monitor is one field
+// of white with some links floating in it.
 //
 // `bg-muted` IS THE TRAP HERE, and it is worth naming because it is the
 // obvious choice for a quiet panel. Check the tokens in globals.css: in the
-// light theme it is #f6fafb against a #ffffff card, which is a step you
-// cannot see, and in the dark theme it is #131f22 - the SAME VALUE as
-// `--card`. A muted panel is invisible in one theme and absent in the
-// other. `secondary` is the only neutral surface that steps away from the
-// card in both.
+// light theme it is #f6fafb, a step off #ffffff that you cannot see, and in
+// the dark theme it is #131f22 - the SAME VALUE as `--card`. A muted panel
+// is invisible in one theme and, beside a card, absent in the other.
+// `secondary` is the only neutral surface that steps away from both the
+// background and the card in both themes.
 //
-// The open conversation's row is `bg-card` - the thread's own surface - so
-// the selection reads as the leading edge of the panel it opens rather than
-// as one more highlight colour.
+// The open conversation's row is `bg-background` - the thread's own surface
+// - so the selection reads as the leading edge of the column it opens rather
+// than as one more highlight colour. If the thread is ever given a surface
+// of its own, this and the New chat button have to move with it or the
+// selected row will point at a colour that is no longer next to it.
 //
 // THE LIST COLLAPSES, and it is two different controls rather than one:
 // an inline rail that animates to nothing on md and up, and a Sheet on
@@ -176,7 +178,12 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card">
+      {/* NO CARD AROUND THIS. The chat is the screen, not an object sitting
+          on one - a border and a radius here drew it as a panel floating in
+          the middle of the window, with a strip of page visible around all
+          four sides. The two surfaces and the divider between them are what
+          separate the columns; the outline was never doing that work. */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Conversations, inline. Quieter than the thread beside it on
             purpose: this is the way back to something, not the thing being
             read.
@@ -403,7 +410,7 @@ function ConversationList({
           onClick={onNewChat}
           disabled={isPending}
           variant="outline"
-          className="w-full justify-start rounded-xl bg-card"
+          className="w-full justify-start rounded-xl bg-background"
         >
           <MessageSquarePlus size={16} aria-hidden="true" />
           New chat
@@ -435,8 +442,8 @@ function ConversationList({
                       // selection reads as continuous with the panel it
                       // opens rather than as another highlight.
                       isActive
-                        ? "bg-card font-medium text-foreground shadow-sm"
-                        : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
+                        ? "bg-background font-medium text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
                     )}
                   >
                     {subject.title}
