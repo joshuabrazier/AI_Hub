@@ -27,7 +27,7 @@ import {
   removeProjectMemberAction,
   updateProjectMemberAction,
 } from "../delivery-setup.actions";
-import type { ProjectMemberDTO } from "../delivery.types";
+import { memberLabel, type ProjectMemberDTO } from "../delivery.types";
 
 // -------------------------------------------------------------------
 // WHO IS ON THE PROJECT, who leads it, and which of their three rate bands
@@ -70,9 +70,6 @@ export type SetupAssignablePerson = {
 // De-identified and unnamed accounts hold valid rows - this app
 // de-identifies dormant accounts in place rather than deleting them - so the
 // name is nullable and something still has to be rendered for them.
-function memberLabel(member: Pick<ProjectMemberDTO, "name" | "email">): string {
-  return member.name ?? member.email ?? "Account with no name on record";
-}
 
 const AddMemberSchema = z.object({
   userId: z.string().min(1, "Choose somebody to add"),

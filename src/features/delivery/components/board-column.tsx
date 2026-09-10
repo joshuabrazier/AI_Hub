@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { TASK_COLUMN_LABELS, type TaskColumn } from "@/lib/data/kysely-database-types";
 import { cn } from "@/lib/utils";
 
-import type { TaskCardDTO } from "../delivery.types";
+import type { ProjectMemberDTO, TaskCardDTO } from "../delivery.types";
 import { BoardTaskCard, type BoardPhaseOption, type MoveTaskHandler } from "./board-task-card";
 
 // -------------------------------------------------------------------
@@ -39,6 +39,8 @@ export function BoardColumn({
   onOpen,
   onLogTime,
   onDelete,
+  onAssign,
+  members,
   onMove,
   onAddTask,
   onDragStart,
@@ -57,6 +59,8 @@ export function BoardColumn({
   onOpen: (task: TaskCardDTO) => void;
   onLogTime: (task: TaskCardDTO) => void;
   onDelete: (task: TaskCardDTO) => void;
+  onAssign: (task: TaskCardDTO, assigneeId: string | null) => void;
+  members: readonly ProjectMemberDTO[];
   onMove: MoveTaskHandler;
   onAddTask: (phaseId: string, boardColumn: TaskColumn) => void;
   onDragStart: (task: TaskCardDTO) => void;
@@ -144,6 +148,8 @@ export function BoardColumn({
               onOpen={onOpen}
               onLogTime={onLogTime}
               onDelete={onDelete}
+              onAssign={onAssign}
+              members={members}
               onMove={onMove}
               onDragStart={onDragStart}
               onDragEnd={onDragEnd}

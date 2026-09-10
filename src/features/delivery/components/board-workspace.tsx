@@ -21,10 +21,11 @@ import {
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import type { ServerApiResponse } from "@/lib/types";
 
-import { deleteTaskAction, moveTaskAction } from "../delivery-board.actions";
+import { deleteTaskAction, moveTaskAction, updateTaskAction } from "../delivery-board.actions";
 import { deletePhaseAction, reorderPhasesAction } from "../delivery-setup.actions";
 import {
   formatMinutesAsClock,
+  memberLabel,
   type BoardDTO,
   type BoardPhaseDTO,
   type BudgetRollupDTO,
@@ -265,6 +266,33 @@ export function BoardWorkspace({
     );
   };
 
+  // -------------------------------------------------------------------
+  // ASSIGNING SOMEBODY, FROM THE BOARD OR THE PANEL.
+  //
+  // One write and a refresh, rather than an optimistic patch: the card shows
+  // a NAME, and the board only holds ids plus the name the server resolved -
+  // so drawing it optimistically would mean looking the name up here, which
+  // is a second answer to what somebody is called. A move is optimistic
+  // because a drag has already visibly happened and snapping back reads as
+  // broken; a menu choice has not.
+  //
+  // The service re-checks the assignee against project_members, so a stale
+  // menu naming somebody since removed is refused in words rather than
+  // written.
+  // -------------------------------------------------------------------
+  const assignTask = (task: TaskCardDTO, assigneeId: string | null) => {
+    if (task.assigneeId === assigneeId) return;
+
+    setPendingTaskId(task.id);
+
+    const who = assigneeId === null ? null : members.find((member) => member.userId === assigneeId);
+
+    run(
+      () => updateTaskAction({ taskId: task.id, assigneeId }),
+      who ? `Assigned to ${memberLabel(who)}` : "Assignee removed",
+    );
+  };
+
   const confirmDeleteTask = () => {
     if (!deletingTask) return;
 
@@ -371,6 +399,8 @@ export function BoardWorkspace({
                   onOpenTask={(task) => setOpenTaskId(task.id)}
                   onLogTime={setLoggingTime}
                   onDeleteTask={setDeletingTask}
+                  onAssignTask={assignTask}
+                  members={members}
                   onMoveTask={moveTask}
                   onAddTask={(phaseId, boardColumn) => setAddingTo({ phaseId, boardColumn })}
                   onRenamePhase={(target) => setPhaseDialog({ phase: target })}
@@ -407,6 +437,7 @@ export function BoardWorkspace({
           onDelete={setDeletingTask}
           onMove={moveTask}
           onAdjustEstimate={setAdjustingTask}
+          onAssign={assignTask}
         />
       ) : null}
 

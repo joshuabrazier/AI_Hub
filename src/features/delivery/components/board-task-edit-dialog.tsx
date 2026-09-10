@@ -15,6 +15,7 @@ import { updateTaskAction } from "../delivery-board.actions";
 import {
   DESCRIPTION_MAX_CHARS,
   TASK_TITLE_MAX_CHARS,
+  memberLabel,
   type ProjectMemberDTO,
   type UpdateTaskRequestDTO,
 } from "../delivery.types";
@@ -171,9 +172,12 @@ export function BoardTaskEditDialog({
           { value: UNASSIGNED, label: "Unassigned" },
           ...members.map((member) => ({
             value: member.userId,
-            // The email is what tells two people with the same name apart,
-            // which is why the DTO carries it.
-            label: member.name ?? member.email ?? "Unnamed member",
+            // memberLabel, so this and the assign menu on the board cannot
+            // call the same person two different things. It also says
+            // "Account with no name on record" rather than the "Unnamed
+            // member" that used to be written out here - the two strings for
+            // one case were a screen apart.
+            label: memberLabel(member),
           })),
         ]}
         description="Only people on this project can be assigned work."

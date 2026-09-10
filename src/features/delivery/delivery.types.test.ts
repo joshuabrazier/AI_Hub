@@ -10,6 +10,7 @@ import {
   budgetProgress,
   byAttention,
   countByColumn,
+  memberLabel,
   visibleWork,
   WORK_CARD_ROWS,
   formatMinutesAsClock,
@@ -298,6 +299,38 @@ describe("visibleWork", () => {
     visibleWork(work);
 
     expect(work).toHaveLength(10);
+  });
+});
+
+describe("memberLabel", () => {
+  // Five screens render a person's name from this. It was written out four
+  // times before, and the four did not agree - two said "Unnamed member" and
+  // two said "Account with no name on record", for the same account.
+  it("uses the name when there is one", () => {
+    expect(memberLabel({ name: "Priya Raman", email: "priya@example.com" })).toBe("Priya Raman");
+  });
+
+  it("falls back to the EMAIL, because that is what tells two people apart", () => {
+    // An id would be correct and useless. Two people called Sam Taylor is the
+    // case this exists for.
+    expect(memberLabel({ name: null, email: "sam@example.com" })).toBe("sam@example.com");
+  });
+
+  it("says something a person can read when the account has neither", () => {
+    // De-identification clears both, and the row still renders somewhere.
+    expect(memberLabel({ name: null, email: null })).toBe("Account with no name on record");
+  });
+
+  it("copes with email being absent rather than null", () => {
+    // The budget group panel passes an object without the key at all.
+    expect(memberLabel({ name: null })).toBe("Account with no name on record");
+  });
+
+  it("does not treat an empty name as missing", () => {
+    // Deliberate: "" is a name somebody stored, and silently replacing it
+    // would hide a data problem rather than show it. If that ever becomes
+    // wrong, it should be fixed where the name is WRITTEN.
+    expect(memberLabel({ name: "", email: "sam@example.com" })).toBe("");
   });
 });
 

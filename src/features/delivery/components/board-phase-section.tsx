@@ -12,7 +12,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TASK_COLUMNS, type TaskColumn } from "@/lib/data/kysely-database-types";
 
-import { formatMinutesAsClock, type BoardPhaseDTO, type PhaseDTO, type TaskCardDTO } from "../delivery.types";
+import {
+  formatMinutesAsClock,
+  type BoardPhaseDTO,
+  type PhaseDTO,
+  type ProjectMemberDTO,
+  type TaskCardDTO,
+} from "../delivery.types";
 import { BoardColumn } from "./board-column";
 import { BoardEmptyState } from "./board-empty-state";
 import type { BoardPhaseOption, MoveTaskHandler } from "./board-task-card";
@@ -50,6 +56,8 @@ export function BoardPhaseSection({
   onOpenTask,
   onLogTime,
   onDeleteTask,
+  onAssignTask,
+  members,
   onMoveTask,
   onAddTask,
   onRenamePhase,
@@ -72,6 +80,8 @@ export function BoardPhaseSection({
   onOpenTask: (task: TaskCardDTO) => void;
   onLogTime: (task: TaskCardDTO) => void;
   onDeleteTask: (task: TaskCardDTO) => void;
+  onAssignTask: (task: TaskCardDTO, assigneeId: string | null) => void;
+  members: readonly ProjectMemberDTO[];
   onMoveTask: MoveTaskHandler;
   onAddTask: (phaseId: string, boardColumn: TaskColumn) => void;
   onRenamePhase: (phase: BoardPhaseDTO) => void;
@@ -192,6 +202,8 @@ export function BoardPhaseSection({
             onOpen={onOpenTask}
             onLogTime={onLogTime}
             onDelete={onDeleteTask}
+            onAssign={onAssignTask}
+            members={members}
             onMove={onMoveTask}
             onAddTask={onAddTask}
             onDragStart={onDragStart}

@@ -23,7 +23,12 @@ import {
 } from "@/lib/data/kysely-database-types";
 import { cn } from "@/lib/utils";
 
-import { formatMinutesAsClock, type TaskCardDTO } from "../delivery.types";
+import {
+  formatMinutesAsClock,
+  type ProjectMemberDTO,
+  type TaskCardDTO,
+} from "../delivery.types";
+import { AssigneeMenuItems } from "./board-assign";
 
 // -------------------------------------------------------------------
 // BoardTaskCard
@@ -83,6 +88,8 @@ export function BoardTaskCard({
   onOpen,
   onLogTime,
   onDelete,
+  onAssign,
+  members,
   onMove,
   onDragStart,
   onDragEnd,
@@ -108,6 +115,9 @@ export function BoardTaskCard({
   onOpen: (task: TaskCardDTO) => void;
   onLogTime: (task: TaskCardDTO) => void;
   onDelete: (task: TaskCardDTO) => void;
+  onAssign: (task: TaskCardDTO, assigneeId: string | null) => void;
+  /** The project's members, for the assign submenu. */
+  members: readonly ProjectMemberDTO[];
   onMove: MoveTaskHandler;
   onDragStart: (task: TaskCardDTO) => void;
   onDragEnd: () => void;
@@ -258,6 +268,27 @@ export function BoardTaskCard({
                   <ArrowDown aria-hidden="true" />
                   Move down
                 </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+
+                {/* ASSIGNMENT, FROM THE BOARD. It used to live only inside
+                    the task panel's edit dialog, behind a button labelled
+                    "Edit" sitting beside the Description heading - so the
+                    commonest thing anybody wants to do to a card was the
+                    hardest to find. A submenu, like "Move to phase", because
+                    the list is as long as the project's membership. */}
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    {task.assigneeName ? `Assigned to ${task.assigneeName}` : "Assign to"}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="max-h-72 overflow-y-auto">
+                    <AssigneeMenuItems
+                      members={members}
+                      assigneeId={task.assigneeId}
+                      onAssign={(assigneeId) => onAssign(task, assigneeId)}
+                    />
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
 
                 <DropdownMenuSeparator />
 

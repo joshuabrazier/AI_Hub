@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { Clock, Loader2, Paperclip, Pencil, Timer, Trash2, UserRound } from "lucide-react";
+import { ChevronDown, Clock, Loader2, Paperclip, Pencil, Timer, Trash2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +30,13 @@ import {
   type TimeEntryDTO,
 } from "../delivery.types";
 import { BoardTaskAttachments } from "./board-task-attachments";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+import { AssigneeMenuItems } from "./board-assign";
 import { BoardTaskEditDialog } from "./board-task-edit-dialog";
 import type { MoveTaskHandler } from "./board-task-card";
 import { BoardTimeEntryDialog } from "./board-time-entry-dialog";
@@ -137,6 +144,7 @@ export function BoardTaskPanel({
   onDelete,
   onMove,
   onAdjustEstimate,
+  onAssign,
 }: {
   task: TaskCardDTO;
   boardColumn: TaskColumn;
@@ -158,6 +166,7 @@ export function BoardTaskPanel({
    * dialog with it mid-edit.
    */
   onAdjustEstimate: (task: TaskCardDTO) => void;
+  onAssign: (task: TaskCardDTO, assigneeId: string | null) => void;
 }) {
   const [detail, setDetail] = useState<TaskDetailDTO | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -312,7 +321,32 @@ export function BoardTaskPanel({
                   <UserRound size={14} aria-hidden="true" />
                   Assignee
                 </dt>
-                <dd className="text-foreground">{card.assigneeName ?? "Unassigned"}</dd>
+                {/* A CONTROL RATHER THAN A LABEL when the viewer may edit.
+                    It read as plain text, which meant the only route to
+                    assignment was the Edit button beside the Description
+                    heading three sections down - a button that edits the
+                    whole task but sits somewhere that says otherwise. */}
+                <dd className="text-foreground">
+                  {canEditTasks ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button type="button" variant="outline" size="sm" className="h-7">
+                          {card.assigneeName ?? "Unassigned"}
+                          <ChevronDown size={14} aria-hidden="true" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="max-h-72 w-56 overflow-y-auto">
+                        <AssigneeMenuItems
+                          members={members}
+                          assigneeId={card.assigneeId}
+                          onAssign={(assigneeId) => onAssign(card, assigneeId)}
+                        />
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    (card.assigneeName ?? "Unassigned")
+                  )}
+                </dd>
               </div>
               <div className="flex items-center gap-2">
                 <dt className="flex items-center gap-1.5 text-muted-foreground">

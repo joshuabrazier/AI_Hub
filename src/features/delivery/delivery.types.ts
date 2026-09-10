@@ -2352,6 +2352,22 @@ export function visibleWork(work: readonly MyWorkItemDTO[]): {
   return { shown, remaining: work.length - shown.length };
 }
 
+// -------------------------------------------------------------------
+// HOW A PERSON READS IN A LIST, when their account may carry neither a name
+// nor an address.
+//
+// ONE DEFINITION. This rule was written out FOUR times across this feature -
+// and the four did not agree: two said "Unnamed member" and two said "Account
+// with no name on record", for the same account, on screens one click apart.
+//
+// The EMAIL is the fallback rather than an id, because it is what tells two
+// people with the same name apart, which is the whole reason ProjectMemberDTO
+// carries it. An id would be correct and useless.
+// -------------------------------------------------------------------
+export function memberLabel(member: { name: string | null; email?: string | null }): string {
+  return member.name ?? member.email ?? "Account with no name on record";
+}
+
 export function countByColumn(work: readonly MyWorkItemDTO[]): WorkColumnCountsDTO {
   return {
     todo: work.filter((item) => item.boardColumn === TASK_COLUMNS.TODO).length,
