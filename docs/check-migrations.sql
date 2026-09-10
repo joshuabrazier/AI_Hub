@@ -22,6 +22,12 @@
 -- refuses them unless you pass --include-destructive, which is the safer way
 -- to run them if you can point a script at the database.
 --
+-- ONE STATEMENT, AND NOTHING ELSE IN THE FILE. It carried a commented-out
+-- "just the count" variant with an abbreviated VALUES list in it; consoles
+-- that split a script on semicolons ran that block anyway and failed on the
+-- ellipsis. Abbreviated SQL does not belong in a .sql file - if a shorter
+-- query is ever wanted here, it goes in whole.
+--
 -- This file is GENERATED from the migrations directory. Regenerate it when
 -- migrations are added - it is a snapshot of the repo, not of any database.
 -- Generated against 27 migration file(s).
@@ -75,12 +81,3 @@ SELECT
 FROM in_repo r
 FULL OUTER JOIN schema_migrations a ON a.filename = r.filename
 ORDER BY COALESCE(r.filename, a.filename);
-
-
----------------------------------------------------------------------
--- Just the count, if that is all you want:
----------------------------------------------------------------------
--- WITH in_repo (filename) AS (VALUES ('001_timesheet_read_model.sql'), ('002_jira_project.sql'), ... )
--- SELECT count(*) AS pending
---   FROM in_repo r
---  WHERE NOT EXISTS (SELECT 1 FROM schema_migrations a WHERE a.filename = r.filename);
