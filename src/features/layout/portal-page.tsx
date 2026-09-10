@@ -7,6 +7,14 @@ import { cn } from "@/lib/utils";
 // + description) with an optional actions slot. Set `eyebrow` to label
 // the area, e.g. "Admin" or "Client". Use `size="narrow"` for centered
 // form-style pages, `size="default"` for wide table/content pages.
+//
+// `size="full"` drops the max width entirely. It is for a screen that is a
+// WORKSPACE rather than a document - one that owns its own internal columns
+// and measures its own reading width, so a cap out here only strands the
+// whole thing in the middle of a wide monitor. The chat is the case it was
+// added for: capping it at max-w-7xl put a 400px gap to the left of the
+// conversation list and left the transcript off-centre. Do not reach for it
+// to make a table or a form wider - those want the cap.
 // -------------------------------------------------------------------
 export default function PortalPage({
   eyebrow = "Admin",
@@ -55,7 +63,7 @@ export default function PortalPage({
   title: string;
   description?: string;
   actions?: React.ReactNode;
-  size?: "default" | "narrow";
+  size?: "default" | "narrow" | "full";
   fill?: boolean;
   headerHidden?: boolean;
   children: React.ReactNode;
@@ -74,7 +82,10 @@ export default function PortalPage({
       <div
         className={cn(
           "mx-auto w-full",
-          size === "narrow" ? "max-w-2xl" : "max-w-7xl",
+          size === "narrow" && "max-w-2xl",
+          size === "default" && "max-w-7xl",
+          // "full" gets no cap at all - see the note at the top.
+          size === "full" && "max-w-none",
           fill && "flex min-h-0 flex-1 flex-col",
         )}
       >

@@ -3,7 +3,14 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { MessageSquarePlus, MessagesSquare, Pencil, Trash2 } from "lucide-react";
+import {
+  MessageSquarePlus,
+  MessagesSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -12,6 +19,8 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import { cn } from "@/lib/utils";
@@ -30,6 +39,32 @@ import { AiChatThread } from "./ai-chat-thread";
 // in state, so a conversation is linkable, survives a refresh, and works
 // with the back button. The server re-checks that id against the session on
 // every render, so putting it in the URL grants nothing.
+//
+// THE TWO COLUMNS ARE TWO SURFACES, not one surface with a gap in it. The
+// list is `bg-secondary`, the thread is `bg-card`, and there is a border
+// between them - the previous version separated them with whitespace alone,
+// which on a wide monitor is one field of white with some links floating in
+// it.
+//
+// `bg-muted` IS THE TRAP HERE, and it is worth naming because it is the
+// obvious choice for a quiet panel. Check the tokens in globals.css: in the
+// light theme it is #f6fafb against a #ffffff card, which is a step you
+// cannot see, and in the dark theme it is #131f22 - the SAME VALUE as
+// `--card`. A muted panel is invisible in one theme and absent in the
+// other. `secondary` is the only neutral surface that steps away from the
+// card in both.
+//
+// The open conversation's row is `bg-card` - the thread's own surface - so
+// the selection reads as the leading edge of the panel it opens rather than
+// as one more highlight colour.
+//
+// THE LIST COLLAPSES, and it is two different controls rather than one:
+// an inline rail that animates to nothing on md and up, and a Sheet on
+// smaller screens. One control would need a JS media query to decide which
+// behaviour to use, and that cannot be evaluated during the server render -
+// so the first paint would either flash a 17rem panel onto a phone or flash
+// it off a desktop, depending on which way the initial state guessed. Here
+// the breakpoint is CSS in both directions, so there is nothing to guess.
 // -------------------------------------------------------------------
 export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
   const router = useRouter();
@@ -42,6 +77,12 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
   const [renaming, setRenaming] = useState<AiChatSubjectDTO | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [deleting, setDeleting] = useState<AiChatSubjectDTO | null>(null);
+  // The inline rail (md and up). Open by default: the list is how somebody
+  // gets back to a conversation, so it is not hidden until they ask.
+  const [railOpen, setRailOpen] = useState(true);
+  // The Sheet (below md). Closed by default, because on a phone it covers
+  // the thread.
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const activeId = page.active?.subject.id ?? null;
 
@@ -57,6 +98,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
           return;
         }
 
+        setSheetOpen(false);
         openSubject(response.data);
       } catch (error) {
         handleFrontendErrorWithToast(error);
@@ -112,108 +154,145 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
       }
     });
 
+  // The list, built once and rendered in two places - the inline rail and
+  // the Sheet. `onNavigate` is what closes the Sheet after a tap; the rail
+  // passes nothing, because opening a conversation there does not dismiss
+  // anything.
+  const conversationList = (onNavigate?: () => void) => (
+    <ConversationList
+      subjects={page.subjects}
+      activeId={activeId}
+      pathname={pathname}
+      isPending={isPending}
+      onNewChat={startNewChat}
+      onRename={(subject) => {
+        setRenaming(subject);
+        setRenameTitle(subject.title);
+      }}
+      onDelete={setDeleting}
+      onNavigate={onNavigate}
+    />
+  );
+
   return (
     <>
-      <div className="grid min-h-0 flex-1 gap-8 lg:grid-cols-[16rem_minmax(0,1fr)]">
-        {/* Conversations. Quieter than the thread beside it on purpose: this
-            is the way back to something, not the thing being read. */}
-        <aside className="flex min-w-0 flex-col gap-3 overflow-y-auto">
-          <Button
-            onClick={startNewChat}
-            disabled={isPending}
-            variant="outline"
-            className="w-full justify-start rounded-xl"
-          >
-            <MessageSquarePlus size={16} aria-hidden="true" />
-            New chat
-          </Button>
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card">
+        {/* Conversations, inline. Quieter than the thread beside it on
+            purpose: this is the way back to something, not the thing being
+            read.
 
-          {page.subjects.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-muted-foreground">No conversations yet.</p>
-          ) : (
-            <nav aria-label="Conversations">
-              <ul className="space-y-1">
-                {page.subjects.map((subject) => {
-                  const isActive = subject.id === activeId;
-
-                  return (
-                    <li key={subject.id} className="group/subject relative">
-                      <Link
-                        href={`${pathname}?subject=${subject.id}`}
-                        aria-current={isActive ? "page" : undefined}
-                        title={
-                          subject.messageCount === 0
-                            ? "Empty conversation"
-                            : `${subject.messageCount} ${subject.messageCount === 1 ? "message" : "messages"}`
-                        }
-                        className={cn(
-                          "block truncate rounded-lg py-2 pl-3 pr-14 text-sm transition-colors",
-                          isActive
-                            ? "bg-muted font-medium text-foreground"
-                            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                        )}
-                      >
-                        {subject.title}
-                      </Link>
-
-                      {/* Per-conversation actions. Shown on hover on a
-                          pointer device, and always once focused, so they
-                          are reachable from the keyboard rather than
-                          hover-only. */}
-                      <span className="absolute right-1 top-1 flex opacity-0 transition-opacity focus-within:opacity-100 group-hover/subject:opacity-100">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Rename ${subject.title}`}
-                          onClick={() => {
-                            setRenaming(subject);
-                            setRenameTitle(subject.title);
-                          }}
-                        >
-                          <Pencil size={14} aria-hidden="true" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Delete ${subject.title}`}
-                          onClick={() => setDeleting(subject)}
-                        >
-                          <Trash2 size={14} aria-hidden="true" />
-                        </Button>
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </nav>
+            `inert` when collapsed, and zero width is NOT enough on its own:
+            a 0px panel with overflow hidden still holds real focusable
+            links, so tabbing off the toggle would walk through every
+            conversation with nothing on screen to show where focus went.
+            `inert` removes them from the tab order and from the
+            accessibility tree together, which is why it is used rather than
+            aria-hidden - that would fix only the second half. */}
+        <aside
+          className={cn(
+            "hidden shrink-0 overflow-hidden bg-secondary transition-[width] duration-300 ease-in-out motion-reduce:transition-none md:block",
+            railOpen ? "w-[17rem] border-r border-border" : "w-0",
           )}
+          inert={!railOpen}
+        >
+          {/* The measure lives HERE rather than on the list, so the list
+              itself is width-agnostic and fills the Sheet correctly on a
+              phone. It also means the collapse animates the panel's width
+              while the contents keep theirs, so the rows slide out of view
+              instead of reflowing on every frame. */}
+          <div className="h-full w-[17rem]">{conversationList()}</div>
         </aside>
 
         {/* The open conversation */}
-        <section className="flex min-h-0 min-w-0 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* THE THREAD'S OWN CHROME, and deliberately not a page header -
+              the page suppresses that (see ai-chat.page.tsx) and this does
+              not bring it back. It exists because a collapsed list needs the
+              toggle to live somewhere, and because once the list is closed
+              the name of the open conversation is the only thing left saying
+              which one you are reading. One slim row, no eyebrow, no
+              description. */}
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="hidden md:inline-flex"
+                  aria-expanded={railOpen}
+                  aria-label={railOpen ? "Hide conversations" : "Show conversations"}
+                  onClick={() => setRailOpen((previous) => !previous)}
+                >
+                  {railOpen ? (
+                    <PanelLeftClose size={16} aria-hidden="true" />
+                  ) : (
+                    <PanelLeftOpen size={16} aria-hidden="true" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{railOpen ? "Hide conversations" : "Show conversations"}</TooltipContent>
+            </Tooltip>
+
+            {/* Below md the same list arrives as a Sheet over the thread,
+                because a 17rem column on a phone leaves nothing to read. */}
+            <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+              <SheetTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="md:hidden"
+                  aria-label="Show conversations"
+                >
+                  <MessagesSquare size={16} aria-hidden="true" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="gap-0 bg-secondary p-0">
+                {/* A VISIBLE header, not an sr-only one. SheetContent paints
+                    its own close button at top-3 right-3, so with the list
+                    flush to the top edge that button sits on top of the "New
+                    chat" row. The header is what it needs to sit in, and
+                    `pr-12` is what keeps the title clear of it.
+
+                    No width class here on purpose: SheetContent already
+                    sizes itself to the viewport (3/4, capped at sm), and its
+                    data-[side=left] rule outranks a plain w-* anyway - so a
+                    rem width would be both ignored and misleading. */}
+                <SheetHeader className="shrink-0 border-b border-border/70 p-3 pr-12">
+                  <SheetTitle className="text-sm">Conversations</SheetTitle>
+                </SheetHeader>
+                <div className="min-h-0 flex-1">{conversationList(() => setSheetOpen(false))}</div>
+              </SheetContent>
+            </Sheet>
+
+            <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+              {page.active?.subject.title ?? "AI chat"}
+            </p>
+          </div>
+
           {!page.isConfigured ? (
-            <div
-              role="status"
-              className="flex flex-col items-center justify-center rounded-xl border border-border bg-muted/40 px-6 py-16 text-center"
-            >
-              <span className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                <MessagesSquare size={22} aria-hidden="true" />
-              </span>
-              <p className="mt-3 text-sm font-medium text-foreground">AI chat is not configured</p>
-              <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                No Bedrock API key is set on this environment, so there is nothing to send messages to. Set
-                AWS_BEARER_TOKEN_BEDROCK and restart.
-              </p>
+            <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+              <div role="status" className="flex flex-col items-center text-center">
+                <span className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <MessagesSquare size={22} aria-hidden="true" />
+                </span>
+                <p className="mt-3 text-sm font-medium text-foreground">AI chat is not configured</p>
+                <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                  No Bedrock API key is set on this environment, so there is nothing to send messages to. Set
+                  AWS_BEARER_TOKEN_BEDROCK and restart.
+                </p>
+              </div>
             </div>
           ) : page.active === null ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-border px-6 py-16 text-center">
-              <span className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <MessagesSquare size={22} aria-hidden="true" />
-              </span>
-              <p className="mt-3 text-sm font-medium text-foreground">Nothing open</p>
-              <p className="mt-1 text-sm text-muted-foreground">Start a new chat to begin.</p>
+            <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+              <div className="flex flex-col items-center text-center">
+                <span className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <MessagesSquare size={22} aria-hidden="true" />
+                </span>
+                <p className="mt-3 text-sm font-medium text-foreground">Nothing open</p>
+                <p className="mt-1 text-sm text-muted-foreground">Start a new chat to begin.</p>
+              </div>
             </div>
           ) : (
             // Keyed on the conversation so switching threads remounts and
@@ -282,5 +361,117 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
         onConfirm={confirmDelete}
       />
     </>
+  );
+}
+
+// -------------------------------------------------------------------
+// The list of conversations.
+//
+// Extracted because it renders twice - the inline rail and the Sheet - and
+// two copies of it would have drifted the first time a row gained anything.
+// It owns no state: everything it does is handed down, so the rail and the
+// Sheet cannot disagree about what is open or what is being renamed.
+//
+// It carries NO width of its own. The rail wraps it in the 17rem measure
+// and clips it as that panel animates shut; the Sheet gives it whatever the
+// viewport allows, which on a narrow phone is less than 17rem - so a fixed
+// width here would overflow the one and be redundant in the other.
+// -------------------------------------------------------------------
+function ConversationList({
+  subjects,
+  activeId,
+  pathname,
+  isPending,
+  onNewChat,
+  onRename,
+  onDelete,
+  onNavigate,
+}: {
+  subjects: AiChatSubjectDTO[];
+  activeId: string | null;
+  pathname: string;
+  isPending: boolean;
+  onNewChat: () => void;
+  onRename: (subject: AiChatSubjectDTO) => void;
+  onDelete: (subject: AiChatSubjectDTO) => void;
+  onNavigate?: () => void;
+}) {
+  return (
+    <div className="flex h-full w-full flex-col">
+      <div className="shrink-0 border-b border-border/70 p-3">
+        <Button
+          onClick={onNewChat}
+          disabled={isPending}
+          variant="outline"
+          className="w-full justify-start rounded-xl bg-card"
+        >
+          <MessageSquarePlus size={16} aria-hidden="true" />
+          New chat
+        </Button>
+      </div>
+
+      {subjects.length === 0 ? (
+        <p className="p-3 text-sm text-muted-foreground">No conversations yet.</p>
+      ) : (
+        <nav aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto p-2">
+          <ul className="space-y-0.5">
+            {subjects.map((subject) => {
+              const isActive = subject.id === activeId;
+
+              return (
+                <li key={subject.id} className="group/subject relative">
+                  <Link
+                    href={`${pathname}?subject=${subject.id}`}
+                    onClick={onNavigate}
+                    aria-current={isActive ? "page" : undefined}
+                    title={
+                      subject.messageCount === 0
+                        ? "Empty conversation"
+                        : `${subject.messageCount} ${subject.messageCount === 1 ? "message" : "messages"}`
+                    }
+                    className={cn(
+                      "block truncate rounded-lg py-2 pl-3 pr-14 text-sm transition-colors",
+                      // The open row wears the THREAD's surface, so the
+                      // selection reads as continuous with the panel it
+                      // opens rather than as another highlight.
+                      isActive
+                        ? "bg-card font-medium text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
+                    )}
+                  >
+                    {subject.title}
+                  </Link>
+
+                  {/* Per-conversation actions. Shown on hover on a
+                      pointer device, and always once focused, so they
+                      are reachable from the keyboard rather than
+                      hover-only. */}
+                  <span className="absolute right-1 top-1 flex opacity-0 transition-opacity focus-within:opacity-100 group-hover/subject:opacity-100">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Rename ${subject.title}`}
+                      onClick={() => onRename(subject)}
+                    >
+                      <Pencil size={14} aria-hidden="true" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Delete ${subject.title}`}
+                      onClick={() => onDelete(subject)}
+                    >
+                      <Trash2 size={14} aria-hidden="true" />
+                    </Button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      )}
+    </div>
   );
 }

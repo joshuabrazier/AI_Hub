@@ -36,6 +36,11 @@ export default async function AiChatPage({ eyebrow, subjectId }: { eyebrow: stri
       // The composer is the bottom edge of this screen, so the page is sized
       // to the viewport and the transcript scrolls inside it. See PortalPage.
       fill
+      // No max width. This screen is a workspace with its own two columns,
+      // and it measures its own reading width inside the transcript - so the
+      // shared cap only pushed the whole thing into the middle of the window
+      // and left a dead band beside the conversation list.
+      size="full"
     >
       <AiChatWorkspace page={page} />
     </PortalPage>

@@ -353,19 +353,29 @@ export function AiChatThread({
   };
 
   return (
-    // No border and no card. The conversation IS the page, so a box drawn
-    // around it only makes the reading area smaller.
+    // No border and no card of its own. The workspace around it draws the
+    // panel; a second box inside that one only makes the reading area
+    // smaller.
     //
-    // h-full, not a calc. The page above is a fixed-height flex column, so
-    // this fills what is left after the header and the composer stays on
-    // screen at any window size.
-    <div className="flex h-full min-h-0 flex-col">
+    // flex-1 rather than h-full. It shares its parent column with the
+    // thread's toolbar now, and `height: 100%` would have resolved against
+    // the whole column and pushed the composer exactly the toolbar's height
+    // below the fold - the same class of bug the calc it replaced had.
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Transcript. The scroll is full-bleed so a long reply does not sit
           inside a visible frame, but the CONTENT is held to a measured
           column - prose past about 75 characters a line is measurably harder
-          to read, and a chat reply is prose. */}
+          to read, and a chat reply is prose.
+
+          The column is the ONE thing on this screen that does not grow with
+          the window, and it is the reason the page is allowed to: everything
+          around it (the panel, the list, the toolbar) now uses the full
+          width, so the measure can stay a measure instead of being the thing
+          that holds the layout in. 4xl over 3xl because a bordered panel eats
+          the visual breathing room the old bare page had, not because wider
+          reads better. */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6">
+        <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-4 py-6">
         {messages.length === 0 && !isStreaming ? (
           // The greeting on an empty thread, and the place the full terms of
           // the thing live. The page header above is one line now, so this
@@ -449,7 +459,9 @@ export function AiChatThread({
           anywhere over it rather than onto a small target. */}
       <div
         className={cn(
-          "mx-auto w-full max-w-3xl px-4 pb-4 transition-colors",
+          // Same measure as the transcript above it, so the box lines up
+          // with the text it is answering rather than with the window.
+          "mx-auto w-full max-w-4xl px-4 pb-4 transition-colors",
           isDropTarget && "opacity-90",
         )}
         onDragEnter={(event) => {
