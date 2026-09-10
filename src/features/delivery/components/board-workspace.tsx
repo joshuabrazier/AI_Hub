@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -32,10 +32,19 @@ import {
   type BudgetRollupDTO,
   type PhaseDTO,
   type ProjectMemberDTO,
+  type ProjectSummaryDTO,
   type TaskCardDTO,
 } from "../delivery.types";
 import { BoardEmptyState } from "./board-empty-state";
-import { indexBoard, isSamePlace, movePhaseOrder } from "./board-move";
+import {
+  applyMove,
+  indexBoard,
+  isSamePlace,
+  movePhaseOrder,
+  type BoardPlacement,
+} from "./board-move";
+import { EstimateAdjustDialog } from "./estimate-adjust-dialog";
+import { buildTimesheetCatalogue, findCatalogueTask } from "./timesheet-catalogue";
 import { BoardLogTimeDialog } from "./board-log-time-dialog";
 import { BoardPhaseDialog } from "./board-phase-dialog";
 import { BoardPhaseSection } from "./board-phase-section";
@@ -85,6 +94,7 @@ export type BoardProjectLink = {
 
 export function BoardWorkspace({
   projects,
+  project,
   activeProjectId,
   projectStatus,
   board,
@@ -92,8 +102,11 @@ export function BoardWorkspace({
   members,
   rollup,
   yourName,
+  yourUserId,
 }: {
   projects: readonly BoardProjectLink[];
+  /** This project's summary, folded into a catalogue for the estimate dialog. */
+  project: ProjectSummaryDTO;
   activeProjectId: string;
   projectStatus: ProjectStatus;
   board: BoardDTO;
@@ -103,6 +116,13 @@ export function BoardWorkspace({
   rollup: BudgetRollupDTO;
   /** The signed-in person, named on the log-time dialog. Time is always theirs. */
   yourName: string;
+  /**
+   * The viewer's own id, for the task panel: a time entry of theirs is
+   * editable and a colleague's is not, unless they lead the project. It is
+   * the SAME rule requireEntryControl applies on the server, and this copy
+   * decides only whether a button is offered.
+   */
+  yourUserId: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -115,6 +135,7 @@ export function BoardWorkspace({
   const [deletingPhase, setDeletingPhase] = useState<BoardPhaseDTO | null>(null);
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [adjustingTask, setAdjustingTask] = useState<TaskCardDTO | null>(null);
 
   // -------------------------------------------------------------------
   // The board, indexed once per render.
@@ -125,9 +146,34 @@ export function BoardWorkspace({
   // answered in board-move.ts - a column can only see itself - and why that
   // arithmetic is tested on its own.
   // -------------------------------------------------------------------
-  const { located, endPositionFor } = indexBoard(board);
+  // -------------------------------------------------------------------
+  // THE BOARD AS IT WILL BE, DRAWN AT ONCE.
+  //
+  // A move used to await the action and then router.refresh(), so the card
+  // stayed put for a whole round trip. After a DRAG that is unmistakable:
+  // the gesture ends, the card snaps back to where it came from, and some
+  // time later it appears where it was dropped. People read that as broken
+  // and drag it again.
+  //
+  // useOptimistic holds the moved board only while the transition is open.
+  // `run` keeps that transition open across the action AND the
+  // router.refresh() that follows it, so the optimistic value is replaced by
+  // real server data rather than being dropped in between - which would show
+  // the card snapping back for a frame before landing again.
+  //
+  // A REFUSAL PUTS THE CARD BACK BY ITSELF. Nothing here has to undo
+  // anything: the transition ends, the optimistic value is discarded, and
+  // the board re-renders from the props it always had. The toast says why.
+  // -------------------------------------------------------------------
+  const [optimisticBoard, applyOptimisticMove] = useOptimistic(
+    board,
+    (current: BoardDTO, move: { taskId: string; destination: BoardPlacement }) =>
+      applyMove(current, move.taskId, move.destination),
+  );
 
-  const phaseOptions: BoardPhaseOption[] = board.phases.map((phase) => ({
+  const { located, endPositionFor } = indexBoard(optimisticBoard);
+
+  const phaseOptions: BoardPhaseOption[] = optimisticBoard.phases.map((phase) => ({
     phaseId: phase.phaseId,
     phaseName: phase.phaseName,
   }));
@@ -144,6 +190,28 @@ export function BoardWorkspace({
   const openTask = openTaskId ? (located.get(openTaskId) ?? null) : null;
 
   // -------------------------------------------------------------------
+  // This project as the estimate dialog wants it.
+  //
+  // Built with buildTimesheetCatalogue - the timesheet's own function - so
+  // there is one answer to what a task option looks like rather than two.
+  // The dialog needs every OTHER task on the project as possible sources for
+  // a transfer, which is a question about the whole board and not about the
+  // card being adjusted.
+  //
+  // From the OPTIMISTIC board, so a card dragged a moment ago is offered at
+  // the phase it was dropped in rather than the one it came from.
+  // -------------------------------------------------------------------
+  const estimateProject =
+    buildTimesheetCatalogue([project], [optimisticBoard]).projects[0] ?? null;
+
+  const adjustingOption = adjustingTask
+    ? (findCatalogueTask(
+        { projects: estimateProject ? [estimateProject] : [] },
+        adjustingTask.id,
+      ) ?? null)
+    : null;
+
+  // -------------------------------------------------------------------
   // One place every action reports from.
   //
   // A refusal from a service arrives as `formError` and is a SENTENCE
@@ -154,8 +222,14 @@ export function BoardWorkspace({
     action: () => Promise<ServerApiResponse<unknown>>,
     successMessage: string,
     onDone?: () => void,
+    // Applied INSIDE the transition, before the await. useOptimistic refuses
+    // an update outside one, and the transition is also what keeps the value
+    // alive until the refresh lands.
+    optimistically?: () => void,
   ) =>
     startTransition(async () => {
+      optimistically?.();
+
       try {
         const response = await action();
 
@@ -195,6 +269,9 @@ export function BoardWorkspace({
           position: destination.position,
         }),
       "Task moved",
+      undefined,
+      // The card lands where it was dropped before the request is even sent.
+      () => applyOptimisticMove({ taskId, destination }),
     );
   };
 
@@ -305,7 +382,7 @@ export function BoardWorkspace({
             </p>
           ) : null}
 
-          {board.phases.length === 0 ? (
+          {optimisticBoard.phases.length === 0 ? (
             <BoardEmptyState
               icon={<Layers size={18} aria-hidden="true" />}
               title="This project has no phases yet"
@@ -325,14 +402,14 @@ export function BoardWorkspace({
             />
           ) : (
             <div className="space-y-4">
-              {board.phases.map((phase, index) => (
+              {optimisticBoard.phases.map((phase, index) => (
                 <BoardPhaseSection
                   key={phase.phaseId}
                   phase={phase}
                   stats={statsByPhase.get(phase.phaseId)}
                   phases={phaseOptions}
                   isFirst={index === 0}
-                  isLast={index === board.phases.length - 1}
+                  isLast={index === optimisticBoard.phases.length - 1}
                   canEditTasks={canEditTasks}
                   canLogTime={canLogTime}
                   pendingTaskId={pendingTaskId}
@@ -357,12 +434,19 @@ export function BoardWorkspace({
 
       {openTask ? (
         <BoardTaskPanel
+          // KEYED ON THE CARD, so opening a different one mounts a fresh
+          // panel rather than reusing this one. The panel fetches the task it
+          // is showing, and without the key it would briefly show the
+          // previous card's description and files under the new card's title.
+          key={openTask.task.id}
           task={openTask.task}
           boardColumn={openTask.boardColumn}
           phaseName={openTask.phaseName}
           canEditTasks={canEditTasks}
           canLogTime={canLogTime}
           isPending={isPending}
+          members={members}
+          yourUserId={yourUserId}
           endPositionFor={endPositionFor}
           onOpenChange={(open) => {
             if (!open) setOpenTaskId(null);
@@ -370,6 +454,32 @@ export function BoardWorkspace({
           onLogTime={setLoggingTime}
           onDelete={setDeletingTask}
           onMove={moveTask}
+          onAdjustEstimate={setAdjustingTask}
+        />
+      ) : null}
+
+      {/* -------------------------------------------------------------
+          CHANGING WHAT A CARD IS EXPECTED TO TAKE, FROM THE BOARD.
+
+          This was reachable only from the timesheet, so realising a task
+          will take longer meant leaving the board to say so - and the board
+          is exactly where somebody is standing when they realise it.
+
+          Rendered here rather than inside the panel because the panel is a
+          Sheet: a dialog opened from within one is nested inside it, and
+          closing the sheet would take the dialog with it mid-edit.
+          ------------------------------------------------------------- */}
+      {adjustingTask && estimateProject && adjustingOption ? (
+        <EstimateAdjustDialog
+          project={estimateProject}
+          task={adjustingOption}
+          onOpenChange={(open) => {
+            if (!open) setAdjustingTask(null);
+          }}
+          onAdjusted={() => {
+            setAdjustingTask(null);
+            router.refresh();
+          }}
         />
       ) : null}
 

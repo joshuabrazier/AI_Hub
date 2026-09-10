@@ -1,5 +1,10 @@
 import z from "zod";
 
+import {
+  AI_CHAT_ACCEPT_ATTRIBUTE,
+  AI_CHAT_ACCEPTED_SUMMARY,
+  MAX_DOCUMENT_BYTES,
+} from "@/lib/ai/attachment-formats";
 import { TABLE_ID_LENGTH } from "@/lib/constants";
 import {
   PROJECT_STATUSES,
@@ -32,7 +37,7 @@ import {
 //   1. HOURS ARE THE INPUT UNIT, MINUTES ARE THE STORED UNIT. Somebody
 //      types 1.5; 90 is written. The conversion happens ONCE, at the schema
 //      boundary, so nothing downstream ever handles a fractional hour - see
-//      migration 016 for why a float of hours is not an option. That is why
+//      migration 020 for why a float of hours is not an option. That is why
 //      several schemas below export both an INPUT type (what the form
 //      holds) and a REQUEST type (what the service receives): conflating
 //      them is how a form ends up posting "1.5" into a field the service
@@ -109,7 +114,7 @@ export const NOTE_MAX_CHARS = 1_000;
 
 // -------------------------------------------------------------------
 // The longest one time entry may be, and it is NOT a number chosen here:
-// `time_entries_minutes_sane` in migration 016 is CHECK (minutes > 0 AND
+// `time_entries_minutes_sane` in migration 020 is CHECK (minutes > 0 AND
 // minutes <= 1440). A day has 1440 minutes and anything beyond it is a typo.
 //
 // The hours figure is DERIVED from it rather than written out, so raising one
@@ -134,7 +139,7 @@ export const MAX_PLANNED_HOURS = 100_000;
 // -------------------------------------------------------------------
 // The board has FOUR columns and the number is fixed, not configurable.
 //
-// From migration 016: a board whose columns differ per project cannot be
+// From migration 020: a board whose columns differ per project cannot be
 // reported on across projects, and having `blocked` as a real column rather
 // than a flag is most of the point of looking at a board. Derived from
 // TASK_COLUMN_ORDER so the count and the order cannot disagree.
@@ -435,6 +440,47 @@ export function formatMinutesAsHours(minutes: number): string {
 
 // -------------------------------------------------------------------
 // ===================================================================
+// WHERE A DROPPED CARD LANDS
+// ===================================================================
+//
+// The destination column's whole ordered id list, with the moved card at the
+// slot it was dropped in.
+//
+// IT LIVES HERE, NOT IN THE SERVICE, AND THAT IS THE POINT. It was exported
+// from delivery-board.service.ts, which carries `import "server-only"` - so
+// the board could not use it, and showing a drag immediately needed the rule
+// written a second time in a client component. Two implementations of where
+// a card lands is how the card the browser shows and the card the server
+// saved end up one slot apart, which looks like the board jumping.
+//
+// So the SERVICE and the BOARD import the same function: the browser applies
+// it to draw the move at once, the service applies it to the rows, and there
+// is no arrangement in which they can disagree.
+//
+// EVERY INTERESTING CASE IS A BOUNDARY, which is why it is tested directly:
+// a card dropped below the last one, a stale position from a board that has
+// since changed, and a card dragged WITHIN its own column - where removing it
+// before inserting is what stops it landing one slot short of where it was
+// let go.
+//
+// The position is CLAMPED rather than refused. It is an index into a list the
+// browser last saw some milliseconds ago; a drop past the end of a column
+// somebody else has just emptied means "last", and refusing it would undo a
+// drag for a reason nobody could act on.
+// -------------------------------------------------------------------
+export function placeIdAtPosition(
+  orderedIds: readonly string[],
+  taskId: string,
+  position: number,
+): string[] {
+  const without = orderedIds.filter((id) => id !== taskId);
+  const index = Math.min(Math.max(0, Math.trunc(position)), without.length);
+
+  return [...without.slice(0, index), taskId, ...without.slice(index)];
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
 // BUDGET ROLLUP
 // ===================================================================
 //
@@ -503,6 +549,164 @@ export function budgetProgress(budgetMinutes: number, loggedMinutes: number): Bu
     barPercent: Math.min(100, Math.max(0, percentUsed)),
     isOverBudget: remaining < 0,
   };
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
+// CHARGED TIME, SPENT TIME, AND WHAT IT NOW LOOKS LIKE IT WILL TAKE
+// ===================================================================
+//
+// THREE FIGURES, NOT TWO, AND THE THIRD IS THE POINT. `budgetProgress`
+// above answers "how much of the budget is gone", which is the right
+// question for a task card or a per-person pool. It is not enough for a
+// project, because a project has two different numbers that both call
+// themselves the budget:
+//
+//   CHARGED   what the client agreed to pay for. Set once, at the start,
+//             and it does not move because work took longer - that is the
+//             whole nature of a fixed quote.
+//
+//   FORECAST  what it now looks like it will take, which is the sum of the
+//             task estimates and CLIMBS as people revise them. On a project
+//             going badly this is the first number to move, and it moves
+//             long before the logged hours catch up.
+//
+// A bar drawn against charged time alone says "66% spent" on a project
+// already forecast to overrun by a fortnight, and says it right up until it
+// does. A bar drawn against the estimates alone moves the goalposts every
+// time somebody re-estimates, so it reads as healthy forever. Neither is a
+// lie exactly, and neither is any use.
+//
+// So this carries both comparisons and the surfaces draw them together: the
+// filled part is what has been SPENT, and a marker sits where the FORECAST
+// falls. Ideally they and the charged figure coincide; in practice they
+// rarely do, and the gap is the finding.
+//
+// NULL WHEN NOTHING HAS BEEN CHARGED, throughout, for the reason
+// remainingMinutes is null in the two-figure version and an unknown cost is
+// null rather than nought: nobody has said what this project was sold for,
+// which is not the same as it having been sold for nothing. A percentage
+// against nought is Infinity, or a full bar if it is guarded - and both
+// read as "all spent" when the truth is "nobody recorded the quote".
+// -------------------------------------------------------------------
+export type ChargedRollupDTO = {
+  /**
+   * What the client is paying for. Null when nobody has assigned it.
+   *
+   * NOT to be confused with `chargeableCents`, which is money. This is TIME,
+   * and the two are only related through somebody's hourly rate.
+   */
+  chargedMinutes: number | null;
+  loggedMinutes: number;
+  /**
+   * The sum of the task estimates, which is what the work is NOW expected to
+   * take in total. Zero when nothing has been estimated - a real answer
+   * rather than an unknown, because a project with no tasks genuinely has no
+   * forecast rather than a forecast nobody has recorded.
+   */
+  forecastMinutes: number;
+
+  // ---- Spent against charged. The same five fields budgetProgress hands a
+  // ---- bar, so a component can draw either from one habit.
+  remainingMinutes: number | null;
+  overMinutes: number;
+  percentUsed: number | null;
+  barPercent: number;
+  isOverBudget: boolean;
+
+  // ---- Forecast against charged: the question this type exists for.
+  /** Positive when the work is expected to overrun what was charged. */
+  forecastVarianceMinutes: number | null;
+  forecastPercent: number | null;
+  /** Clamped 0-100, for a marker on the bar rather than a fill. */
+  forecastBarPercent: number;
+  isForecastOverBudget: boolean;
+};
+
+/**
+ * The three-figure rollup, from charged, logged and forecast minutes.
+ *
+ * Percentages are rounded to one decimal place HERE, once, for the reason
+ * budgetProgress rounds: unrounded they render as 66.66666666666667 in one
+ * component and 66.7 in another, and the same project then appears to
+ * disagree with itself.
+ *
+ * A forecast is NOT flagged as an overrun when nothing has been charged.
+ * There is nothing to overrun, and painting it red blames whoever estimated
+ * the work for the omission of whoever was meant to record the quote - the
+ * same line budgetProgress draws about a budget of nought.
+ */
+export function chargedProgress(
+  chargedMinutes: number | null,
+  loggedMinutes: number,
+  forecastMinutes: number,
+): ChargedRollupDTO {
+  const logged = Math.max(0, Math.round(loggedMinutes));
+  const forecast = Math.max(0, Math.round(forecastMinutes));
+
+  // Nought is treated as unassigned rather than as a quote of no time. A
+  // project sold for nothing is not a thing anybody records, and the
+  // alternative is a bar that reads as fully spent the moment it is created.
+  const charged =
+    chargedMinutes === null ? null : Math.max(0, Math.round(chargedMinutes)) || null;
+
+  if (charged === null) {
+    return {
+      chargedMinutes: null,
+      loggedMinutes: logged,
+      forecastMinutes: forecast,
+      remainingMinutes: null,
+      overMinutes: 0,
+      percentUsed: null,
+      barPercent: 0,
+      isOverBudget: false,
+      forecastVarianceMinutes: null,
+      forecastPercent: null,
+      forecastBarPercent: 0,
+      isForecastOverBudget: false,
+    };
+  }
+
+  const remaining = charged - logged;
+  const percentUsed = Math.round((logged / charged) * 1000) / 10;
+  const forecastPercent = Math.round((forecast / charged) * 1000) / 10;
+  const variance = forecast - charged;
+
+  return {
+    chargedMinutes: charged,
+    loggedMinutes: logged,
+    forecastMinutes: forecast,
+    remainingMinutes: remaining,
+    overMinutes: remaining < 0 ? -remaining : 0,
+    percentUsed,
+    barPercent: Math.min(100, Math.max(0, percentUsed)),
+    isOverBudget: remaining < 0,
+    forecastVarianceMinutes: variance,
+    forecastPercent,
+    forecastBarPercent: Math.min(100, Math.max(0, forecastPercent)),
+    isForecastOverBudget: variance > 0,
+  };
+}
+
+/**
+ * Add up what the phases were charged, for a project budgeted per phase.
+ *
+ * NULL WHEN NOT ONE PHASE HAS AN AMOUNT, and a total when any of them do.
+ * That asymmetry is deliberate: a project part-way through being budgeted
+ * has a real partial total worth showing, but one where nobody has started
+ * has no quote at all - and a total of nought would read as "sold for
+ * nothing" rather than "not filled in yet".
+ *
+ * Phases with no amount contribute nothing and are named separately on the
+ * screen, because a total that silently omits three phases is the
+ * plausible-wrong-number this module refuses everywhere else.
+ */
+export function sumChargedMinutes(charged: readonly (number | null)[]): number | null {
+  const assigned = charged.filter((minutes): minutes is number => minutes !== null);
+
+  if (assigned.length === 0) return null;
+
+  return assigned.reduce((total, minutes) => total + Math.max(0, Math.round(minutes)), 0);
 }
 
 // -------------------------------------------------------------------
@@ -752,21 +956,64 @@ const dollarAmountRules = z
   }, "Use at most two decimal places")
   .transform((value) => Math.round(value * 100));
 
+// -------------------------------------------------------------------
+// AN EMPTY STRING IS MAPPED TO NaN FOR THE SAME REASON null IS, and it was
+// missing.
+//
+// `Number("")` is 0. So is `Number("   ")`. The guard in front of this
+// coercion caught null and let both of those through, which meant a charge
+// rate submitted as an empty string stored $0.00 - the work recorded as
+// FREE, on a plausible-looking row, beside rates that are right.
+//
+// That is the identical failure the null guard above exists to prevent,
+// through the identical mechanism, and it was reached the moment a form sent
+// a band with a cost typed and the charge box left empty. The single-band
+// dialog happened not to expose it because its submit button is disabled
+// until the charge box has something in it - so the schema was being
+// protected by a UI check, which is the wrong way round and only holds until
+// the next caller.
+//
+// `optionalDollarsField` below is UNAFFECTED, and deliberately so: it is a
+// union that tries `z.literal("")` FIRST, so an empty COST box still parses
+// as "nobody has recorded a cost" and stores null. Empty means absent there
+// and refused here, which is the whole difference between the two fields.
+// -------------------------------------------------------------------
 const dollarsField = z
-  .preprocess((value) => (value === null ? Number.NaN : value), z.coerce.number())
+  .preprocess(
+    (value) =>
+      value === null || (typeof value === "string" && value.trim().length === 0)
+        ? Number.NaN
+        : value,
+    z.coerce.number(),
+  )
   .pipe(dollarAmountRules);
 
 // -------------------------------------------------------------------
 // Empty means "not recorded", which for a cost rate is a real answer:
 // margin stays unknown rather than becoming 100%.
 //
-// "" IS THE ONE SPELLING OF ABSENCE THIS FIELD ACCEPTS, because it is what
-// an empty text input actually sends. null and undefined are both refused -
-// null by the guard on dollarsField above, which explains why - so a JSON
-// caller cannot reach the coercion and have absence read as nought.
+// A BLANK BOX IS THE ONE SPELLING OF ABSENCE THIS FIELD ACCEPTS, because it
+// is what an empty text input actually sends. null and undefined are both
+// refused - null by the guard on dollarsField above, which explains why - so
+// a JSON caller cannot reach the coercion and have absence read as nought.
+//
+// WHITESPACE COUNTS AS BLANK, matching the guard on dollarsField rather than
+// only `z.literal("")`. Before, "  " was refused here and refused there, so
+// nothing was ever mispriced by it - but the two fields disagreed about what
+// blank MEANS, and the version that mattered was reached only because the
+// form happens to trim before sending. A schema protected by a caller's
+// tidiness is protected until the next caller.
+//
+// The direction is the safe one either way: this maps blank to NULL, which
+// is the honest "nobody has recorded a cost", and never to a number.
 // -------------------------------------------------------------------
+const blankMoney = z
+  .string()
+  .refine((value) => value.trim().length === 0)
+  .transform(() => "" as const);
+
 const optionalDollarsField = z
-  .union([z.literal(""), dollarsField])
+  .union([blankMoney, dollarsField])
   .transform((value) => (value === "" ? null : value));
 
 // -------------------------------------------------------------------
@@ -965,14 +1212,43 @@ export type CreateProjectRequestDTO = z.output<typeof CreateProjectSchema>;
 // silently re-attribute every time entry already logged against it, which is
 // billing history and belongs behind a deliberate, audited act rather than a
 // dropdown on the edit form.
+// -------------------------------------------------------------------
+// A PATCH, NOT A WHOLE ROW - the same shape UpdateTask, UpdateTimeEntry and
+// UpdateClient settled on, and it was the last of the four still replacing.
+//
+//   title        absent leaves it; present, it must still be a real title.
+//   description  absent leaves it; '' clears it; text replaces it.
+//   isBillable   absent leaves it.
+//   status       absent leaves it. `archived` is the soft delete - see
+//                migration 020. There is no DeleteProject schema.
+//
+// WHY IT CHANGED, AND WHAT IT SETTLES. Every field was required, so nothing
+// could edit a project without posting all four back. That had two
+// consequences and the second is the interesting one.
+//
+// The first: there was NO project edit screen at all. updateProjectAction
+// existed with no caller in the app, which is a capability nobody could
+// reach - a project's title, description and billable flag were fixed at
+// creation.
+//
+// The second: it forced ArchiveProjectSchema into existence. The note over
+// that schema says exactly why - archiving through a whole-row update means
+// "posting a whole form back, and a stale one quietly reverts somebody
+// else's edit". That hazard was real and it was a property of THIS shape,
+// not of archiving. A patch cannot revert a field it does not mention, so
+// the hazard is gone from every path rather than routed around by one.
+//
+// Archiving stays its own act anyway, and now for the reason that actually
+// justifies it: it is this module's delete, it deserves a confirmation and
+// its own audit line, and neither belongs in a form somebody opened to fix
+// a typo.
+// -------------------------------------------------------------------
 export const UpdateProjectSchema = z.object({
   projectId: projectIdSchema,
-  title: z.string().trim().min(1, "A project needs a title").max(PROJECT_TITLE_MAX_CHARS),
-  description: optionalText(DESCRIPTION_MAX_CHARS),
-  isBillable: z.boolean(),
-  // `archived` is the soft delete - see migration 016. There is no
-  // DeleteProject schema, deliberately.
-  status: z.enum(PROJECT_STATUSES),
+  title: z.string().trim().min(1, "A project needs a title").max(PROJECT_TITLE_MAX_CHARS).optional(),
+  description: patchText(DESCRIPTION_MAX_CHARS),
+  isBillable: z.boolean().optional(),
+  status: z.enum(PROJECT_STATUSES).optional(),
 });
 
 export type UpdateProjectInputDTO = z.input<typeof UpdateProjectSchema>;
@@ -991,12 +1267,21 @@ export type MarkProjectBudgetAssignedRequestDTO = z.infer<typeof MarkProjectBudg
 // -------------------------------------------------------------------
 // Archive a project: the module's soft delete, as an act of its own.
 //
-// UpdateProjectSchema carries `status` and can already set it, which is why
-// nothing was ever blocked for want of this - but it also carries the title,
-// the description and the billable flag, so archiving through it means
-// posting a whole form back, and a stale one quietly reverts somebody else's
-// edit. There is no DeleteProject schema, deliberately: time entries hold
-// tasks ON DELETE RESTRICT, so archiving is what removal means here.
+// THIS NOTE USED TO GIVE A DIFFERENT REASON, and the reason has been fixed
+// rather than restated. It said archiving through UpdateProjectSchema meant
+// posting a whole form back, where a stale one quietly reverts somebody
+// else's edit. True at the time, and a property of that schema being
+// replace-shaped; it is a patch now, so no path carries that hazard and
+// this schema is not what protects anybody from it.
+//
+// It stays because the reason that always mattered is the other one: this is
+// the module's DELETE. There is no DeleteProject schema and there will not
+// be - time entries hold tasks ON DELETE RESTRICT, and "we did not end up
+// doing this" is part of the record - so archiving is what removal means
+// here. A delete deserves a confirmation and an audit line of its own, and
+// neither belongs behind a status dropdown in a form somebody opened to fix
+// a typo. One field, so there is nothing to post back and nothing to
+// revert.
 // -------------------------------------------------------------------
 export const ArchiveProjectSchema = z.object({
   projectId: projectIdSchema,
@@ -1018,6 +1303,19 @@ export type ArchiveProjectRequest = z.infer<typeof ArchiveProjectSchema>;
 // always act on any project, and admins are who assign membership. The
 // screen warns; the validator does not refuse.
 // -------------------------------------------------------------------
+// UNUSED BY THE APP, AND KEPT KNOWINGLY. setup-members-panel.tsx saves PER
+// ROW - one addProjectMemberAction per person added, one
+// updateProjectMemberAction per band changed, one removeProjectMemberAction
+// behind a confirmation - so every interaction is already a single atomic
+// request and the failure mode above cannot arise there. There is no batch
+// to drop one request of.
+//
+// It stays rather than being deleted because the argument above is still
+// right for the UI it was written for: anything that ever edits the whole
+// team on one screen and saves once should post the SET, not a queue of
+// deltas. Wiring both at the same time is the mistake to avoid - two paths
+// writing the security boundary of this module, one of which the other's
+// audit trail does not explain.
 export const SetProjectMembersSchema = z.object({
   projectId: projectIdSchema,
   members: z
@@ -1224,7 +1522,7 @@ export type UpdateTaskRequestDTO = z.output<typeof UpdateTaskSchema>;
 // momentarily in a phase-and-column pair nobody dropped it on.
 //
 // `position` is the index the card should end up at. The service rewrites
-// its siblings, which migration 016 chose over fractional ordering: a column
+// its siblings, which migration 020 chose over fractional ordering: a column
 // holds tens of cards, not thousands, and rewriting ten rows is cheaper than
 // explaining fractional ordering to the next reader.
 // -------------------------------------------------------------------
@@ -1255,22 +1553,26 @@ export type DeleteTaskRequestDTO = z.infer<typeof DeleteTaskSchema>;
 // A file on a card: metadata in Postgres, bytes in Azure Blob, streamed back
 // through a download route and never handed out as a signed URL.
 //
-// THREE SHAPES, AND ONE DELIBERATE ABSENCE - because an upload is not one act
-// but two halves that are trusted differently.
+// TWO SHAPES, AND ONE DELIBERATE ABSENCE.
 //
-//   WHAT THE BROWSER SENDS is a task and a file name. That is
-//   UploadTaskAttachmentSchema, and it is validated like anything else here.
+//   WHAT THE BROWSER SENDS BESIDE THE BYTES is a task and a file name. That
+//   is UploadTaskAttachmentSchema, and it is validated like anything else
+//   here.
 //
-//   WHAT THE ROUTE THEN HANDS THE SERVICE is TaskAttachmentUpload, and it has
-//   NO SCHEMA ON PURPOSE. `mediaType` must have been derived by SNIFFING THE
-//   BYTES and `byteSize` must be the number actually written, so a parse of
-//   those two fields would check a shape while proving nothing about the only
-//   thing that matters - where the values came from - and would afterwards
-//   read as the check that had been done. The download route serves the
-//   stored type back with `nosniff`, so accepting a browser's `Content-Type`
-//   here is a stored-XSS decision made in the wrong file. The refusal is the
-//   type not being parseable from a payload at all; the service refusing a
-//   byteSize it was not given is the second line.
+//   THE BYTES THEMSELVES HAVE NO SCHEMA, and could not usefully have one.
+//   The media type is DERIVED by sniffing them in the service, never taken
+//   from the browser's `Content-Type` and never guessed from the name, and
+//   the byte count is the length of what was actually written. A schema over
+//   either would check a shape while proving nothing about the only thing
+//   that matters - where the value came from - and would afterwards read as
+//   the check that had been done. The download route serves the stored type
+//   back behind `nosniff`, so accepting a browser's word for it is a
+//   stored-XSS decision made in the wrong file.
+//
+//   (There was a third shape here, `TaskAttachmentUpload`, for a route that
+//   wrote the blob and handed the service a type and a size to record. The
+//   service takes the bytes now and does both itself, which is what let the
+//   archived-project refusal happen BEFORE the write instead of never.)
 //
 // The delete and the download hold an ATTACHMENT id rather than a task id, so
 // they share one schema: the row carries the task, the task carries the
@@ -1297,6 +1599,38 @@ export const UploadTaskAttachmentSchema = z.object({
 export type UploadTaskAttachmentInputDTO = z.input<typeof UploadTaskAttachmentSchema>;
 export type UploadTaskAttachmentRequestDTO = z.output<typeof UploadTaskAttachmentSchema>;
 
+// -------------------------------------------------------------------
+// WHAT A CARD WILL TAKE, named here and DERIVED FROM ONE PLACE.
+//
+// All three come from src/lib/ai/attachment-formats.ts, which is chat's
+// module, and the sharing is deliberate rather than incidental. That file
+// holds the only tested byte-sniffer in the app: it proves a format from the
+// header, measures an image in the same pass, and maps `html` to text/plain
+// - which is what stops a file uploaded here and served back from this
+// origin being stored XSS. A second allowlist would be a second answer to
+// "may this be served inline", and the wrong one would not fail a test.
+//
+// SO THE CEILING IS CHAT'S DOCUMENT CAP, and it is aliased rather than
+// re-chosen because inspectAttachment enforces its own limits regardless: a
+// larger number here would be refused a layer down with a message about
+// chat's cap, which is worse than being refused honestly. The route checks
+// this before reading the body so an oversized upload is turned away without
+// being buffered; the inspector is the real gate.
+//
+// IF A CARD EVER NEEDS TO CARRY MORE THAN THIS - a screen recording of a bug
+// is the obvious one - the answer is a delivery-owned sniffer with its own
+// allowlist and its own caps, NOT a bigger number here. The limits and the
+// formats travel together, and splitting them is how a video ends up
+// accepted by the route and rejected by the inspector.
+// -------------------------------------------------------------------
+export const MAX_TASK_ATTACHMENT_BYTES = MAX_DOCUMENT_BYTES;
+
+/** For the file input's `accept`, which is a hint to the picker and never a check. */
+export const TASK_ATTACHMENT_ACCEPT = AI_CHAT_ACCEPT_ATTRIBUTE;
+
+/** Said on screen, so nobody discovers the allowlist by being refused. */
+export const TASK_ATTACHMENT_ACCEPTED_SUMMARY = AI_CHAT_ACCEPTED_SUMMARY;
+
 // Removing one file, and serving one back. One shape for both, because the id
 // is the whole request in each case.
 export const TaskAttachmentIdSchema = z.object({
@@ -1304,28 +1638,6 @@ export const TaskAttachmentIdSchema = z.object({
 });
 
 export type TaskAttachmentIdRequestDTO = z.infer<typeof TaskAttachmentIdSchema>;
-
-// -------------------------------------------------------------------
-// What the upload path hands over once the bytes are safely in storage.
-//
-// NOT A REQUEST DTO. It is in the contract file because the route and the
-// service on either side of it are two modules, not because a browser sends
-// it, and NOTHING PARSES IT - see the absence described above. `mediaType`
-// must have been derived by sniffing the bytes and `byteSize` must be the
-// number of bytes actually written; both are then recorded as facts about the
-// file.
-//
-// `attachmentId` comes from the caller because the blob is written before the
-// row exists and the storage key is derived from it - which is also why no
-// caller ever supplies a storage key.
-// -------------------------------------------------------------------
-export type TaskAttachmentUpload = {
-  taskId: string;
-  attachmentId: string;
-  fileName: string;
-  mediaType: string;
-  byteSize: number;
-};
 
 // -------------------------------------------------------------------
 // ===================================================================
@@ -1680,6 +1992,63 @@ export const SetUserRateSchema = z.object({
 
 export type SetUserRateInputDTO = z.input<typeof SetUserRateSchema>;
 export type SetUserRateRequestDTO = z.output<typeof SetUserRateSchema>;
+
+// -------------------------------------------------------------------
+// ALL THREE BANDS FOR ONE PERSON, FROM ONE DATE.
+//
+// WHY THIS EXISTS BESIDE THE SINGLE-BAND SCHEMA ABOVE. Setting somebody up
+// meant opening a dialog, choosing a band, typing a date and two amounts,
+// saving, and then doing the whole thing twice more - for one person, whose
+// three bands almost always start on the same day and are decided in the same
+// conversation. The date was retyped each time, which is the field that must
+// match across the three or the person is priced differently in different
+// bands from different Mondays.
+//
+// So the date is ONCE here, and it is the reason this is not just a
+// convenience: three separate saves could not share one, and nothing stopped
+// them disagreeing.
+//
+// A BAND LEFT OUT IS LEFT ALONE, exactly as an absent key means elsewhere in
+// this file. That is what makes this safe to use for an edit rather than only
+// for first-time setup: somebody raising the standard rate posts standard,
+// and the discounted and high rates they never looked at are untouched
+// instead of being blanked by a form that carried empty boxes for them.
+//
+// AT LEAST ONE IS REQUIRED, because a payload naming a person and a date and
+// no rates is not an edit - it is a form somebody opened and saved without
+// typing anything, and answering it with a silent success would have them
+// believe a rate was set.
+//
+// chargeRate is REQUIRED WITHIN a band and costRate is not, which is the
+// single-band rule unchanged: a row with no charge rate is not a rate, and an
+// empty cost means nobody has recorded one so margin stays unknown rather
+// than reading as 100%.
+// -------------------------------------------------------------------
+const bandRateFields = z.object({
+  chargeRate: dollarsField,
+  costRate: optionalDollarsField,
+});
+
+export const SetUserRatesSchema = z.object({
+  userId: userIdSchema,
+  // ONE date for every band supplied. See the note above.
+  effectiveFrom: calendarDateField,
+  bands: z
+    .object({
+      [RATE_BANDS.DISCOUNTED]: bandRateFields.optional(),
+      [RATE_BANDS.STANDARD]: bandRateFields.optional(),
+      [RATE_BANDS.HIGH]: bandRateFields.optional(),
+    })
+    // Checked on the PARSED object rather than the payload, so a band sent
+    // as undefined counts as absent the same way a missing key does.
+    .refine(
+      (bands) => Object.values(bands).some((band) => band !== undefined),
+      "Enter a rate for at least one band",
+    ),
+});
+
+export type SetUserRatesInputDTO = z.input<typeof SetUserRatesSchema>;
+export type SetUserRatesRequestDTO = z.output<typeof SetUserRatesSchema>;
 
 // -------------------------------------------------------------------
 // Removing a rate ROW, not a rate: `user_rates` is a history, and deleting
@@ -2096,6 +2465,29 @@ export type BudgetGroupReportDTO = {
   marginCents?: number | null;
 };
 
+// -------------------------------------------------------------------
+// HOW MANY HOURS BLANKED THE TOTAL.
+//
+// PRESENT ONLY WHERE THE MONEY IS, and absent for the same reason the cents
+// are: a reader who may not see a figure has no business knowing how many
+// entries went into it either.
+//
+// It exists because "Not valued" was the whole answer, and it reads
+// identically for one hour logged before somebody's rate existed and for a
+// project nobody has ever priced. The first is a note to yourself; the second
+// is a rate card to fill in. Nothing on the screen distinguished them, which
+// is how a report doing exactly what it was designed to do came to be
+// reported as broken.
+//
+// PER SIDE, because on a non-billable project every charge snapshot is null
+// by design - a single combined count would be permanently non-zero there and
+// would cry wolf on the one project where a blank charge is correct.
+//
+// PROJECT LEVEL ONLY. A group's blank has the same cause as the project's and
+// the remedy is the same rate card, so repeating the count per row would be
+// the same sentence several times. The project line is where somebody looks
+// first.
+// -------------------------------------------------------------------
 export type BudgetReportDTO = {
   projectId: string;
   projectTitle: string;
@@ -2114,6 +2506,10 @@ export type BudgetReportDTO = {
   chargeableCents?: number | null;
   costCents?: number | null;
   marginCents?: number | null;
+  /** Entries with no charge snapshot. Present only when charge is. */
+  unvaluedChargeEntries?: number;
+  /** Entries with no cost snapshot. Present only when cost is. */
+  unvaluedCostEntries?: number;
 };
 
 // -------------------------------------------------------------------

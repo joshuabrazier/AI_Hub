@@ -435,7 +435,7 @@ function requireWorkDateNotInFuture(workDate: string): string {
 // The cost is captured anyway, because internal work costs the organisation
 // exactly what client work does, and a non-billable project with no cost on
 // it cannot be reported on at all. That is also what the column comments in
-// migration 016 say the two nulls mean.
+// migration 020 say the two nulls mean.
 //
 // ONE LOOKUP PER ENTRY, not the batch resolver. `resolveUserRatesAsAtRepo`
 // exists for a screenful of lines at once; a single log is a single

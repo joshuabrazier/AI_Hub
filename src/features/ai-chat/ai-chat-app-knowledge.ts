@@ -42,7 +42,7 @@ function areaFor(role: UserRole): string {
     case USER_ROLES.ADMIN:
       return "the admin area";
     case USER_ROLES.MANAGER:
-      return "the manager area, scoped to the teams an administrator has assigned them";
+      return "the manager area, scoped to the projects they are a member of";
     default:
       return "their own portal area";
   }

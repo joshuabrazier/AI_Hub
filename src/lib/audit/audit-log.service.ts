@@ -58,7 +58,6 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
       action: input.action,
       entityType: input.entityType,
       entityId: input.entityId ?? null,
-      teamId: input.teamId ?? null,
       subjectUserId: input.subjectUserId ?? null,
       summary: input.summary ?? null,
       changes: input.changes ?? null,

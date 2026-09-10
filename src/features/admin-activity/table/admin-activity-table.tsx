@@ -25,7 +25,6 @@ const ACTIVITY_SEARCH_KEYS: (keyof AuditLogEntryDTO & string)[] = [
   "actionLabel",
   "summary",
   "subjectUserName",
-  "teamName",
 ];
 
 // The local calendar day of an ISO timestamp, as "YYYY-MM-DD" - so the range
@@ -58,24 +57,14 @@ export function AdminActivityTable({ entries }: { entries: AuditLogEntryDTO[] })
       .sort((a, b) => a.localeCompare(b))
       .map((role) => ({ value: role, label: role }));
 
-    // An event belongs to at most one team, so unlike the people list this can
-    // be a facet: getValue has a single answer per row.
-    const teams = Array.from(
-      new Map(entries.filter((entry) => entry.teamId).map((entry) => [entry.teamId, entry.teamName])).entries(),
-    )
-      .sort((a, b) => a[1].localeCompare(b[1]))
-      .map(([value, label]) => ({ value, label }));
-
-    const facets: DataTableFacet<AuditLogEntryDTO>[] = [
+    // A TEAM FACET USED TO SIT HERE and went with teams themselves. The two
+    // left are the ones every event has an answer for, which is what a facet
+    // needs - a row with no value for one silently drops out of its own
+    // filter.
+    return [
       { id: "category", label: "Category", options: categories, getValue: (entry) => entry.category },
       { id: "role", label: "Actor role", options: roles, getValue: (entry) => entry.actorRole },
-    ];
-
-    if (teams.length > 0) {
-      facets.push({ id: "team", label: "Team", options: teams, getValue: (entry) => entry.teamId });
-    }
-
-    return facets;
+    ] satisfies DataTableFacet<AuditLogEntryDTO>[];
   }, [entries]);
 
   // Apply the date range first; the DataTable layers search / facets / sort on top.

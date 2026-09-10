@@ -24,7 +24,12 @@ correct, so a project copied from this base cannot deploy by merging:
    sets `node-linker=hoisted` so `node_modules` is a real tree, not pnpm's
    symlinked store. The standalone bundle copies `node_modules` verbatim, and
    symlinks break once unzipped on the App Service, so this setting is required.
-2. `pnpm build` with `output: "standalone"` (`next.config.ts`). Build-time env:
+2. `pnpm build` with `BUILD_STANDALONE=1`, which is what turns on
+   `output: "standalone"` in `next.config.ts`. It is opt-in because tracing and
+   copying `node_modules` is the slowest part of a build and `pnpm start` never
+   reads the result, so a local build skips it. **The workflow must set this
+   variable** - without it there is no `.next/standalone` and step 3 fails.
+   Build-time env:
    - `NEXT_PUBLIC_*` come from **repo Variables** (they are baked into the client bundle).
    - `DATABASE_URL` is a **repo Secret** supplied only so env validation passes. The build does **not** connect to the database: the public content pages are `dynamic = "force-dynamic"` and render on demand, so an unreachable build-time `DATABASE_URL` is fine.
    - `BETTER_AUTH_SECRET`, `FIELD_ENCRYPTION_KEY`, and the `EMAIL_*` keys are only **validated** at build with placeholder values. The running server re-reads the **real** values at runtime from Azure application settings.

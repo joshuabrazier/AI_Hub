@@ -37,7 +37,7 @@ export default async function PortalAccountPage() {
     <PortalPage
       eyebrow="Your portal"
       title="Account"
-      description="Your details and what we email you about. Change your email or password from Settings."
+      description="Your details and what we email you about. Your email address comes from your Microsoft account, so it is not changed here."
       size="narrow"
     >
       <div className="space-y-6">
@@ -56,8 +56,12 @@ export default async function PortalAccountPage() {
             <p className="truncate text-muted-foreground">{account.email}</p>
           </div>
 
+          {/* Named for what is actually behind it. It said "Security
+              settings", and Settings holds appearance and notifications -
+              no security controls at all, and no email or password change
+              either: Entra owns the identity. */}
           <Button variant="outline" size="sm" asChild>
-            <Link href={ROUTES.SETTINGS}>Security settings</Link>
+            <Link href={ROUTES.SETTINGS}>Appearance and notifications</Link>
           </Button>
         </div>
 

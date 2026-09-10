@@ -271,7 +271,12 @@ export function ProjectsCard({
 }) {
   return (
     <PanelCard
-      title="Hours per client"
+      // TITLED FOR WHAT IT SHOWS. It said "Hours per client" while its first
+      // column is "Project item" and its rows are project items - a project
+      // item belongs to a client but is not one, and a client with three of
+      // them appears three times. Somebody reading these as client totals
+      // would under-count every client that has more than one.
+      title="Hours per project item"
       description="Rolled up to the Project item, which is the level an invoice is written at."
       index={index}
     >

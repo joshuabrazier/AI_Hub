@@ -1,6 +1,6 @@
 import PortalPage from "@/features/layout/portal-page";
 
-import { QuickLinksCard, YourTeamsCard } from "./components/portal-home-cards";
+import { QuickLinksCard } from "./components/portal-home-cards";
 import { getPortalHomeService } from "./portal-home.service";
 
 // -------------------------------------------------------------------
@@ -17,12 +17,10 @@ export default async function PortalHomePage() {
     <PortalPage
       eyebrow="Your portal"
       title={home.firstName ? `Welcome back, ${home.firstName}` : "Welcome back"}
-      description="Your teams and anything waiting for you."
+      description="Where to go next."
     >
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <YourTeamsCard teams={home.teams} />
-        <QuickLinksCard />
-      </div>
+      {/* One card since YourTeamsCard went, so no two-column grid to sit in. */}
+      <QuickLinksCard />
     </PortalPage>
   );
 }

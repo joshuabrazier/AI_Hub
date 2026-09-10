@@ -12,15 +12,12 @@ import { INVITE_EXPIRY_DAYS } from "@/lib/constants";
 import {
   INVITATION_STATUS,
   NewUserInvitation,
-  TEAM_ROLE_LABELS,
   UpdateUser,
   UpdateUserInvitation,
   USER_ROLES,
   USER_ROLE_LABELS,
   UserRole,
 } from "@/lib/data/kysely-database-types";
-import { getTeamMembersForTeamsRepo } from "@/lib/data/repositories/team-members.repository";
-import { getActiveTeamsRepo, getAllTeamsRepo, getTeamByIdRepo } from "@/lib/data/repositories/teams.repository";
 import {
   addUserInvitationRepo,
   getPendingMemberUserInvitationsRepo,
@@ -49,9 +46,7 @@ import { handleError } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
 
 import {
-  groupTeamsByUserId,
   mapDBInvitationToAdminUserResponseDTO,
-  mapDBTeamToInvitableTeamDTO,
   mapDBUserToAdminUserResponseDTO,
 } from "./admin-users.mappers";
 import {
@@ -60,7 +55,6 @@ import {
   AdminUserDisplayStatusType,
   AdminUserResponseDTO,
   CancelAdminUserInvitationRequestDTO,
-  InvitableTeamDTO,
   ResetUserTwoFactorRequestDTO,
   UpdateAdminUserRequestDTO,
 } from "./admin-users.types";
@@ -105,19 +99,12 @@ export async function getAdminUsersService(): Promise<AdminUserResponseDTO[]> {
   try {
     await requireUserRole([USER_ROLES.ADMIN]);
 
-    const [staffUsers, memberUsers, staffInvitations, memberInvitations, teams] = await Promise.all([
+    const [staffUsers, memberUsers, staffInvitations, memberInvitations] = await Promise.all([
       getStaffUsersRepo(),
       getMemberUsersRepo(),
       getPendingStaffUserInvitationsRepo(),
       getPendingMemberUserInvitationsRepo(),
-      getAllTeamsRepo(),
     ]);
-
-    // One membership query for every team, then grouped in memory - the
-    // alternative is a query per user, which grows with the account list.
-    const memberships = await getTeamMembersForTeamsRepo(teams.map((team) => team.id));
-    const teamsByUserId = groupTeamsByUserId(memberships, teams);
-    const teamNameById = new Map(teams.map((team) => [team.id, team.name]));
 
     // One query for everyone with a second factor, for the same reason: a
     // per-row lookup would be a query per person on a screen that lists them
@@ -125,15 +112,11 @@ export async function getAdminUsersService(): Promise<AdminUserResponseDTO[]> {
     const twoFactorUserIds = await getUserIdsWithTwoFactorRepo();
 
     const userRows = [...staffUsers, ...memberUsers].map((user) =>
-      mapDBUserToAdminUserResponseDTO(
-        user,
-        teamsByUserId.get(user.id) ?? [],
-        twoFactorUserIds.has(user.id),
-      ),
+      mapDBUserToAdminUserResponseDTO(user, twoFactorUserIds.has(user.id)),
     );
 
     const invitationRows = [...staffInvitations, ...memberInvitations].map((invitation) =>
-      mapDBInvitationToAdminUserResponseDTO(invitation, teamNameById),
+      mapDBInvitationToAdminUserResponseDTO(invitation),
     );
 
     return [...userRows, ...invitationRows].sort(
@@ -214,22 +197,6 @@ export async function resetUserTwoFactorService(
     revalidatePath(ROUTES.ADMIN_USERS);
   } catch (error) {
     throw handleError("resetUserTwoFactorService", error);
-  }
-}
-
-// -------------------------------------------------------------------
-// The teams an invitation can place somebody into. Active only: a retired
-// team must not gain new members through the back door of an invite.
-// -------------------------------------------------------------------
-export async function getInvitableTeamsService(): Promise<InvitableTeamDTO[]> {
-  try {
-    await requireUserRole([USER_ROLES.ADMIN]);
-
-    const teams = await getActiveTeamsRepo();
-
-    return teams.map(mapDBTeamToInvitableTeamDTO);
-  } catch (error) {
-    throw handleError("getInvitableTeamsService", error);
   }
 }
 
@@ -349,7 +316,6 @@ export async function cancelAdminInvitationService(
       action: AUDIT_ACTIONS.USER_INVITATION_CANCELLED,
       entityType: AUDIT_ENTITY_TYPES.USER,
       entityId: userInvitation.id,
-      teamId: userInvitation.teamId,
       summary: `Cancelled the invitation for ${userInvitation.email}`,
     });
 
@@ -362,7 +328,7 @@ export async function cancelAdminInvitationService(
 }
 
 // -------------------------------------------------------------------
-// Invite somebody, optionally placing them into a team on acceptance.
+// Invite somebody. The invitation says what ROLE they land with.
 //
 // The inviter is the SESSION user, passed in by the action - never a field on
 // the form, or the trail would record whoever the client claimed to be.
@@ -383,28 +349,6 @@ export async function addAdminUserInvitationService(
       throw new UserWithEmailAlreadyExistsDisplayError();
     }
 
-    // A team id from the form is a claim, not a fact. Resolve it and confirm
-    // the team is real and still active before storing it - the invitation is
-    // what later grants membership, so an unchecked id here becomes access
-    // later.
-    let teamId: string | null = null;
-    let teamName: string | null = null;
-
-    if (requestDTO.teamId) {
-      const team = await getTeamByIdRepo(requestDTO.teamId);
-
-      if (!team || !team.isActive) {
-        throw new DisplayErrorMessage("That team is no longer available. Choose another.");
-      }
-
-      teamId = team.id;
-      teamName = team.name;
-    }
-
-    // teamRole without a teamId is rejected by a CHECK constraint, so drop it
-    // rather than sending a row the database will refuse.
-    const teamRole = teamId ? (requestDTO.teamRole ?? null) : null;
-
     const currentDate = new Date();
     const expiresAt = addDays(currentDate, INVITE_EXPIRY_DAYS);
 
@@ -416,8 +360,6 @@ export async function addAdminUserInvitationService(
       status: INVITATION_STATUS.PENDING,
       expiresAt,
       inviterId: sessionUserId,
-      teamId,
-      teamRole,
       createdAt: currentDate,
       updatedAt: currentDate,
     };
@@ -439,20 +381,10 @@ export async function addAdminUserInvitationService(
       action: AUDIT_ACTIONS.USER_INVITED,
       entityType: AUDIT_ENTITY_TYPES.USER,
       entityId: userInvitation.id,
-      teamId,
-      summary: teamName
-        ? `Invited ${requestDTO.email} as ${USER_ROLE_LABELS[requestDTO.userRole]}, joining ${teamName}`
-        : `Invited ${requestDTO.email} as ${USER_ROLE_LABELS[requestDTO.userRole]}`,
+      summary: `Invited ${requestDTO.email} as ${USER_ROLE_LABELS[requestDTO.userRole]}`,
       changes: {
         fields: diffFields([
           { field: "role", label: "Role", from: null, to: USER_ROLE_LABELS[requestDTO.userRole] },
-          { field: "team", label: "Team", from: null, to: teamName },
-          {
-            field: "teamRole",
-            label: "Role in team",
-            from: null,
-            to: teamRole ? TEAM_ROLE_LABELS[teamRole] : null,
-          },
         ]),
       },
     });

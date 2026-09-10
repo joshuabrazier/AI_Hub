@@ -8,7 +8,7 @@ import { ROUTES } from "@/lib/routes";
 
 import { BudgetReport } from "./components/budget-report";
 import { getProjectBudgetReportService } from "./delivery-rates.service";
-import { getMyProjectsService } from "./delivery-setup.service";
+import { getAllProjectsForAdminService } from "./delivery-setup.service";
 
 // -------------------------------------------------------------------
 // THE BUDGET REPORT: one project, its budget against the time logged on it,
@@ -35,17 +35,22 @@ export default async function DeliveryBudgetPage({ projectId }: { projectId?: st
 
   if (!projectId) {
     // -----------------------------------------------------------------
-    // NO PROJECT CHOSEN. `getMyProjectsService` is the caller's OWN
-    // memberships, not every project - it is the nav read, and it says so.
-    // That makes this a starting point rather than a picker, and the copy
-    // has to admit it: an admin who is on no projects would otherwise read
-    // an empty list as "no project is over budget".
+    // NO PROJECT CHOSEN, so this is the PICKER.
     //
-    // A real picker needs an all-projects read, which no service exposes.
-    // Reported rather than worked around here: a page does not touch a
-    // repository.
+    // It used to call getMyProjectsService, which is the NAV read - the
+    // caller's own memberships. That made this a starting point rather than
+    // a picker, and it left a real hole: an admin who was not a member of a
+    // project had no way to open its budget report at all, while the copy
+    // told them those projects were "reached from their own board" - a link
+    // that had since been removed from the board. Two wrongs pointing at
+    // each other.
+    //
+    // getAllProjectsForAdminService is every project, archived ones
+    // included, which is what a picker for an admin-only money screen should
+    // list. The report itself guards on requireRatesAdmin, so nothing here
+    // is offered that the service would then refuse.
     // -----------------------------------------------------------------
-    const projects = await getMyProjectsService();
+    const projects = await getAllProjectsForAdminService();
 
     return (
       <PortalPage
@@ -56,14 +61,14 @@ export default async function DeliveryBudgetPage({ projectId }: { projectId?: st
           <CardHeader>
             <CardTitle>Choose a project</CardTitle>
             <CardDescription>
-              A budget report covers one project. These are the projects you are a member of; other projects
-              are reached from their own board.
+              A budget report covers one project. Every project is listed, including archived ones - a
+              finished project is often the one worth reporting on.
             </CardDescription>
           </CardHeader>
           <CardContent>
             {projects.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                You are not a member of any project. Open a project and follow the budget report link on it.
+                No projects yet. Create one and its budget report appears here.
               </p>
             ) : (
               <ul className="space-y-2 text-sm">

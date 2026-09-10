@@ -10,7 +10,6 @@
 
 // The headline counts across the top of the page.
 export type DashboardStatsDTO = {
-  activeTeams: number;
   // A de-identified account is excluded as well as a deactivated one: its
   // personal data is gone, so it is a retained row rather than a person still
   // using the product.
@@ -34,6 +33,4 @@ export type AdminDashboardDTO = {
   // account has no usable name.
   firstName: string | null;
   stats: DashboardStatsDTO;
-  // Capped for display; `stats.activeTeams` is the true total.
-  teams: DashboardTeamDTO[];
 };

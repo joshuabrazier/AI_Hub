@@ -16,7 +16,7 @@ import { type Client, type NewClient, type UpdateClient } from "../kysely-databa
 // may see a client.
 //
 // THERE IS NO DELETE, and that is a decision rather than an omission.
-// `projects.client_id` is ON DELETE RESTRICT (migration 016), because
+// `projects.client_id` is ON DELETE RESTRICT (migration 020), because
 // removing a client with projects would take their time entries - billing
 // history - with it. Deactivating is the intended retirement path: it
 // covers the "created it twice by accident" case just as well, since an

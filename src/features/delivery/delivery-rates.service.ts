@@ -11,6 +11,7 @@ import { SessionUser } from "@/lib/auth/auth.types";
 import {
   RATE_BANDS,
   RATE_BAND_LABELS,
+  RATE_BAND_ORDER,
   USER_ROLES,
   type RateBand,
   type User,
@@ -26,6 +27,7 @@ import {
   getChargeAndCostCentsByProjectRepo,
   getLoggedMinutesByBudgetGroupRepo,
   getLoggedMinutesByProjectRepo,
+  valueUnpricedTimeEntriesForUserRepo,
   type ChargeAndCostCents,
 } from "@/lib/data/repositories/time-entries.repository";
 import {
@@ -34,6 +36,7 @@ import {
   listCurrentUserRatesRepo,
   listUserRatesForUserRepo,
   upsertUserRateRepo,
+  upsertUserRatesRepo,
 } from "@/lib/data/repositories/user-rates.repository";
 import {
   getMemberUsersRepo,
@@ -54,6 +57,7 @@ import {
   type BudgetReportDTO,
   type DeleteUserRateRequestDTO,
   type SetUserRateRequestDTO,
+  type SetUserRatesRequestDTO,
   type UserRateBandsDTO,
   type UserRateDTO,
   type UserRateDeletionImpactDTO,
@@ -367,6 +371,11 @@ export async function setUserRateService(requestDTO: SetUserRateRequestDTO): Pro
       costRateCents: requestDTO.costRate,
     });
 
+    // The same repair the bulk service performs, for the same reason - see
+    // the long note there. A rate corrected on one band values the hours
+    // that band now covers.
+    const valuedEntries = await valueUnpricedTimeEntriesForUserRepo(requestDTO.userId);
+
     // After the write, so a failed save is not recorded as a change. Both
     // parties are named: one admin deciding what another person's hour is
     // worth is a commercial act about somebody else.
@@ -381,6 +390,7 @@ export async function setUserRateService(requestDTO: SetUserRateRequestDTO): Pro
         effectiveFrom: saved.effectiveFrom,
         chargeRateCents: saved.chargeRateCents,
         costRateCents: saved.costRateCents,
+        valuedEntries,
       },
     });
 
@@ -389,6 +399,149 @@ export async function setUserRateService(requestDTO: SetUserRateRequestDTO): Pro
     return toUserRateDTO(saved);
   } catch (error) {
     throw handleError("setUserRateService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// ALL THREE BANDS FOR ONE PERSON, IN ONE TRANSACTION.
+//
+// WHY IT IS NOT A LOOP OVER setUserRateService. Three calls would be three
+// transactions and three audit entries, and the failure between them is the
+// reason this exists as its own service: a second save failing leaves the
+// person priced in one band from the new date and in another from the old
+// one, which is a pricing error nothing on any screen would show. Either all
+// the bands somebody entered move to the new date or none of them do.
+//
+// ONE AUDIT ENTRY, and it names every band written. Three entries for one
+// decision would read as three decisions to whoever is reconciling a client's
+// invoice, and the thing that happened was one conversation about what a
+// person is worth.
+//
+// A BAND NOT SUPPLIED IS NOT TOUCHED, which is the schema's doing rather
+// than this file's - the key is simply absent. That is what makes this safe
+// for an edit and not only for first-time setup.
+//
+// THE ENTITY ID ON THE AUDIT ROW is the first rate written. A row has to
+// point somewhere, there is no "rate set" entity above the individual rows,
+// and inventing one to hold three ids would be a table for an audit
+// convenience. The band list in `changes` is what actually answers "what
+// happened", and `subjectUserId` is what makes it findable for the person it
+// was about.
+//
+// EVERY GUARD IS THE SINGLE-BAND ONE. Admin only, the account must exist,
+// and a de-identified account is refused - it is dormant and scrubbed and
+// will never log another hour, so a rate effective from any date is a figure
+// nobody can use. Existing rows are left alone either way, because the time
+// already logged against them is billing history.
+// -------------------------------------------------------------------
+export async function setUserRatesService(requestDTO: SetUserRatesRequestDTO): Promise<UserRateDTO[]> {
+  try {
+    await requireRatesAdmin();
+
+    const person = await getUserByUserIdRepo(requestDTO.userId);
+
+    if (!person) {
+      throw new DisplayErrorMessage("That person no longer has an account.");
+    }
+
+    if (person.deidentifiedAt) {
+      throw new DisplayErrorMessage(
+        "That account has been de-identified, so a new rate cannot be set for it. Its existing rates are unchanged.",
+      );
+    }
+
+    // Ordered rather than taken from Object.entries, so the audit summary
+    // and the returned rows read discounted, standard, high every time
+    // regardless of the order the keys arrived in.
+    const supplied = RATE_BAND_ORDER.flatMap((band) => {
+      const entered = requestDTO.bands[band];
+
+      return entered ? [{ band, ...entered }] : [];
+    });
+
+    // The schema refuses this, so reaching it means a caller bypassed the
+    // boundary. A plain error rather than a DisplayErrorMessage: there is no
+    // form behind it to show a sentence to.
+    if (supplied.length === 0) {
+      throw new Error("setUserRatesService was given no bands to write");
+    }
+
+    // ONE CALL, ONE TRANSACTION, and the transaction lives in the
+    // repository because that is the only layer here that touches the
+    // database - deciding what shares one included.
+    const saved = await upsertUserRatesRepo(
+      supplied.map((entry) => ({
+        // Spent on a conflict, which is the cheaper half of the trade - see
+        // the single-band service above.
+        id: generateId(),
+        userId: requestDTO.userId,
+        band: entry.band,
+        // THE SAME DATE FOR EVERY BAND. Three separate saves could not
+        // promise that, and nothing stopped them disagreeing.
+        effectiveFrom: requestDTO.effectiveFrom,
+        // The schema converted dollars to integer cents at the boundary, so
+        // there is no money arithmetic here.
+        chargeRateCents: entry.chargeRate,
+        costRateCents: entry.costRate,
+      })),
+    );
+
+    // -----------------------------------------------------------------
+    // VALUE THE HOURS THIS RATE NOW COVERS.
+    //
+    // Without this the feature had a dead end that read as a broken report.
+    // A time entry snapshots its cents when it is LOGGED, and rates are
+    // almost always entered after somebody has started - so their existing
+    // hours carried no snapshot, nothing ever filled them in, and the budget
+    // report said "not valued" for the whole project forever. One unvalued
+    // entry is enough: the money read propagates unknown on purpose.
+    //
+    // ONLY NULLS ARE WRITTEN, which is what keeps the module's promise that
+    // an hour is worth what it was worth when it was worked. An hour already
+    // valued is untouched; an hour never valued gains a value, and there was
+    // nothing there to restate. Each entry resolves the rate as at ITS OWN
+    // work date, so a rate effective from July leaves June visibly unvalued
+    // rather than pricing it at a rate that did not exist yet.
+    //
+    // AFTER the write and outside its transaction, deliberately. The rates
+    // are the thing being saved; this is a consequence of them. If it fails,
+    // the rates are still correct and the entries are exactly as unvalued as
+    // they were a moment ago - where rolling the rates back would lose the
+    // work somebody just did over a repair that can be retried by saving
+    // again.
+    // -----------------------------------------------------------------
+    const valuedEntries = await valueUnpricedTimeEntriesForUserRepo(requestDTO.userId);
+
+    // After the write, so a failed save is not recorded as a change. Both
+    // parties are named: one admin deciding what another person's hour is
+    // worth is a commercial act about somebody else.
+    await recordAuditEvent({
+      action: AUDIT_ACTIONS.USER_RATE_SET,
+      entityType: AUDIT_ENTITY_TYPES.USER_RATE,
+      entityId: saved[0].id,
+      subjectUserId: requestDTO.userId,
+      summary:
+        `${saved.map((rate) => RATE_BAND_LABELS[rate.band]).join(", ")} ` +
+        `${saved.length === 1 ? "rate" : "rates"} for ${userDisplayName(person)} from ${requestDTO.effectiveFrom}`,
+      changes: {
+        effectiveFrom: requestDTO.effectiveFrom,
+        bands: saved.map((rate) => ({
+          band: rate.band,
+          chargeRateCents: rate.chargeRateCents,
+          costRateCents: rate.costRateCents,
+        })),
+        // Recorded because it is a change to BILLING DATA that this save
+        // caused without anybody asking for it by name. An admin reading the
+        // log later needs to see that setting a rate valued 40 hours.
+        valuedEntries,
+      },
+    });
+
+    revalidateRatesViews();
+
+    return saved.map(toUserRateDTO);
+  } catch (error) {
+    throw handleError("setUserRatesService", error);
   }
 }
 
@@ -769,6 +922,19 @@ async function buildBudgetReport(
     // not a gap to be filled in passing.
     ungrouped: budgetProgress(0, loggedByGroup.get(null) ?? 0),
     ...moneyFields(visibility, projectCents),
+    // Beside the money and gated with it: a reader who may not see a figure
+    // has no business knowing how many entries went into it.
+    ...(visibility === "none" || projectCents === undefined
+      ? {}
+      : {
+          unvaluedChargeEntries: projectCents.unvaluedChargeEntries,
+          // Only where cost is visible at all. On `chargeOnly` the cost
+          // figure is withheld, so a count explaining its blank would be
+          // explaining something the reader cannot see.
+          ...(visibility === "full"
+            ? { unvaluedCostEntries: projectCents.unvaluedCostEntries }
+            : {}),
+        }),
   };
 }
 

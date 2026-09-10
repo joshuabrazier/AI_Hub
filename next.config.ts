@@ -55,10 +55,21 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // Build a self-contained server (.next/standalone) so deploys ship a small,
+  // A self-contained server in .next/standalone, so a deploy ships a small,
   // ready-to-run artifact (node server.js) instead of building on the App
   // Service. Deploy copies .next/static and public into it (see deploy.yml).
-  output: "standalone",
+  //
+  // OPT-IN, because producing it costs real time and `pnpm start` never reads
+  // it - it serves .next directly. Next traces the module graph and then
+  // COPIES most of an 800 MB node_modules in here, which measured cold on
+  // Windows is 79s against 56s without: about 23 seconds, or a third of the
+  // build, spent on an artifact a local run then ignores.
+  //
+  // The deploy workflow sets BUILD_STANDALONE and gets exactly what it got
+  // before; it also fails loudly if this folder is missing, so the two cannot
+  // drift apart quietly. Set the variable yourself only to prove the deploy
+  // package on your own machine.
+  output: process.env.BUILD_STANDALONE ? "standalone" : undefined,
   // Pin the workspace root to this project so Turbopack doesn't infer it from a
   // stray lockfile elsewhere on the machine (which 404s the whole app in dev).
   turbopack: {

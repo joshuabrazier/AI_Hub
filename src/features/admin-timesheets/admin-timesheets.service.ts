@@ -417,10 +417,14 @@ export async function getAdminTimesheetsService(
     // here should narrow nothing rather than empty the screen.
     const offeredPeople = new Set(personOptions.map((option) => option.value));
 
-    const people = (request.person ?? "")
+    // WHAT WAS ASKED FOR, kept separately from what survived validation. The
+    // difference between the two is the whole point - see the filter below.
+    const requestedPeople = (request.person ?? "")
       .split(",")
       .map((value) => value.trim())
-      .filter((value) => value.length > 0 && value !== ALL_CATEGORIES && offeredPeople.has(value));
+      .filter((value) => value.length > 0 && value !== ALL_CATEGORIES);
+
+    const people = requestedPeople.filter((value) => offeredPeople.has(value));
 
     // The single-person view, for the screens that are about one person by
     // definition. Exactly one selected gives that id; none or several give
@@ -439,7 +443,26 @@ export async function getAdminTimesheetsService(
         // The fact still speaks Jira here: its projectKey is the client.
         (client === ALL_CATEGORIES || row.projectKey === client) &&
         (project === ALL_CATEGORIES || row.parentKey === project) &&
-        (people.length === 0 || peopleSet.has(row.personId)) &&
+        // -------------------------------------------------------------
+        // A PERSON WAS ASKED FOR, SO ONLY THAT PERSON'S ROWS PASS - even
+        // when the answer is none of them.
+        //
+        // This read `people.length === 0`, and `people` is what SURVIVED
+        // validation against this period's own option list. That list comes
+        // from the period's worklogs, so somebody with a staff target who
+        // logged nothing this month is not in it: their id was dropped,
+        // `people` went empty, and an empty `people` meant NO NARROWING AT
+        // ALL. /admin/timesheets/staff/[personId] forces person=<id>, so
+        // that page showed the whole company's time under one person's name,
+        // with the tiles and the chart to match.
+        //
+        // Asking against `requestedPeople` keeps the narrowing whenever
+        // anybody was named. An id that is not in the period now yields an
+        // empty report, which is the truthful answer to "what did this
+        // person log" - and a far better one than everybody's hours wearing
+        // their name.
+        // -------------------------------------------------------------
+        (requestedPeople.length === 0 || peopleSet.has(row.personId)) &&
         // 'unset' means the row's billable flag is null - its own state, never
         // folded in with non-billable.
         (billable === ALL_CATEGORIES ||

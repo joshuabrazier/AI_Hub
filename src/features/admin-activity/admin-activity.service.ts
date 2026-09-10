@@ -3,7 +3,6 @@ import "server-only";
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { USER_ROLES, USER_ROLE_LABELS, UserRole } from "@/lib/data/kysely-database-types";
 import { getAuditLogsRepo } from "@/lib/data/repositories/audit-logs.repository";
-import { getAllTeamsRepo } from "@/lib/data/repositories/teams.repository";
 import { getUsersByIdsRepo } from "@/lib/data/repositories/users.repository";
 import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
@@ -57,14 +56,13 @@ export async function getAuditLogService(): Promise<AuditLogEntryDTO[]> {
 
     // Resolve the soft references in two batched lookups rather than one per
     // row. Both can miss: team_id and subject_user_id have no foreign key, so
-    // history outlives the team or person it names.
+    // history outlives the person it names.
     const subjectUserIds = Array.from(
       new Set(logs.map((log) => log.subjectUserId).filter((id): id is string => id !== null)),
     );
 
-    const [teams, subjectUsers] = await Promise.all([getAllTeamsRepo(), getUsersByIdsRepo(subjectUserIds)]);
+    const subjectUsers = await getUsersByIdsRepo(subjectUserIds);
 
-    const teamNameById = new Map(teams.map((team) => [team.id, team.name]));
     const userNameById = new Map(subjectUsers.map((user) => [user.id, user.name]));
 
     return logs.map((log) => {
@@ -86,8 +84,6 @@ export async function getAuditLogService(): Promise<AuditLogEntryDTO[]> {
         actionLabel: meta.label,
         category: meta.category,
         summary: log.summary ?? "",
-        teamId: log.teamId ?? "",
-        teamName: log.teamId ? (teamNameById.get(log.teamId) ?? "(removed team)") : "",
         subjectUserId: log.subjectUserId ?? "",
         subjectUserName: log.subjectUserId ? (userNameById.get(log.subjectUserId) ?? "(removed user)") : "",
         entityType: log.entityType,

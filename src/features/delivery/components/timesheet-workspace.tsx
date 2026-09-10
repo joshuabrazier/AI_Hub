@@ -29,7 +29,7 @@ import {
   type TimesheetCatalogueDTO,
 } from "./timesheet-catalogue";
 import { TimesheetCellDialog } from "./timesheet-cell-dialog";
-import { TimesheetEstimateDialog } from "./timesheet-estimate-dialog";
+import { EstimateAdjustDialog } from "./estimate-adjust-dialog";
 import { TimesheetGrid } from "./timesheet-grid";
 import { readAddedRows, writeAddedRows } from "./timesheet-row-store";
 
@@ -319,7 +319,7 @@ export function TimesheetWorkspace({
       />
 
       {estimateTask && estimateProject && (
-        <TimesheetEstimateDialog
+        <EstimateAdjustDialog
           key={estimateTask.taskId}
           project={estimateProject}
           task={estimateTask}

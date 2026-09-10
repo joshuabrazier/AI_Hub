@@ -28,6 +28,7 @@ import {
   isBedrockConfigured,
 } from "@/lib/ai/bedrock-client";
 import { buildHouseVoiceBlock } from "@/lib/ai/house-voice";
+import { streamModelEvents } from "@/lib/ai/model-stream";
 import { type StreamEvent } from "@/lib/ai/stream-protocol";
 import { type TurnGuard, type TurnSnapshot } from "@/lib/ai/turn-guard";
 import {
@@ -1502,22 +1503,56 @@ export async function* streamAiChatReplyService(
           : new Error("The turn was stopped before this pass began.");
       }
 
-      const response = await getBedrockClient().send(
-        new ConverseStreamCommand({
-          modelId: BEDROCK_MODEL_ID,
-          system,
-          messages,
-          inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
-          ...(isFinalRound ? {} : { toolConfig: CHAT_TOOL_CONFIG }),
-        }),
-        // ONE SIGNAL FOR EVERY PASS, so the deadline bounds the turn rather
-        // than each request within it.
-        { abortSignal: guard?.signal },
+      // -------------------------------------------------------------
+      // ASKED AGAIN IF IT NEVER STARTS.
+      //
+      // Bedrock can accept a request, hold the connection and send nothing:
+      // no error, so the SDK's ladder never engages, and the socket is not
+      // idle, so its idle timeout never fires either. The only thing that
+      // noticed was this phase's own budget seventy-five seconds later, and
+      // what that does is abort the turn - which the SDK will never retry,
+      // because a cancellation is not a failure. One stall, one dead turn.
+      //
+      // streamModelEvents bounds TIME TO FIRST EVENT separately and re-issues
+      // the request if nothing comes. It stops retrying the moment anything
+      // arrives, so a reader can never see the start of an answer twice, and
+      // it refuses to retry any failure with a name of its own. See
+      // model-stream.ts for why re-asking is safe here and where it is not.
+      //
+      // THE COMMAND IS BUILT PER ATTEMPT, inside the callback. Reusing one
+      // already sent is how a retry silently becomes a replay.
+      //
+      // The turn's signal still governs everything: it is passed straight
+      // through, so a spent budget or a closed tab ends this immediately
+      // rather than buying another attempt.
+      // -------------------------------------------------------------
+      const events = streamModelEvents(
+        (attemptSignal) =>
+          getBedrockClient()
+            .send(
+              new ConverseStreamCommand({
+                modelId: BEDROCK_MODEL_ID,
+                system,
+                messages,
+                inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
+                ...(isFinalRound ? {} : { toolConfig: CHAT_TOOL_CONFIG }),
+              }),
+              { abortSignal: attemptSignal },
+            )
+            .then((response) => response.stream),
+        {
+          signal: guard?.signal,
+          // Recorded rather than only logged: a turn that answered on its
+          // second attempt looks healthy from outside, and the count is the
+          // only sign that the endpoint is struggling.
+          onSilentAttempt: (attempt) => {
+            console.warn(
+              `[ai-chat] the model sent nothing on attempt ${attempt}; asking again (subject ${subject.id})`,
+            );
+            guard?.note("silentModelAttempts", attempt);
+          },
+        },
       );
-
-      if (!response.stream) {
-        throw new Error("Bedrock returned no stream");
-      }
 
       // Content blocks arrive interleaved and are identified by index, so a
       // tool call is assembled from three events: a start naming it, deltas
@@ -1526,7 +1561,7 @@ export async function* streamAiChatReplyService(
       let roundText = "";
       let stopReason: string | undefined;
 
-      for await (const event of response.stream) {
+      for await (const event of events) {
         // -------------------------------------------------------------
         // EVERY event, before anything is inspected.
         //

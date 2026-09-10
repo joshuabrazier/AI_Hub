@@ -5,8 +5,8 @@ import { USER_ROLES, type UserRole } from "@/lib/data/kysely-database-types";
 //
 // Three authenticated areas, each with its own layout and nav:
 //   /admin   - admins. Everything.
-//   /manage  - managers. Scoped to the teams they have been assigned to.
-//   /portal  - members. Their own teams, AI chat and account.
+//   /manage  - managers. The projects they are on, and their own time.
+//   /portal  - members. Their own work, AI chat and account.
 //
 // The member portal deliberately carries NO id in its path. The previous
 // design namespaced it as /client/[clientId], which had to be checked against
@@ -44,7 +44,6 @@ export const ROUTES = {
   ADMIN: "/admin",
   ADMIN_DASHBOARD: "/admin/dashboard",
   ADMIN_USERS: "/admin/users",
-  ADMIN_TEAMS: "/admin/teams",
   ADMIN_AI_CHAT: "/admin/ai-chat",
   ADMIN_TRANSCRIPTION: "/admin/transcription",
   // The in-meeting prompt as its own window. Top level and outside the three
@@ -121,17 +120,16 @@ export const ROUTES = {
   adminDeliveryBudgetForProject: (projectId: string) =>
     `/admin/delivery-budget?projectId=${encodeURIComponent(projectId)}`,
 
-  // Manager area. Every one of these is scoped server-side to the teams the
-  // signed-in manager has been assigned to; the team id in the URL is for
+  // Manager area. Every one of these is scoped server-side from the SESSION -
+  // a project by its membership, everything else to the signed-in person. No
+  // id in any of these paths is proof of anything; it is for
   // routing only and is always re-checked against membership.
   MANAGE: "/manage",
-  MANAGE_TEAMS: "/manage/teams",
   MANAGE_AI_CHAT: "/manage/ai-chat",
   MANAGE_TRANSCRIPTION: "/manage/transcription",
   MANAGE_SUMMARIES: "/manage/summaries",
   MANAGE_PROJECTS: "/manage/projects",
   MANAGE_TIMESHEET: "/manage/timesheet",
-  manageTeam: (teamId: string) => `/manage/teams/${teamId}`,
   manageProject: (projectId: string) => `/manage/projects/${encodeURIComponent(projectId)}`,
 
   // Member portal

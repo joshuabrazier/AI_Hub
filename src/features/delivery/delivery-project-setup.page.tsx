@@ -5,14 +5,16 @@ import { ADMIN_USER_DISPLAY_STATUS, USER_OR_INVITATION } from "@/features/admin-
 import PortalPage from "@/features/layout/portal-page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, USER_ROLES } from "@/lib/data/kysely-database-types";
 import { ROUTES } from "@/lib/routes";
 
 import { SetupBudgetGroupsPanel } from "./components/setup-budget-groups-panel";
-import { SetupBudgetNudge } from "./components/setup-budget-nudge";
 import { SetupMembersPanel, type SetupAssignablePerson } from "./components/setup-members-panel";
 import { SetupPhasesPanel } from "./components/setup-phases-panel";
+import { SetupProjectArchiveButton } from "./components/setup-project-archive-button";
+import { SetupProjectEditDialog } from "./components/setup-project-edit-dialog";
 import { SetupProjectCreateForm } from "./components/setup-project-create-form";
 import {
   getClientOptionsService,
@@ -105,12 +107,46 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
       description="Who is on the project, how its budget is pooled, and the phases its board is organised under."
       actions={
         <div className="flex flex-wrap gap-2">
+          {/* -------------------------------------------------------------
+              EDITING A PROJECT, WHICH THIS SCREEN COULD NOT DO.
+
+              updateProjectAction had existed with no caller anywhere in the
+              app, so a project's title, description and billable flag were
+              whatever the create form was given, permanently.
+
+              The dialog is seeded from `detail`, which carries all four
+              editable fields - the summary has the title, status and
+              billable flag, and the detail read adds the description - so
+              the form opens on the real values rather than on blanks. That
+              matters more than it looks: the description is the one field
+              nobody re-reads until they need it, and a form built from a
+              shape that did not carry it would post an empty box over
+              whatever was written.
+              ------------------------------------------------------------- */}
+          <SetupProjectEditDialog
+            project={{
+              id: detail.project.id,
+              title: detail.project.title,
+              description: detail.description,
+              isBillable: detail.project.isBillable,
+              status: detail.project.status,
+            }}
+          />
           <Button asChild variant="outline">
             <Link href={ROUTES.adminProject(detail.project.id)}>Open the board</Link>
           </Button>
-          <Button asChild variant="outline">
-            <Link href={ROUTES.adminDeliveryBudgetForProject(detail.project.id)}>Budget report</Link>
-          </Button>
+          {/* The budget report link is deliberately NOT here. It was on this
+              header and on the board's, which between them is every project
+              screen - see the note on the board page. The sidebar's Budgets
+              entry is the way in. */}
+          {/* Only where there is something to do - restoring an archived
+              project is an edit, and the dialog above owns it. */}
+          {isArchived ? null : (
+            <SetupProjectArchiveButton
+              projectId={detail.project.id}
+              projectTitle={detail.project.title}
+            />
+          )}
         </div>
       }
     >
@@ -130,19 +166,26 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
           // project. Membership and budget groups still work - restoring
           // the project should bring back the team that was on it.
           <p role="status" className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-foreground">
-            This project is archived. Its phases cannot be changed until an administrator makes it active again.
+            This project is archived. Its phases cannot be changed until an administrator makes it active
+            again, which is a status change in <strong>Edit project</strong>.
           </p>
         )}
 
-        <SetupBudgetNudge
-          projectId={detail.project.id}
-          budgetAssignedAt={detail.budgetAssignedAt}
-          groups={groups}
-          // Every task estimate on the project. `rollup.budgetMinutes` is
-          // that total - see getProjectDetailService, which builds the
-          // rollup from the project's estimates against its logged time.
-          assignedMinutes={detail.rollup.budgetMinutes}
-        />
+        {/* -----------------------------------------------------------
+            THE BUDGET NUDGE IS NOT HERE ANY MORE. It moved to the board.
+
+            It was the FIRST panel on this page and the LAST thing anybody
+            does, which is the wrong way round on a screen people work down
+            in order - but the placement was the smaller half of the problem.
+            What it measures is the total of the TASK ESTIMATES against the
+            budgeted pool, and there are no tasks on this screen: a project
+            reaches setup with none, and the board is where they are made. So
+            it sat at the top reading 0% of the budget assigned, on every
+            project, until somebody went and did the work somewhere else.
+
+            On the board it has something to say, and it is where the person
+            who has just finished estimating already is.
+            ----------------------------------------------------------- */}
 
         <SetupMembersPanel projectId={detail.project.id} members={detail.members} people={people} />
 
@@ -151,10 +194,43 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
         <SetupPhasesPanel
           projectId={detail.project.id}
           phases={detail.phases}
-          // The server's own answer to "lead or admin", never re-derived
-          // from a role in a component.
-          canEditTasks={detail.project.canEditTasks}
+          // The server's own answer to "lead or admin", never re-derived from
+          // a role in a component - AND the archived check, which it does not
+          // carry: canEditProjectTasks looks at role and lead, never at
+          // status. Without this the banner above says phases cannot be
+          // changed while Add, Rename, Reorder and Delete all stay live, and
+          // the service refuses each one only after somebody has filled it in.
+          canEditTasks={detail.project.canEditTasks && !isArchived}
         />
+
+        {/* -----------------------------------------------------------
+            THE END OF THE JOB, AT THE END OF THE PAGE.
+
+            Creating a project lands here with nothing on it - no members, no
+            phases, no groups - and the panels above are that work, in the
+            order it is done. There was no last step: the page simply stopped,
+            and the only way on was a link in the header, which is where
+            somebody looks to LEAVE a screen rather than to finish one.
+
+            It is a link and not a save. Every panel above writes as it goes,
+            so nothing is pending by the time anybody reaches this - which is
+            why it says the work is done rather than offering to do it.
+            ----------------------------------------------------------- */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Ready to go</CardTitle>
+            <CardDescription>
+              Everything above saves as you change it, so there is nothing left to submit. The board is where
+              phases get their tasks - and where the last of the planning, assigning the budget to those tasks,
+              is finished off.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <Link href={ROUTES.adminProject(detail.project.id)}>Open the board</Link>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     </PortalPage>
   );

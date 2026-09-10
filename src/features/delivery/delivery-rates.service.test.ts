@@ -81,6 +81,7 @@ vi.mock("@/lib/data/repositories/time-entries.repository", () => ({
   getChargeAndCostCentsByProjectRepo: vi.fn(),
   getLoggedMinutesByBudgetGroupRepo: vi.fn(),
   getLoggedMinutesByProjectRepo: vi.fn(),
+  valueUnpricedTimeEntriesForUserRepo: vi.fn(),
 }));
 
 vi.mock("@/lib/data/repositories/user-rates.repository", () => ({
@@ -89,6 +90,7 @@ vi.mock("@/lib/data/repositories/user-rates.repository", () => ({
   listCurrentUserRatesRepo: vi.fn(),
   listUserRatesForUserRepo: vi.fn(),
   upsertUserRateRepo: vi.fn(),
+  upsertUserRatesRepo: vi.fn(),
 }));
 
 vi.mock("@/lib/data/repositories/users.repository", () => ({
@@ -109,6 +111,7 @@ import {
   getChargeAndCostCentsByProjectRepo,
   getLoggedMinutesByBudgetGroupRepo,
   getLoggedMinutesByProjectRepo,
+  valueUnpricedTimeEntriesForUserRepo,
 } from "@/lib/data/repositories/time-entries.repository";
 import {
   deleteUserRateRepo,
@@ -116,6 +119,7 @@ import {
   listCurrentUserRatesRepo,
   listUserRatesForUserRepo,
   upsertUserRateRepo,
+  upsertUserRatesRepo,
 } from "@/lib/data/repositories/user-rates.repository";
 import {
   getMemberUsersRepo,
@@ -132,6 +136,7 @@ import {
   getUserRatesOverviewService,
   rateDeletionConsequenceOf,
   setUserRateService,
+  setUserRatesService,
 } from "./delivery-rates.service";
 
 const mockRequireUserRole = vi.mocked(requireUserRole);
@@ -148,6 +153,20 @@ const mockGetRateById = vi.mocked(getUserRateByIdRepo);
 const mockCurrentRates = vi.mocked(listCurrentUserRatesRepo);
 const mockRatesForUser = vi.mocked(listUserRatesForUserRepo);
 const mockUpsertRate = vi.mocked(upsertUserRateRepo);
+const mockUpsertRates = vi.mocked(upsertUserRatesRepo);
+const mockValueUnpriced = vi.mocked(valueUnpricedTimeEntriesForUserRepo);
+
+/**
+ * The project money read, with the unvalued counts these fixtures are not
+ * about. Defaulted to 0 rather than left off, so a test about a null TOTAL is
+ * not also making a claim about how many entries caused it - the two are
+ * separate facts and the report shows them separately.
+ */
+const projectCents = (cents: { chargeCents: number | null; costCents: number | null }) => ({
+  ...cents,
+  unvaluedChargeEntries: 0,
+  unvaluedCostEntries: 0,
+});
 const mockMemberUsers = vi.mocked(getMemberUsersRepo);
 const mockStaffUsers = vi.mocked(getStaffUsersRepo);
 const mockGetUser = vi.mocked(getUserByUserIdRepo);
@@ -273,6 +292,7 @@ function repositoryDefaults(): void {
   mockCurrentRates.mockResolvedValue([]);
   mockRatesForUser.mockResolvedValue([]);
   mockGetUser.mockResolvedValue(person());
+  mockValueUnpriced.mockResolvedValue(0);
   mockGetRateById.mockResolvedValue(rate(RATE_ID, "2026-06-01"));
   mockUpsertRate.mockResolvedValue(rate(RATE_ID, "2026-06-01"));
   mockDeleteRate.mockResolvedValue(1);
@@ -284,7 +304,7 @@ function repositoryDefaults(): void {
   mockGroupMinutes.mockResolvedValue([]);
   // The honest default for a project nobody has logged an hour against:
   // null on both sides, never nought.
-  mockProjectCents.mockResolvedValue({ chargeCents: null, costCents: null });
+  mockProjectCents.mockResolvedValue(projectCents({ chargeCents: null, costCents: null }));
   mockGroupCents.mockResolvedValue([]);
 }
 
@@ -422,7 +442,7 @@ describe("every exported function is admin-only", () => {
 // -------------------------------------------------------------------
 describe("the budget report's money", () => {
   it("carries all three money KEYS for an admin, present even when the value is unknown", async () => {
-    mockProjectCents.mockResolvedValue({ chargeCents: null, costCents: null });
+    mockProjectCents.mockResolvedValue(projectCents({ chargeCents: null, costCents: null }));
 
     const report = await getProjectBudgetReportService(PROJECT_ID);
 
@@ -440,7 +460,7 @@ describe("the budget report's money", () => {
     // are asserted, because `?? 0` passes a null check written as
     // `not.toBe(undefined)`.
     mockProjectMinutes.mockResolvedValue([]);
-    mockProjectCents.mockResolvedValue({ chargeCents: null, costCents: null });
+    mockProjectCents.mockResolvedValue(projectCents({ chargeCents: null, costCents: null }));
 
     const report = await getProjectBudgetReportService(PROJECT_ID);
 
@@ -459,7 +479,7 @@ describe("the budget report's money", () => {
     // The sharpest case, and the one a plausible wrong implementation gets
     // wrong: `charge - (cost ?? 0)` reports the whole charge as margin,
     // which is the one wrong answer that reads as good news.
-    mockProjectCents.mockResolvedValue({ chargeCents: 500_000, costCents: null });
+    mockProjectCents.mockResolvedValue(projectCents({ chargeCents: 500_000, costCents: null }));
 
     const report = await getProjectBudgetReportService(PROJECT_ID);
 
@@ -470,7 +490,7 @@ describe("the budget report's money", () => {
   });
 
   it("subtracts the two figures Postgres already summed, and nothing else", async () => {
-    mockProjectCents.mockResolvedValue({ chargeCents: 500_000, costCents: 200_000 });
+    mockProjectCents.mockResolvedValue(projectCents({ chargeCents: 500_000, costCents: 200_000 }));
 
     const report = await getProjectBudgetReportService(PROJECT_ID);
 
@@ -944,5 +964,254 @@ describe("rateDeletionConsequenceOf", () => {
     const result = rateDeletionConsequenceOf(only, [only, only]);
 
     expect(result.leavesGap).toBe(true);
+  });
+});
+
+// ===================================================================
+// SETTING EVERY BAND AT ONCE.
+//
+// The screen this serves used to be three passes over one decision, and the
+// date had to be retyped for each - so the properties worth pinning are the
+// ones three separate saves could not offer.
+// ===================================================================
+describe("setUserRatesService", () => {
+  const REQUEST = {
+    userId: USER_ID,
+    effectiveFrom: "2026-07-01",
+    bands: {
+      [RATE_BANDS.DISCOUNTED]: { chargeRate: 9000, costRate: 5000 },
+      [RATE_BANDS.STANDARD]: { chargeRate: 11000, costRate: 6000 },
+      [RATE_BANDS.HIGH]: { chargeRate: 15000, costRate: null },
+    },
+  } as Unsafe as Parameters<typeof setUserRatesService>[0];
+
+  const savedRows = [
+    { ...rate("r-disc", "2026-07-01", RATE_BANDS.DISCOUNTED), chargeRateCents: 9000, costRateCents: 5000 },
+    { ...rate("r-std", "2026-07-01", RATE_BANDS.STANDARD), chargeRateCents: 11000, costRateCents: 6000 },
+    { ...rate("r-high", "2026-07-01", RATE_BANDS.HIGH), chargeRateCents: 15000, costRateCents: null },
+  ];
+
+  beforeEach(() => {
+    mockUpsertRates.mockResolvedValue(savedRows);
+  });
+
+  it("refuses anybody who is not an admin", async () => {
+    signedInAs(USER_ROLES.MANAGER);
+
+    await expect(setUserRatesService(REQUEST)).rejects.toThrow();
+    expect(mockUpsertRates).not.toHaveBeenCalled();
+  });
+
+  it("writes every band in ONE call, so they cannot half-apply", async () => {
+    // The whole reason this is not a loop over setUserRateService. Three
+    // calls would be three transactions, and a second one failing leaves
+    // somebody priced in one band from the new date and another from the
+    // old - a pricing error no screen shows.
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRatesService(REQUEST);
+
+    expect(mockUpsertRates).toHaveBeenCalledTimes(1);
+    expect(mockUpsertRates.mock.calls[0][0]).toHaveLength(3);
+    // And never through the single-band path, which would be three
+    // transactions wearing this function's name.
+    expect(mockUpsertRate).not.toHaveBeenCalled();
+  });
+
+  it("gives EVERY band the same effective date", async () => {
+    // The field that had to be retyped three times before, with nothing
+    // checking the three matched. Mistype one and the person is priced from
+    // a different Monday in that band.
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRatesService(REQUEST);
+
+    const rows = mockUpsertRates.mock.calls[0][0];
+
+    expect(new Set(rows.map((row) => row.effectiveFrom))).toEqual(new Set(["2026-07-01"]));
+  });
+
+  it("writes ONLY the bands it was given, and leaves the rest alone", async () => {
+    // What makes this usable as an edit rather than only for first-time
+    // setup: raising the standard rate must not blank the two bands nobody
+    // opened.
+    signedInAs(USER_ROLES.ADMIN);
+    mockUpsertRates.mockResolvedValue([savedRows[1]]);
+
+    await setUserRatesService({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { [RATE_BANDS.STANDARD]: { chargeRate: 11000, costRate: 6000 } },
+    } as Unsafe as Parameters<typeof setUserRatesService>[0]);
+
+    const rows = mockUpsertRates.mock.calls[0][0];
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].band).toBe(RATE_BANDS.STANDARD);
+  });
+
+  it("keeps a null cost NULL rather than nought", async () => {
+    // The failure this whole module is written around: nought says the work
+    // was free and reports 100% margin, where null says nobody has recorded
+    // a cost.
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRatesService(REQUEST);
+
+    const high = mockUpsertRates.mock.calls[0][0].find((row) => row.band === RATE_BANDS.HIGH);
+
+    expect(high?.costRateCents).toBeNull();
+    expect(high?.costRateCents).not.toBe(0);
+  });
+
+  it("orders the rows cheapest to dearest whatever order the keys arrived in", async () => {
+    // So the audit summary and the returned rows read the same way every
+    // time. Object key order is not a promise worth relying on.
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRatesService({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: {
+        [RATE_BANDS.HIGH]: { chargeRate: 15000, costRate: null },
+        [RATE_BANDS.DISCOUNTED]: { chargeRate: 9000, costRate: 5000 },
+      },
+    } as Unsafe as Parameters<typeof setUserRatesService>[0]);
+
+    expect(mockUpsertRates.mock.calls[0][0].map((row) => row.band)).toEqual([
+      RATE_BANDS.DISCOUNTED,
+      RATE_BANDS.HIGH,
+    ]);
+  });
+
+  it("refuses an account that no longer exists, and writes nothing", async () => {
+    signedInAs(USER_ROLES.ADMIN);
+    mockGetUser.mockResolvedValue(undefined);
+
+    await expect(setUserRatesService(REQUEST)).rejects.toThrow(/no longer has an account/);
+    expect(mockUpsertRates).not.toHaveBeenCalled();
+  });
+
+  it("refuses a DE-IDENTIFIED account, and writes nothing", async () => {
+    // Dormant and scrubbed, so it will never log another hour and a rate
+    // from any date is a figure nobody can use. Its existing rows stay -
+    // the time already logged against them is billing history.
+    signedInAs(USER_ROLES.ADMIN);
+    mockGetUser.mockResolvedValue(person({ deidentifiedAt: new Date("2026-05-01T00:00:00Z") }));
+
+    await expect(setUserRatesService(REQUEST)).rejects.toThrow(/de-identified/);
+    expect(mockUpsertRates).not.toHaveBeenCalled();
+  });
+
+  it("records ONE audit entry naming every band, not one per band", async () => {
+    // Three entries for one decision would read as three decisions to
+    // whoever is reconciling a client's invoice.
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRatesService(REQUEST);
+
+    expect(mockAudit).toHaveBeenCalledTimes(1);
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subjectUserId: USER_ID,
+        summary: expect.stringContaining("Discounted, Standard, High"),
+      }),
+    );
+  });
+});
+
+// ===================================================================
+// VALUING THE HOURS THAT WERE NEVER VALUED.
+//
+// The bug that read as a broken budget report: a time entry snapshots its
+// cents when it is LOGGED, and rates are almost always entered after
+// somebody has started - so their existing hours carried no snapshot,
+// nothing filled them in, and the report said "not valued" for the whole
+// project forever. One unvalued entry was enough, because the money read
+// propagates unknown on purpose.
+//
+// What is asserted here is the WIRING and the ORDER. The SQL itself is
+// proven against a database, not a mock - a mock that returns a number
+// cannot tell a correct lateral join from a wrong one.
+// ===================================================================
+describe("setting a rate values the hours it now covers", () => {
+  const SINGLE = {
+    userId: USER_ID,
+    band: RATE_BANDS.STANDARD,
+    effectiveFrom: "2026-07-01",
+    chargeRate: 11000,
+    costRate: 6000,
+  } as Unsafe as Parameters<typeof setUserRateService>[0];
+
+  const BULK = {
+    userId: USER_ID,
+    effectiveFrom: "2026-07-01",
+    bands: { [RATE_BANDS.STANDARD]: { chargeRate: 11000, costRate: 6000 } },
+  } as Unsafe as Parameters<typeof setUserRatesService>[0];
+
+  beforeEach(() => {
+    mockUpsertRates.mockResolvedValue([rate(RATE_ID, "2026-07-01")]);
+  });
+
+  it("repairs after the single-band save, for that person", async () => {
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRateService(SINGLE);
+
+    expect(mockValueUnpriced).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it("repairs after the all-bands save, for that person", async () => {
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRatesService(BULK);
+
+    expect(mockValueUnpriced).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it("repairs AFTER the rate is written, never before", async () => {
+    // Order matters: the repair resolves each entry against the rates in the
+    // table, so running it first would find the rate that is about to be
+    // saved missing and value nothing.
+    signedInAs(USER_ROLES.ADMIN);
+
+    await setUserRatesService(BULK);
+
+    expect(mockUpsertRates.mock.invocationCallOrder[0]).toBeLessThan(
+      mockValueUnpriced.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does NOT repair when the save was refused", async () => {
+    // A de-identified account is refused, and nothing about its hours should
+    // move on the strength of a rate that was never stored.
+    signedInAs(USER_ROLES.ADMIN);
+    mockGetUser.mockResolvedValue(person({ deidentifiedAt: new Date("2026-05-01T00:00:00Z") }));
+
+    await expect(setUserRatesService(BULK)).rejects.toThrow(/de-identified/);
+    expect(mockValueUnpriced).not.toHaveBeenCalled();
+  });
+
+  it("does NOT repair for somebody who is not an admin", async () => {
+    signedInAs(USER_ROLES.MANAGER);
+
+    await expect(setUserRatesService(BULK)).rejects.toThrow();
+    expect(mockValueUnpriced).not.toHaveBeenCalled();
+  });
+
+  it("records how many hours it valued, because that is a change to BILLING data", async () => {
+    // It happened without anybody asking for it by name, so an admin
+    // reading the log later needs to see that setting a rate valued 40
+    // entries.
+    signedInAs(USER_ROLES.ADMIN);
+    mockValueUnpriced.mockResolvedValue(40);
+
+    await setUserRatesService(BULK);
+
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: expect.objectContaining({ valuedEntries: 40 }),
+      }),
+    );
   });
 });

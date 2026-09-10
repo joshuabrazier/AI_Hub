@@ -23,12 +23,6 @@ export const AUDIT_ACTIONS = {
 
   // Teams and membership. Membership is an authorization change, so it is
   // recorded as carefully as a role change.
-  TEAM_CREATED: "team.created",
-  TEAM_UPDATED: "team.updated",
-  TEAM_STATUS_CHANGED: "team.status_changed",
-  TEAM_MEMBER_ADDED: "team.member_added",
-  TEAM_MEMBER_ROLE_CHANGED: "team.member_role_changed",
-  TEAM_MEMBER_REMOVED: "team.member_removed",
 
   // Delivery. A client and a project are the delivery module's own
   // long-lived records, and retiring or archiving one is a soft delete that
@@ -113,8 +107,6 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
 
 export const AUDIT_ENTITY_TYPES = {
   USER: "user",
-  TEAM: "team",
-  TEAM_MEMBER: "team_member",
   CLIENT: "client",
   PROJECT: "project",
   PROJECT_MEMBER: "project_member",

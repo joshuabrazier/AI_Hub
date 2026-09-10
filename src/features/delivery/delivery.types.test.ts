@@ -20,7 +20,11 @@ import {
   weekDayOf,
   CreateClientSchema,
   SetUserRateSchema,
+  chargedProgress,
+  SetUserRatesSchema,
+  sumChargedMinutes,
   UpdateClientSchema,
+  UpdateProjectSchema,
   UpdateTaskSchema,
   UpdateTimeEntrySchema,
   type TimesheetCellDTO,
@@ -957,5 +961,374 @@ describe("TimesheetCellDTO carries enough to edit an entry", () => {
     const withRate: TimesheetCellEntryDTO = { id: "entry-1", minutes: 60, notes: null, chargeRateCents: 15_000 };
 
     expect(withRate.id).toBe("entry-1");
+  });
+});
+
+// -------------------------------------------------------------------
+// THE FOURTH AND LAST OF THE UPDATE SCHEMAS TO STOP REPLACING.
+//
+// It was the only one still requiring every field, and that had two
+// consequences worth separating.
+//
+// The obvious one: nothing could edit a project. updateProjectAction existed
+// with no caller anywhere in the app, so a title, description and billable
+// flag were whatever the create form was given, permanently.
+//
+// The less obvious one: it forced ArchiveProjectSchema into existence. That
+// schema's own note said archiving through a whole-row update meant "posting
+// a whole form back, and a stale one quietly reverts somebody else's edit" -
+// which was true, and was a property of THIS shape rather than of archiving.
+// A patch cannot revert a field it does not mention.
+//
+// Every absent case asserts the KEY with Object.hasOwn rather than the
+// value, because a toBeNull() assertion on the cleared case passes against
+// the very bug it is meant to catch: undefined and null both read as
+// "nothing there" to an equality check, and only one of them stops the
+// column reaching the UPDATE.
+// -------------------------------------------------------------------
+describe("UpdateProjectSchema is a patch", () => {
+  const PROJECT_ID = "p".repeat(32);
+
+  it("leaves out every field the payload left out", () => {
+    const parsed = UpdateProjectSchema.parse({ projectId: PROJECT_ID });
+
+    expect(parsed).toEqual({ projectId: PROJECT_ID });
+    expect(Object.hasOwn(parsed, "title")).toBe(false);
+    expect(Object.hasOwn(parsed, "description")).toBe(false);
+    expect(Object.hasOwn(parsed, "isBillable")).toBe(false);
+    expect(Object.hasOwn(parsed, "status")).toBe(false);
+  });
+
+  it("tells an absent description from a cleared one", () => {
+    // The pair side by side, because neither half proves anything alone.
+    // Absent must not reach the UPDATE at all; cleared must reach it as
+    // NULL. One assertion on either would pass with both behaving the same.
+    const untouched = UpdateProjectSchema.parse({ projectId: PROJECT_ID, title: "Data platform" });
+    const cleared = UpdateProjectSchema.parse({
+      projectId: PROJECT_ID,
+      title: "Data platform",
+      description: "",
+    });
+
+    expect(Object.hasOwn(untouched, "description")).toBe(false);
+    expect(Object.hasOwn(cleared, "description")).toBe(true);
+    expect(cleared.description).toBeNull();
+  });
+
+  it("takes a status on its own, which is what un-archiving is", () => {
+    // Restoring an archived project is an edit rather than an act of its
+    // own, and this is the payload the edit dialog sends for it: one field,
+    // so nothing else about the project can be reverted on the way.
+    const parsed = UpdateProjectSchema.parse({ projectId: PROJECT_ID, status: "active" });
+
+    expect(parsed.status).toBe("active");
+    expect(Object.hasOwn(parsed, "title")).toBe(false);
+    expect(Object.hasOwn(parsed, "isBillable")).toBe(false);
+  });
+
+  it("takes the billable flag on its own, false included", () => {
+    // `false` is the value most likely to be lost by a careless truthiness
+    // check somewhere between here and the repository.
+    const parsed = UpdateProjectSchema.parse({ projectId: PROJECT_ID, isBillable: false });
+
+    expect(parsed.isBillable).toBe(false);
+    expect(Object.hasOwn(parsed, "status")).toBe(false);
+  });
+
+  it("still refuses an empty title when one IS sent", () => {
+    // Optional means "may be absent", never "may be blank". A project with
+    // no title is unusable in every picker it appears in.
+    expect(UpdateProjectSchema.safeParse({ projectId: PROJECT_ID, title: "   " }).success).toBe(false);
+  });
+
+  it("refuses a status it does not recognise", () => {
+    expect(UpdateProjectSchema.safeParse({ projectId: PROJECT_ID, status: "paused" }).success).toBe(false);
+  });
+});
+
+// -------------------------------------------------------------------
+// ALL THREE BANDS, ONE DATE.
+//
+// The schema behind the rates form that replaced three passes over one
+// decision. Two properties carry the whole design and both are asserted on
+// the KEY rather than the value, because an absent band and a band priced at
+// nothing are the difference between leaving a rate alone and destroying it.
+// -------------------------------------------------------------------
+describe("SetUserRatesSchema", () => {
+  const USER_ID = "u".repeat(32);
+
+  it("leaves out a band the payload did not mention", () => {
+    // What makes the form usable as an EDIT: raising the standard rate must
+    // not blank the two bands nobody opened.
+    const parsed = SetUserRatesSchema.parse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { standard: { chargeRate: "110", costRate: "60" } },
+    });
+
+    expect(Object.hasOwn(parsed.bands, "standard")).toBe(true);
+    expect(Object.hasOwn(parsed.bands, "discounted")).toBe(false);
+    expect(Object.hasOwn(parsed.bands, "high")).toBe(false);
+  });
+
+  it("converts dollars to integer cents, per band", () => {
+    const parsed = SetUserRatesSchema.parse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: {
+        discounted: { chargeRate: "90.50", costRate: "50" },
+        high: { chargeRate: "150", costRate: "" },
+      },
+    });
+
+    expect(parsed.bands.discounted?.chargeRate).toBe(9050);
+    expect(parsed.bands.discounted?.costRate).toBe(5000);
+    expect(parsed.bands.high?.chargeRate).toBe(15000);
+  });
+
+  it("reads an empty cost box as NULL, never nought", () => {
+    // Nought says the work was free and reports 100% margin. Null says
+    // nobody has recorded a cost. Both assertions, because toBeNull() alone
+    // passes against undefined too.
+    const parsed = SetUserRatesSchema.parse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { high: { chargeRate: "150", costRate: "" } },
+    });
+
+    expect(parsed.bands.high?.costRate).toBeNull();
+    expect(parsed.bands.high?.costRate).not.toBe(0);
+  });
+
+  it("refuses a band with a cost and no charge, rather than dropping it", () => {
+    // The form deliberately SENDS this case instead of tidying it away,
+    // because omitting it would discard an amount somebody typed and report
+    // success. The refusal has to land on the charge box.
+    const result = SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { standard: { chargeRate: "", costRate: "60" } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("refuses a payload with no bands at all", () => {
+    // A person and a date and no rates is not an edit - it is a form
+    // somebody saved without typing anything, and a silent success would
+    // have them believe a rate was set.
+    const result = SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: {},
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("requires the date, which is the field three separate saves could not share", () => {
+    const result = SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      bands: { standard: { chargeRate: "110", costRate: "60" } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
+
+// -------------------------------------------------------------------
+// A CHARGE RATE OF NOUGHT SAYS THE WORK WAS FREE.
+//
+// This is the third spelling of "nothing" to reach `dollarsField` and be
+// read as a number, after null and after the union branch that made
+// optionalDollarsField look like it refused null when it did not. All three
+// arrive by the same mechanism: z.coerce.number() runs Number(), and
+// Number(null), Number("") and Number("  ") are every one of them 0.
+//
+// The danger is not a crash. It is a row that renders as a working rate, at
+// $0.00, beside rates that are right - which is the failure this whole
+// module is written around. Kept as its own block because it is about the
+// FIELD rather than any one schema that uses it, and the next schema to use
+// it inherits whatever this proves.
+// -------------------------------------------------------------------
+describe("a money field refuses every spelling of nothing", () => {
+  const USER_ID = "u".repeat(32);
+
+  const parseCharge = (chargeRate: unknown) =>
+    SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { standard: { chargeRate, costRate: "" } },
+    });
+
+  it.each([
+    ["an empty string", ""],
+    ["whitespace", "   "],
+    ["null", null],
+    ["undefined", undefined],
+  ])("refuses %s rather than storing $0.00", (_label, value) => {
+    expect(parseCharge(value).success).toBe(false);
+  });
+
+  it("still accepts a genuine nought, because free work is a real answer", () => {
+    // The point is not that nought is forbidden - somebody may genuinely be
+    // charged nothing - it is that BLANK must not silently become nought.
+    // Typing 0 is a decision; leaving the box empty is not.
+    const result = parseCharge("0");
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.bands.standard?.chargeRate).toBe(0);
+  });
+
+  it("keeps the empty COST box meaning null, which is the opposite rule", () => {
+    // optionalDollarsField is a union that tries z.literal("") first, so
+    // empty means absent there and refused for a charge rate. If a change
+    // to the shared field ever broke this, margin would start reading as
+    // 100% instead of unknown.
+    const result = SetUserRatesSchema.safeParse({
+      userId: USER_ID,
+      effectiveFrom: "2026-07-01",
+      bands: { standard: { chargeRate: "110", costRate: "  " } },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.bands.standard?.costRate).toBeNull();
+      expect(result.data.bands.standard?.costRate).not.toBe(0);
+    }
+  });
+});
+
+// ===================================================================
+// CHARGED, SPENT, AND WHAT IT NOW LOOKS LIKE IT WILL TAKE.
+//
+// The third figure is what this type exists for, so most of these are about
+// the FORECAST rather than the fill. A bar drawn against charged time alone
+// says "66% spent" on a project already forecast to overrun by a fortnight,
+// and keeps saying it right up until it does.
+// ===================================================================
+describe("chargedProgress", () => {
+  it("reports spent and forecast against the charged figure", () => {
+    // 240h charged, 262h spent... no: 240h charged (14400), 160h spent, and
+    // the estimates now add up to 280h. Over on the forecast, not yet on
+    // the clock - which is the state worth catching.
+    const rollup = chargedProgress(14_400, 9_600, 16_800);
+
+    expect(rollup.percentUsed).toBe(66.7);
+    expect(rollup.isOverBudget).toBe(false);
+    expect(rollup.forecastPercent).toBe(116.7);
+    expect(rollup.forecastVarianceMinutes).toBe(2_400);
+    expect(rollup.isForecastOverBudget).toBe(true);
+  });
+
+  it("flags nothing when the forecast lands inside what was charged", () => {
+    const rollup = chargedProgress(14_400, 6_000, 13_000);
+
+    expect(rollup.isForecastOverBudget).toBe(false);
+    expect(rollup.forecastVarianceMinutes).toBe(-1_400);
+  });
+
+  it("does NOT flag a forecast equal to the charged figure", () => {
+    // The ideal case the user described: charged and estimated agree.
+    // Strictly greater, so landing exactly on the quote is not an overrun.
+    const rollup = chargedProgress(14_400, 0, 14_400);
+
+    expect(rollup.forecastVarianceMinutes).toBe(0);
+    expect(rollup.isForecastOverBudget).toBe(false);
+    expect(rollup.forecastPercent).toBe(100);
+  });
+
+  it("keeps the fill and the marker separate, so the bar can be full while the label is not", () => {
+    // Both past 100. The fill clamps for the width; the true figures stay
+    // readable for the label - the same split budgetProgress makes.
+    const rollup = chargedProgress(600, 900, 1_200);
+
+    expect(rollup.percentUsed).toBe(150);
+    expect(rollup.barPercent).toBe(100);
+    expect(rollup.forecastPercent).toBe(200);
+    expect(rollup.forecastBarPercent).toBe(100);
+    expect(rollup.overMinutes).toBe(300);
+  });
+
+  it("answers NULL throughout when nothing has been charged", () => {
+    // Nobody has recorded what this was sold for, which is not the same as
+    // it having been sold for nothing. A percentage against nought is
+    // Infinity, or a full bar if guarded, and both read as "all spent".
+    const rollup = chargedProgress(null, 9_600, 16_800);
+
+    expect(rollup.chargedMinutes).toBeNull();
+    expect(rollup.percentUsed).toBeNull();
+    expect(rollup.forecastPercent).toBeNull();
+    expect(rollup.forecastVarianceMinutes).toBeNull();
+    expect(rollup.isOverBudget).toBe(false);
+    // And NOT flagged as a forecast overrun: there is nothing to overrun,
+    // and painting it red blames whoever estimated the work for the
+    // omission of whoever was meant to record the quote.
+    expect(rollup.isForecastOverBudget).toBe(false);
+    // The two real figures still come through - they are facts.
+    expect(rollup.loggedMinutes).toBe(9_600);
+    expect(rollup.forecastMinutes).toBe(16_800);
+  });
+
+  it("treats a charged figure of NOUGHT as unassigned, not as a quote of no time", () => {
+    // Nobody sells a project for no hours, and the alternative is a bar
+    // that reads as fully spent the moment the project is created.
+    const rollup = chargedProgress(0, 600, 1_200);
+
+    expect(rollup.chargedMinutes).toBeNull();
+    expect(rollup.percentUsed).toBeNull();
+    expect(rollup.isForecastOverBudget).toBe(false);
+  });
+
+  it("carries a zero forecast as a real zero, not as unknown", () => {
+    // A project with no tasks genuinely has no forecast, rather than one
+    // nobody has recorded - so this stays 0 and reads as "nothing estimated
+    // yet" against a real quote.
+    const rollup = chargedProgress(14_400, 0, 0);
+
+    expect(rollup.forecastMinutes).toBe(0);
+    expect(rollup.forecastPercent).toBe(0);
+    expect(rollup.forecastVarianceMinutes).toBe(-14_400);
+    expect(rollup.isForecastOverBudget).toBe(false);
+  });
+
+  it("refuses negative inputs rather than propagating them", () => {
+    const rollup = chargedProgress(-100, -50, -200);
+
+    expect(rollup.chargedMinutes).toBeNull();
+    expect(rollup.loggedMinutes).toBe(0);
+    expect(rollup.forecastMinutes).toBe(0);
+  });
+});
+
+// -------------------------------------------------------------------
+// A PHASE-BUDGETED PROJECT'S TOTAL.
+//
+// The asymmetry is the whole content: part-way filled in is a real partial
+// total, none filled in is no quote at all.
+// -------------------------------------------------------------------
+describe("sumChargedMinutes", () => {
+  it("adds up the phases that have an amount", () => {
+    expect(sumChargedMinutes([4_800, 14_400, 4_800])).toBe(24_000);
+  });
+
+  it("totals what IS assigned when only some phases are", () => {
+    // A project part-way through being budgeted has a real partial total
+    // worth showing. The phases without one are named separately on screen,
+    // because a total that silently omits three of them is exactly the
+    // plausible wrong number this module refuses.
+    expect(sumChargedMinutes([4_800, null, 4_800])).toBe(9_600);
+  });
+
+  it("answers NULL when NOT ONE phase has an amount", () => {
+    // A total of nought would read as "sold for nothing" rather than "not
+    // filled in yet", which is the distinction the whole null convention in
+    // this file exists for.
+    expect(sumChargedMinutes([null, null, null])).toBeNull();
+    expect(sumChargedMinutes([])).toBeNull();
+  });
+
+  it("does not let a negative phase reduce the total", () => {
+    expect(sumChargedMinutes([4_800, -1_000])).toBe(4_800);
   });
 });

@@ -17,8 +17,6 @@ export type AuditLogEntryDTO = {
   summary: string; // human line, or ""
   // Scope. Both are soft references, so the named row may no longer exist -
   // hence the "(removed ...)" fallbacks rather than a blank.
-  teamId: string; // "" when the event belongs to no team
-  teamName: string; // resolved team name, or "" / "(removed team)"
   subjectUserId: string; // "" when the event is not about one person
   subjectUserName: string; // resolved name, or "" / "(removed user)"
   entityType: string;
@@ -49,14 +47,11 @@ export const AUDIT_ACTION_META: Record<string, { label: string; category: string
   [AUDIT_ACTIONS.USER_INVITATION_CANCELLED]: { label: "Invitation cancelled", category: "Account" },
   [AUDIT_ACTIONS.USER_DEIDENTIFIED]: { label: "Data de-identified", category: "Retention" },
 
-  // Access. A platform role and a team role both decide what somebody can
+  // Access. A platform role decides what somebody can
   // reach, so they share a category an admin can filter to on its own.
   [AUDIT_ACTIONS.USER_ROLE_CHANGED]: { label: "Role changed", category: "Access" },
-  [AUDIT_ACTIONS.TEAM_MEMBER_ADDED]: { label: "Added to team", category: "Access" },
-  [AUDIT_ACTIONS.TEAM_MEMBER_ROLE_CHANGED]: { label: "Team role changed", category: "Access" },
-  [AUDIT_ACTIONS.TEAM_MEMBER_REMOVED]: { label: "Removed from team", category: "Access" },
 
-  // Project membership. Filed under Access, alongside team membership, for
+  // Project membership. Filed under Access, for
   // the same reason: `project_members` is what every delivery read filters
   // on, so putting somebody on a project - or making them its lead - is a
   // grant, not housekeeping.
@@ -64,7 +59,7 @@ export const AUDIT_ACTION_META: Record<string, { label: string; category: string
   [AUDIT_ACTIONS.PROJECT_MEMBER_CHANGED]: { label: "Project role or rate band changed", category: "Access" },
   [AUDIT_ACTIONS.PROJECT_MEMBER_REMOVED]: { label: "Removed from project", category: "Access" },
 
-  // Delivery. Its own category rather than folded into Teams: a client and a
+  // Delivery. Its own category: a client and a
   // project are what the work is FOR, and an admin looking for "when was this
   // engagement archived" is asking a different question from "who changed
   // access".
@@ -83,10 +78,6 @@ export const AUDIT_ACTION_META: Record<string, { label: string; category: string
   [AUDIT_ACTIONS.USER_RATE_SET]: { label: "Rate set", category: "Delivery" },
   [AUDIT_ACTIONS.USER_RATE_DELETED]: { label: "Rate removed", category: "Delivery" },
 
-  // Teams
-  [AUDIT_ACTIONS.TEAM_CREATED]: { label: "Team created", category: "Teams" },
-  [AUDIT_ACTIONS.TEAM_UPDATED]: { label: "Team updated", category: "Teams" },
-  [AUDIT_ACTIONS.TEAM_STATUS_CHANGED]: { label: "Team enabled/disabled", category: "Teams" },
 
   // AI chat. Filed under Access rather than a category of its own: what it
   // records is one person reading another's private content, which is the
