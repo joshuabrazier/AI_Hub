@@ -36,7 +36,7 @@ export const BRAND = {
    * are read from one place - see the note at the top.
    *
    * Null is a legitimate permanent answer: unnamed, every surface says "the
-   * assistant". Read it through src/features/ai-chat/assistant-identity.ts
+   * assistant". Read it through src/lib/ai/assistant-identity.ts
    * rather than directly, so the named and unnamed wording lives in one
    * place instead of at every call site.
    */

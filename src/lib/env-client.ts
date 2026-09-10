@@ -21,7 +21,7 @@ const clientEnvSchema = z.object({
   // general-purpose AI assistant" is a sentence no prompt should contain.
   // Unset, every surface says "the assistant" exactly as it did before this
   // variable existed; set, the same surfaces use the name. See
-  // src/features/ai-chat/assistant-identity.ts.
+  // src/lib/ai/assistant-identity.ts.
   NEXT_PUBLIC_AI_ASSISTANT_NAME: z.string().min(1).optional(),
 
   NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX: z.string().min(1),

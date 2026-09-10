@@ -1,3 +1,4 @@
+import { chatFeatureLabel } from "@/lib/ai/assistant-identity";
 import PortalPage from "@/features/layout/portal-page";
 
 import { AiChatWorkspace } from "./components/ai-chat-workspace";
@@ -21,7 +22,10 @@ export default async function AiChatPage({ eyebrow, subjectId }: { eyebrow: stri
   return (
     <PortalPage
       eyebrow={eyebrow}
-      title="AI chat"
+      // The same label the sidebar shows, so the page's accessible name and
+      // the entry somebody clicked to get here agree. Derived rather than
+      // written down - see chatFeatureLabel.
+      title={chatFeatureLabel()}
       // NO VISIBLE HEADER on this screen. The eyebrow and title only repeated
       // what the sidebar already highlights, and the description was a fourth
       // line of grey above a page whose whole content is the transcript. The

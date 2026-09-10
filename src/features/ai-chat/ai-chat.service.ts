@@ -42,7 +42,7 @@ import {
 import { requireUser } from "@/lib/auth/session-auth-server";
 import { BRAND } from "@/lib/brand";
 
-import { ASSISTANT_NAME } from "./assistant-identity";
+import { ASSISTANT_NAME, chatNotConfiguredMessage } from "@/lib/ai/assistant-identity";
 import { appKnowledgePrompt } from "./ai-chat-app-knowledge";
 import { CHAT_TOOL_CONFIG, MAX_TOOL_ROUNDS, runChatTool } from "./ai-chat-tools";
 import {
@@ -1370,7 +1370,7 @@ export async function* streamAiChatReplyService(
   const subject = await requireOwnedSubject(requestDTO.subjectId, user.id);
 
   if (!isBedrockConfigured()) {
-    throw new DisplayErrorMessage("AI chat is not configured on this environment.");
+    throw new DisplayErrorMessage(chatNotConfiguredMessage());
   }
 
   // Declared out here so the `finally` can record what was actually sent even

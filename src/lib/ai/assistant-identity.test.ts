@@ -50,6 +50,15 @@ describe("assistant identity, unnamed", () => {
     expect(identity.assistantSubject()).toBe("The assistant");
     expect(identity.assistantObject()).toBe("the assistant");
   });
+
+  it("names the feature without inventing a name for the assistant", async () => {
+    const identity = await loadWithName(undefined);
+
+    // "Assistant" as a nav entry would read as a name this deployment never
+    // chose, so an unnamed one describes the screen instead.
+    expect(identity.chatFeatureLabel()).toBe("AI chat");
+    expect(identity.chatFeatureTooltip()).toBe("Chat with the assistant");
+  });
 });
 
 describe("assistant identity, named", () => {
@@ -67,6 +76,15 @@ describe("assistant identity, named", () => {
     // catches, and it is the one a single-string implementation produces.
     expect(identity.assistantSubject()).toBe("Saga");
     expect(identity.assistantObject()).toBe("Saga");
+  });
+
+  it("suffixes the feature label so a nav entry still says what it is", async () => {
+    const identity = await loadWithName("Saga");
+
+    // The assistant is Saga; the SCREEN is "Saga AI". A sidebar entry
+    // reading only "Saga" tells somebody who has not met it nothing.
+    expect(identity.chatFeatureLabel()).toBe("Saga AI");
+    expect(identity.chatFeatureTooltip()).toBe("Chat with Saga");
   });
 
   it("never recapitalises the name it was given", async () => {

@@ -23,6 +23,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
+import { chatFeatureLabel } from "@/lib/ai/assistant-identity";
 import { cn } from "@/lib/utils";
 
 import { createAiChatSubjectAction, deleteAiChatSubjectAction, renameAiChatSubjectAction } from "../ai-chat.actions";
@@ -274,7 +275,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
             </Sheet>
 
             <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-              {page.active?.subject.title ?? "AI chat"}
+              {page.active?.subject.title ?? chatFeatureLabel()}
             </p>
           </div>
 
@@ -284,7 +285,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
                 <span className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
                   <MessagesSquare size={22} aria-hidden="true" />
                 </span>
-                <p className="mt-3 text-sm font-medium text-foreground">AI chat is not configured</p>
+                <p className="mt-3 text-sm font-medium text-foreground">{chatFeatureLabel()} is not configured</p>
                 <p className="mt-1 max-w-md text-sm text-muted-foreground">
                   No Bedrock API key is set on this environment, so there is nothing to send messages to. Set
                   AWS_BEARER_TOKEN_BEDROCK and restart.

@@ -33,7 +33,7 @@ import {
   IS_ASSISTANT_NAMED,
   assistantObject,
   assistantSubject,
-} from "../assistant-identity";
+} from "@/lib/ai/assistant-identity";
 import { removeAiChatAttachmentAction } from "../ai-chat.actions";
 import {
   MAX_MESSAGE_CHARS,
