@@ -40,23 +40,27 @@ import type { TimesheetTaskOption } from "./timesheet-catalogue";
 // names the field `hours` and types it as a number for exactly that reason -
 // see the note at the top of delivery-time.actions.ts.)
 //
-// IT ADDS AN ENTRY, AND IT DOES NOT EDIT ONE. That is a deliberate answer to
-// something the DTOs cannot supply rather than a feature left out:
+// IT IS NO LONGER HOW A FIGURE GETS TYPED IN. The grid's cells are inputs -
+// see TimesheetDayCell - so entering a week is typing and tabbing, and this
+// dialog is reached deliberately, for the three things a cell cannot do: add
+// a note, put a SECOND entry on a day that already has one, and clear a day.
 //
-//   A cell carries `minutes` and the entries behind that total. A day can
-//   legitimately hold several entries, so clearing it must remove each one.
+// IT ADDS AN ENTRY, AND IT STILL DOES NOT EDIT ONE, which is now about this
+// dialog rather than about the schema. A day legitimately holds several
+// entries - an hour in the morning and another after lunch, each with its
+// own note - so a form here has no single entry to bind to, and picking one
+// would rewrite whichever the query happened to return first.
 //
-//   `UpdateTimeEntrySchema` requires `notes`, and an absent one means NULL.
-//   There is no way to say "leave the note alone". So an edit form here
-//   would open with an empty note box and SILENTLY DELETE whatever was on
-//   the entry the moment somebody corrected an hour - and that note is what
-//   a client's invoice narrative is written from.
-//
-// So a cell ADDS, which is honest: a day legitimately holds several entries.
-// Correcting a wrong figure is
-// clear-the-day and type it again, confirmed and named, so nothing is lost
-// without somebody being told what they are removing. Editing one entry in
-// place belongs on the task panel, where its note is on screen.
+// WHAT USED TO BE WRITTEN HERE was that `UpdateTimeEntrySchema` required
+// `notes`, so any in-place edit would silently delete the note the moment
+// somebody corrected an hour - and that note is what a client's invoice
+// narrative is written from. That is no longer the case: the schema is a
+// PATCH, an absent `notes` leaves the stored note alone, and an absent
+// `workDate` leaves the captured rate snapshot alone. The grid corrects a
+// single-entry day through exactly that, and hands a multi-entry day here
+// instead. The rule that mattered is intact - correcting an hour never
+// touches a note - and it is now enforced by the request shape rather than
+// by refusing to offer the edit.
 //
 // ADJUSTING THE ESTIMATE IS REACHED FROM HERE and is the parent's to open,
 // because it is a different act with different consequences: this dialog
@@ -182,7 +186,7 @@ export function TimesheetCellDialog({
             <p className="mt-2 text-sm text-muted-foreground">
               {formatMinutesAsClock(cell.minutes)} already logged on this day
               {cell.entries.length > 1 ? `, across ${cell.entries.length} entries` : ""}. Anything you add here
-              is a further entry.
+              is a further entry - to CORRECT the figure, type over the cell in the grid instead.
             </p>
           )}
         </div>

@@ -12,13 +12,13 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { MESSAGES } from "@/lib/constants";
 import { formatIsoDate } from "@/lib/format";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
-import { cn } from "@/lib/utils";
 
-import { getTimesheetWeekAction } from "../delivery-time.actions";
+import { getTimesheetWeekAction, logTimeAction, updateTimeEntryAction } from "../delivery-time.actions";
 import {
   DAYS_IN_WEEK,
   addCalendarDays,
   formatMinutesAsClock,
+  type TimesheetCellDTO,
   type TimesheetRowDTO,
   type TimesheetWeekDTO,
 } from "../delivery.types";
@@ -31,6 +31,7 @@ import {
 import { TimesheetCellDialog } from "./timesheet-cell-dialog";
 import { EstimateAdjustDialog } from "./estimate-adjust-dialog";
 import { TimesheetGrid } from "./timesheet-grid";
+import { OPEN_DAY_KEY_HINT, type DayCellCommit } from "./timesheet-day-cell";
 import { readAddedRows, writeAddedRows } from "./timesheet-row-store";
 
 // -------------------------------------------------------------------
@@ -211,6 +212,64 @@ export function TimesheetWorkspace({
   const canEditTasksFor = (taskId: string): boolean =>
     findCatalogueProjectForTask(catalogue, taskId)?.canEditTasks ?? false;
 
+  // -------------------------------------------------------------------
+  // A FIGURE TYPED STRAIGHT INTO A CELL.
+  //
+  // THE CELL DECIDED WHICH WRITE THIS IS, because it is the thing holding
+  // the entries behind the total - an empty day is a new entry, a day with
+  // one is that entry corrected, and a day with several never gets here at
+  // all. This performs it, because the re-read that follows is the
+  // workspace's and nothing else on the screen should have to know about it.
+  //
+  // A CORRECTION SENDS `hours` AND NOTHING ELSE. UpdateTimeEntrySchema is a
+  // patch: an absent `notes` leaves the stored note alone, and an absent
+  // `workDate` leaves the captured rate snapshot alone. Both matter - the
+  // note is what a client's narrative is written from, and re-stating an old
+  // hour at today's rate would quietly change what has been billed.
+  //
+  // NO OPTIMISTIC UPDATE, because there is nothing to be optimistic about:
+  // the figure somebody typed is already in the input they typed it into.
+  // The re-read is what corrects the row and day totals, and those are
+  // summed server-side on purpose.
+  // -------------------------------------------------------------------
+  // NOT WRAPPED IN startLoading, deliberately. `reload` opens its own
+  // transition, and nesting one inside another's async callback starts a
+  // second anyway once the first `await` has ended the original scope - so
+  // the outer one would only ever be a spinner over a figure that is already
+  // on screen. The reload is the part worth marking pending.
+  const commitCell = async (row: TimesheetRowDTO, cell: TimesheetCellDTO, commit: DayCellCommit) => {
+    try {
+      const response =
+        commit.kind === "correct"
+          ? await updateTimeEntryAction({ timeEntryId: commit.timeEntryId, hours: commit.hours })
+          : // `notes: null` is the whole point rather than a formality: a
+            // figure typed into a cell has no note, and the create path
+            // takes the post-validation shape where an absent note IS
+            // null. The correction path above sends no `notes` key at all,
+            // which is the opposite instruction - leave the stored one.
+            await logTimeAction({
+              taskId: row.taskId,
+              workDate: cell.date,
+              hours: commit.hours,
+              notes: null,
+            });
+
+      if (!response.success) {
+        // A refusal here is a SENTENCE - more than the day allows, a task
+        // that has gone, an archived project, a day in the future - and
+        // the cell has no room to show one, so it goes to a toast whole.
+        toast.error(response.fieldErrors?.hours?.[0] ?? response.formError ?? MESSAGES.SOMETHING_WENT_WRONG);
+      }
+
+      // Read back either way. On a refusal the cell is showing a figure
+      // the database does not hold, and the re-read is what puts the real
+      // one back under it.
+      reload(week, [row.taskId]);
+    } catch (error) {
+      handleFrontendErrorWithToast(error);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -253,8 +312,14 @@ export function TimesheetWorkspace({
           <CardTitle>
             {formatIsoDate(week.weekStart)} to {formatIsoDate(week.weekEnd)}
           </CardTitle>
+          {/* WHERE THE INSTRUCTION LIVES, because the table's own caption is
+              inside the sideways scroller. Both halves earn their place: the
+              first is the only way to discover that a cell is typed into
+              rather than clicked, and the second is the only route to a
+              note, a split day or a clear that does not need a mouse. */}
           <CardDescription>
-            Every hour on this screen is your own. Click a day on a task to add time to it.
+            Every hour on this screen is your own. Type the hours into a day and press Tab; press{" "}
+            {OPEN_DAY_KEY_HINT} on a day to add a note, split it or clear it.
           </CardDescription>
 
           <CardAction>
@@ -270,12 +335,21 @@ export function TimesheetWorkspace({
         </CardHeader>
 
         {/* The grid scrolls inside this container - the page body never
-            scrolls sideways. `Table` brings the overflow-x with it. */}
-        <CardContent className={cn("px-0 transition-opacity", isLoading && "opacity-60")} aria-busy={isLoading}>
+            scrolls sideways. `Table` brings the overflow-x with it.
+
+            IT NO LONGER DIMS WHILE IT SAVES, which was right when a write
+            meant a dialog and is wrong now that it means a keystroke: the
+            grid would fade on and off after every cell somebody tabbed out
+            of, which reads as a page fighting back. There is also nothing
+            for the dim to tell them - the figure they typed is already in
+            the cell they typed it into, and the re-read only corrects the
+            totals. `aria-busy` stays, because that is what it is for. */}
+        <CardContent className="px-0" aria-busy={isLoading}>
           <TimesheetGrid
             week={week}
             today={today}
             onOpenCell={(row, dayIndex) => setOpenCell({ taskId: row.taskId, dayIndex })}
+            onCommitCell={commitCell}
           />
         </CardContent>
       </Card>
