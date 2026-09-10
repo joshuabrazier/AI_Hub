@@ -3,16 +3,12 @@ import Link from "next/link";
 import PortalPage from "@/features/layout/portal-page";
 import { requireUser } from "@/lib/auth/session-auth-server";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
-import { ROUTES, projectBoardForRole } from "@/lib/routes";
+import { ROUTES } from "@/lib/routes";
 import { userDisplayName } from "@/lib/user-display-name";
 
 import { getProjectBoardService } from "./delivery-board.service";
-import {
-  getMyProjectsService,
-  getProjectBudgetGroupsService,
-  getProjectDetailService,
-} from "./delivery-setup.service";
-import { BoardWorkspace, type BoardProjectLink } from "./components/board-workspace";
+import { getProjectBudgetGroupsService, getProjectDetailService } from "./delivery-setup.service";
+import { BoardWorkspace } from "./components/board-workspace";
 import { SetupBudgetNudge } from "./components/setup-budget-nudge";
 
 // -------------------------------------------------------------------
@@ -23,11 +19,12 @@ import { SetupBudgetNudge } from "./components/setup-budget-nudge";
 // the caller is not on - a scope failure gets the answer a missing id gets,
 // because saying "forbidden" to a guessed id confirms the project exists.
 //
-// THREE READS, FIXED, AND NOT ONE PER PHASE. The board is four queries
-// whatever the project's size, the project header is six, and the left-hand
-// list is one. Nothing below fetches per card or per phase, which is the
-// property this screen is judged on: it is the one people leave open all
-// day.
+// TWO READS, FIXED, AND NOT ONE PER PHASE. The board is four queries
+// whatever the project's size and the project header is six. Nothing below
+// fetches per card or per phase, which is the property this screen is judged
+// on: it is the one people leave open all day. It used to be three - the
+// third was "my projects", for a list down the left-hand side that the
+// sidebar now carries, so removing that panel took a query with it.
 //
 // `canEditTasks` COMES OFF THE BOARD DTO, computed on the server as "lead
 // OR admin". Nothing here or below re-derives it from a role - an admin is
@@ -36,11 +33,13 @@ import { SetupBudgetNudge } from "./components/setup-budget-nudge";
 // header ARE decided on the role, and that is a different question: they go
 // to admin-only screens, which is navigation rather than editing.
 //
-// THE LEFT-HAND LIST IS "MY PROJECTS", memberships and not everything - the
-// service says why at length. An admin can open a project they are not a
-// member of, so the open one is added to the list when it is missing from
-// it: a board with nothing highlighted in its own nav reads as a broken
-// page.
+// THE PROJECT LIST THAT USED TO BE HERE IS IN THE SIDEBAR. It was an
+// in-page nav to the same set of screens the sidebar already lists, sitting
+// inside the sidebar's own column and taking 18rem off a board. One
+// consequence worth knowing: an admin can open a project they are not a
+// member of, and the sidebar's list is memberships, so that board is not
+// highlighted anywhere. That is honest - they are not on it - where the old
+// panel used to insert it and imply they were.
 // -------------------------------------------------------------------
 export default async function DeliveryBoardPage({
   eyebrow,
@@ -58,8 +57,7 @@ export default async function DeliveryBoardPage({
   // entirely for everybody else rather than fetched and thrown away.
   const isAdmin = user.role === USER_ROLES.ADMIN;
 
-  const [projects, detail, board, budgetGroups] = await Promise.all([
-    getMyProjectsService(),
+  const [detail, board, budgetGroups] = await Promise.all([
     getProjectDetailService(projectId),
     getProjectBoardService(projectId),
     // -----------------------------------------------------------------
@@ -79,31 +77,15 @@ export default async function DeliveryBoardPage({
     isAdmin ? getProjectBudgetGroupsService(projectId) : undefined,
   ]);
 
-  // Through projectBoardForRole rather than a string built here: the proxy
-  // REDIRECTS a role that lands in the wrong area rather than refusing it,
-  // so a hand-built /admin/projects/<id> followed by a member is not an
-  // error they can see - it is a link that quietly goes somewhere else.
-  const links: BoardProjectLink[] = projects.map((project) => ({
-    id: project.id,
-    title: project.title,
-    clientName: project.clientName,
-    status: project.status,
-    href: projectBoardForRole(user.role, project.id),
-  }));
-
-  if (!links.some((link) => link.id === detail.project.id)) {
-    links.unshift({
-      id: detail.project.id,
-      title: detail.project.title,
-      clientName: detail.project.clientName,
-      status: detail.project.status,
-      href: projectBoardForRole(user.role, detail.project.id),
-    });
-  }
-
   return (
     <PortalPage
       eyebrow={eyebrow}
+      // UNCAPPED, because the board is four columns per phase and max-w-7xl
+      // was stranding them in the middle of a large window. Not "full": the
+      // gutters and the header are both still wanted here, and the title is
+      // the only place the project's full name appears in one piece - the
+      // sidebar truncates it.
+      size="wide"
       // Project titles and client names are typed by people. React renders
       // them as text, here and everywhere else in this feature.
       title={detail.project.title}
@@ -149,13 +131,11 @@ export default async function DeliveryBoardPage({
       ) : null}
 
       <BoardWorkspace
-        projects={links}
         // The summary itself, not just its id: the board builds a
         // one-project timesheet catalogue from it so the estimate dialog can
         // be opened from a card. Folding the phases here a second time would
         // be a second answer to what a task option looks like.
         project={detail.project}
-        activeProjectId={detail.project.id}
         projectStatus={detail.project.status}
         board={board}
         phaseStats={detail.phases}
