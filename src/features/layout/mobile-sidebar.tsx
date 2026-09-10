@@ -53,6 +53,17 @@ function MobileCollapsible({ entry, pathname }: { entry: NavCollapsible; pathnam
   // sheet read the same field, so the two cannot disagree about what is shut.
   const [open, setOpen] = useState(entry.defaultOpen ?? childActive);
 
+  // Same one-way re-open as the rail, adjusted during render for the same
+  // reason - see the note there. The sheet remounts each time it is opened so
+  // this matters less here, but the two are meant to behave identically, and
+  // "less" is not "never".
+  const [wasChildActive, setWasChildActive] = useState(childActive);
+
+  if (childActive !== wasChildActive) {
+    setWasChildActive(childActive);
+    if (childActive) setOpen(true);
+  }
+
   return (
     <div>
       <button

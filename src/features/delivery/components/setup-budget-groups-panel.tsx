@@ -98,11 +98,6 @@ type Props = {
   members: ProjectMemberDTO[];
 };
 
-// The group report carries a name and no address; a project member carries
-// both. Either is enough to draw a row, and a de-identified account has
-// neither - this app de-identifies dormant accounts in place rather than
-// deleting them, so something still has to render for one.
-
 export function SetupBudgetGroupsPanel({ projectId, groups, members }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<BudgetGroupReportDTO | null>(null);

@@ -245,23 +245,32 @@ export function TimesheetCellDialog({
             {row.clientName} - {row.projectTitle} - {row.phaseName}
           </p>
 
-          {/* Only when there is more than one, because with exactly one the
-              form IS that entry and saying "1h 30m already logged" above a
-              box reading 1.5 invites somebody to add it a second time. */}
-          {cell.entries.length > 1 && (
+          {/* NOT SHOWN WHEN THE FORM IS THAT ENTRY. With exactly one entry
+              open for editing, "1h 30m already logged" above a box reading
+              1.5 invites somebody to add it a second time.
+              It IS shown while ADDING to a day that already has time on it,
+              which is the case that would otherwise be a blank form with no
+              indication that the day is not empty. */}
+          {cell.minutes > 0 && (editing === null || cell.entries.length > 1) && (
             <p className="mt-2 text-sm text-muted-foreground">
-              {formatMinutesAsClock(cell.minutes)} logged on this day, across {cell.entries.length}{" "}
-              entries. Pick one to change it, or add another.
+              {formatMinutesAsClock(cell.minutes)} logged on this day
+              {cell.entries.length > 1 ? `, across ${cell.entries.length} entries` : ""}.
+              {editing === null ? " Anything you add here is a further entry." : " Pick one to change it, or add another."}
             </p>
           )}
         </div>
 
         {/* ------------------------------------------------------------
-            SEVERAL ENTRIES, LISTED RATHER THAN SUMMED.
+            THE ENTRIES BEHIND THE CELL, LISTED RATHER THAN SUMMED.
             A cell shows a total, and a total cannot be typed back into a
             form that means to replace one of the figures behind it.
+
+            Shown for SEVERAL entries always, and for a single entry once the
+            form has moved off it - otherwise "Add another" on a one-entry day
+            left a blank form with the existing entry nowhere on screen and no
+            way back to it short of cancelling and reopening.
             ------------------------------------------------------------ */}
-        {cell.entries.length > 1 && (
+        {(cell.entries.length > 1 || (cell.entries.length === 1 && editing === null)) && (
           <ul className="space-y-1">
             {cell.entries.map((entry) => {
               const isOpen = entry.id === editingId;
@@ -418,7 +427,7 @@ export function TimesheetCellDialog({
         title="Delete this entry?"
         description={
           editing
-            ? `${formatMinutesAsHours(editing.minutes)} hours on "${row.taskTitle}" for ${dayLabel} will be permanently deleted, along with the note on it. This cannot be undone.`
+            ? `${formatMinutesAsClock(editing.minutes)} on "${row.taskTitle}" for ${dayLabel} will be permanently deleted, along with the note on it. This cannot be undone.`
             : ""
         }
         confirmLabel="Delete entry"

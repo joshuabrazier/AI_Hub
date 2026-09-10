@@ -67,10 +67,6 @@ export type SetupAssignablePerson = {
   email: string;
 };
 
-// De-identified and unnamed accounts hold valid rows - this app
-// de-identifies dormant accounts in place rather than deleting them - so the
-// name is nullable and something still has to be rendered for them.
-
 const AddMemberSchema = z.object({
   userId: z.string().min(1, "Choose somebody to add"),
   isLead: z.boolean(),

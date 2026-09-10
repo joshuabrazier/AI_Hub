@@ -166,7 +166,12 @@ export function BoardTaskPanel({
    * dialog with it mid-edit.
    */
   onAdjustEstimate: (task: TaskCardDTO) => void;
-  onAssign: (task: TaskCardDTO, assigneeId: string | null) => void;
+  /**
+   * `onDone` runs after the write and the board refresh. The panel passes its
+   * own refetch, because router.refresh() rebuilds the BOARD and this panel
+   * holds a separately fetched copy of the same card.
+   */
+  onAssign: (task: TaskCardDTO, assigneeId: string | null, onDone?: () => void) => void;
 }) {
   const [detail, setDetail] = useState<TaskDetailDTO | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -330,7 +335,17 @@ export function BoardTaskPanel({
                   {canEditTasks ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button type="button" variant="outline" size="sm" className="h-7">
+                        {/* Disabled while a write is in flight, like the Move
+                            and Delete controls further down. Somebody who
+                            sees nothing change should not be able to stack a
+                            second assignment on the first. */}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7"
+                          disabled={isPending}
+                        >
                           {card.assigneeName ?? "Unassigned"}
                           <ChevronDown size={14} aria-hidden="true" />
                         </Button>
@@ -339,7 +354,10 @@ export function BoardTaskPanel({
                         <AssigneeMenuItems
                           members={members}
                           assigneeId={card.assigneeId}
-                          onAssign={(assigneeId) => onAssign(card, assigneeId)}
+                          // The refetch, so this panel's own copy of the card
+                          // catches up. The board behind it is refreshed by
+                          // the workspace either way.
+                          onAssign={(assigneeId) => onAssign(card, assigneeId, () => void refresh())}
                         />
                       </DropdownMenuContent>
                     </DropdownMenu>

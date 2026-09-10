@@ -82,6 +82,35 @@ function NavCollapsibleRow({
   // once, in the root layout) and resets on a reload.
   const [open, setOpen] = useState(entry.defaultOpen ?? childActive);
 
+  // -----------------------------------------------------------------
+  // RE-OPEN WHEN NAVIGATION LANDS INSIDE A SHUT GROUP.
+  //
+  // useState above is a SEED, read once. The sidebar is mounted by the root
+  // layout and never unmounts, so without this a group shut on one page stays
+  // shut after navigating into it - and the current page's row is then
+  // invisible, with the highlight that says "you are here" hidden behind a
+  // triangle. Somebody clicking Summaries from Home would watch nothing at
+  // all happen in the nav.
+  //
+  // ADJUSTED DURING RENDER RATHER THAN IN AN EFFECT. React documents this
+  // shape for "a prop changed and some state should follow it", and the
+  // react-hooks/set-state-in-effect rule exists to push you to it: an effect
+  // would paint the shut group first and then open it, which is a visible
+  // flicker on every navigation into a group.
+  //
+  // ONE DIRECTION ONLY. It opens on arrival and never closes on departure, so
+  // a group somebody deliberately shut stays shut until they go into it -
+  // rather than a nav that reaches out and collapses a section while they are
+  // reading it. Shutting a group you are CURRENTLY inside still works, since
+  // this only fires on the render where childActive CHANGES.
+  // -----------------------------------------------------------------
+  const [wasChildActive, setWasChildActive] = useState(childActive);
+
+  if (childActive !== wasChildActive) {
+    setWasChildActive(childActive);
+    if (childActive) setOpen(true);
+  }
+
   const groupButton = (
     <button
       type="button"
@@ -133,10 +162,12 @@ function NavCollapsibleRow({
                 href={child.href}
                 aria-current={active ? "page" : undefined}
                 aria-label={child.label}
-                // The full name on hover. The Tooltip below only renders when
-                // the rail is COLLAPSED, and a truncated label is exactly the
-                // case where somebody needs to read the rest of it.
-                title={child.tooltip}
+                // The full name on hover, and ONLY when the rail is expanded.
+                // A collapsed rail already wraps this row in a Tooltip below,
+                // and setting both puts two bubbles on screen with different
+                // text in them. Expanded is exactly the case the native one is
+                // for, because that is when the label is truncated.
+                title={collapsed ? undefined : child.tooltip}
                 className={cn(
                   "flex h-9 items-center rounded-md transition-all duration-200",
                   collapsed ? "mx-1 w-[calc(100%-0.5rem)] justify-center" : "mx-2 gap-2 pr-3 pl-6",

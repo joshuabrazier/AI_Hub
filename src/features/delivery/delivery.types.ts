@@ -2363,6 +2363,13 @@ export function visibleWork(work: readonly MyWorkItemDTO[]): {
 // The EMAIL is the fallback rather than an id, because it is what tells two
 // people with the same name apart, which is the whole reason ProjectMemberDTO
 // carries it. An id would be correct and useless.
+//
+// BOTH CAN BE MISSING, and that is a real row rather than a broken one: this
+// app DE-IDENTIFIES dormant accounts in place rather than deleting them,
+// because their time entries are billing history. So a member row with
+// neither a name nor an address still has to render as something, and the
+// third branch is what it renders as. Some callers also hold a shape carrying
+// a name and no address at all, which is why `email` is optional here.
 // -------------------------------------------------------------------
 export function memberLabel(member: { name: string | null; email?: string | null }): string {
   return member.name ?? member.email ?? "Account with no name on record";

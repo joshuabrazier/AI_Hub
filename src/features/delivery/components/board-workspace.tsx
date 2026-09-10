@@ -276,11 +276,19 @@ export function BoardWorkspace({
   // because a drag has already visibly happened and snapping back reads as
   // broken; a menu choice has not.
   //
+  // `onDone` IS NOT OPTIONAL DECORATION. router.refresh() rebuilds the board,
+  // but the task panel holds its own fetched copy of the card and is keyed on
+  // an id that does not change - so it reconciles rather than remounting and
+  // keeps showing the old assignee. The panel passes its own refetch here.
+  // Without it the two halves of one screen disagree, and worse: the guard
+  // below then compares against that stale copy, so putting a mistaken
+  // assignment BACK does nothing at all and says nothing about it.
+  //
   // The service re-checks the assignee against project_members, so a stale
   // menu naming somebody since removed is refused in words rather than
   // written.
   // -------------------------------------------------------------------
-  const assignTask = (task: TaskCardDTO, assigneeId: string | null) => {
+  const assignTask = (task: TaskCardDTO, assigneeId: string | null, onDone?: () => void) => {
     if (task.assigneeId === assigneeId) return;
 
     setPendingTaskId(task.id);
@@ -290,6 +298,7 @@ export function BoardWorkspace({
     run(
       () => updateTaskAction({ taskId: task.id, assigneeId }),
       who ? `Assigned to ${memberLabel(who)}` : "Assignee removed",
+      onDone,
     );
   };
 
