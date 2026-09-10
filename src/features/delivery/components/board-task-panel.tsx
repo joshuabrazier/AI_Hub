@@ -1,16 +1,32 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { Clock, Loader2, Paperclip, Pencil, Timer, Trash2, UserRound } from "lucide-react";
+import {
+  ChevronDown,
+  Clock,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Timer,
+  Trash2,
+  UserRound,
+} from "lucide-react";
 import { toast } from "sonner";
 
-import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { MESSAGES } from "@/lib/constants";
 import {
-  TASK_COLUMNS,
   TASK_COLUMN_LABELS,
   TASK_COLUMN_ORDER,
   type TaskColumn,
@@ -119,6 +135,83 @@ function TimeEntryRow({
         </div>
       ) : null}
     </li>
+  );
+}
+
+// -------------------------------------------------------------------
+// WHICH COLUMN THIS CARD IS IN - shown as the thing that changes it.
+//
+// This replaces a headed "Move" section holding a paragraph, four buttons
+// and a badge repeating the current column, plus the column half of the
+// sheet's own subtitle. Four renderings, one fact.
+//
+// A DROPDOWN RATHER THAN FOUR BUTTONS because a column is a single value
+// out of a closed set, and a row of buttons where one is disabled and
+// slightly darker is a control that has to be decoded before it can be
+// read. This reads as the answer and opens as the choices.
+//
+// RADIO ITEMS, not plain items, so the current column is stated by the
+// control instead of by a badge beside it - and a screen reader is told
+// which of four is selected rather than being handed four buttons where
+// one happens to be unavailable.
+//
+// READ-ONLY IS STILL RENDERED. Somebody who cannot move a card still needs
+// to know where it is, and this is now the only place that says so.
+// -------------------------------------------------------------------
+function TaskColumnControl({
+  boardColumn,
+  canEditTasks,
+  isPending,
+  onSelect,
+}: {
+  boardColumn: TaskColumn;
+  canEditTasks: boolean;
+  isPending: boolean;
+  onSelect: (column: TaskColumn) => void;
+}) {
+  if (!canEditTasks) {
+    return (
+      <span className="rounded-md border border-border px-2 py-1 text-sm text-muted-foreground">
+        {TASK_COLUMN_LABELS[boardColumn]}
+      </span>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="outline" size="sm" disabled={isPending}>
+          {TASK_COLUMN_LABELS[boardColumn]}
+          <ChevronDown size={14} aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuRadioGroup
+          value={boardColumn}
+          onValueChange={(value) => {
+            // Radix hands back a string. Selecting the column it is already
+            // in is a no-op rather than a write, because the menu closes on
+            // any selection and re-appending a card to its own column would
+            // silently move it to the bottom.
+            if (value !== boardColumn) onSelect(value as TaskColumn);
+          }}
+        >
+          {TASK_COLUMN_ORDER.map((column) => (
+            <DropdownMenuRadioItem key={column} value={column}>
+              {TASK_COLUMN_LABELS[column]}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+
+        {/* KEPT, because it is true and it is not obvious: this appends,
+            where dragging chooses a slot. It is a note at the foot of the
+            menu now rather than a paragraph at the top of a section. */}
+        <DropdownMenuSeparator />
+        <p className="px-1.5 py-1 text-xs text-muted-foreground">
+          Appends to the column. Drag a card to choose a slot.
+        </p>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -261,10 +354,78 @@ export function BoardTaskPanel({
         <SheetHeader className="p-0">
           {/* Typed by a person. A text node, like everything else here. */}
           <SheetTitle className="pr-8 text-left text-lg">{card.title}</SheetTitle>
-          <SheetDescription className="text-left">
-            {phaseName} - {TASK_COLUMN_LABELS[boardColumn]}
-          </SheetDescription>
+          {/* THE PHASE ONLY. The column used to be here as well as in a
+              headed "Move" section further down and again in a badge inside
+              it - three renderings of one fact. It is a control now, below,
+              which is the one place it can both be read and changed. */}
+          <SheetDescription className="text-left">{phaseName}</SheetDescription>
         </SheetHeader>
+
+        {/* -----------------------------------------------------------
+            WHAT THIS CARD IS, AND WHAT YOU CAN DO TO IT.
+
+            This strip replaces two headed sections and four rows of a
+            description list, which between them said less than it does.
+
+            "Move" WAS A SECTION with a paragraph, four buttons and a badge -
+            and its own copy admitted the better way was to drag the card.
+            A column is a piece of state, so it belongs where the state is
+            shown: one control that reads as the current value and changes
+            it. The drag path is untouched and is still the good one; this is
+            what a keyboard reaches for.
+
+            "Remove" WAS A SECTION TOO, with a heading the same size as
+            Description and Time. Deleting a task is not a third of what this
+            panel is about, and giving it equal weight is how somebody
+            reaches for it by accident. It is in the menu, last, marked.
+
+            ASSIGNEE MOVED UP HERE out of a list called "Effort", where it
+            had been filed because there was nowhere else to put it. Who has
+            a card is the second thing anybody wants to know about it.
+            ----------------------------------------------------------- */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <TaskColumnControl
+            boardColumn={boardColumn}
+            canEditTasks={canEditTasks}
+            isPending={isPending}
+            onSelect={(column) =>
+              onMove(card.id, {
+                phaseId: card.phaseId,
+                boardColumn: column,
+                position: endPositionFor(card.phaseId, column),
+              })
+            }
+          />
+
+          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <UserRound size={14} aria-hidden="true" />
+            {card.assigneeName ?? "Unassigned"}
+          </span>
+
+          {canEditTasks ? (
+            <div className="ml-auto">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon" disabled={isPending}>
+                    <MoreHorizontal size={16} aria-hidden="true" />
+                    <span className="sr-only">More actions for this task</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => setIsEditing(true)} disabled={!detail}>
+                    <Pencil size={14} aria-hidden="true" />
+                    Edit title, description and assignee
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => onDelete(card)}>
+                    <Trash2 size={14} aria-hidden="true" />
+                    Delete task
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ) : null}
+        </div>
 
         <div className="mt-6 space-y-6">
           <section aria-labelledby="task-panel-effort">
@@ -289,45 +450,6 @@ export function BoardTaskPanel({
                 />
               </div>
             ) : null}
-
-            <dl className="mt-4 grid gap-2 text-sm">
-              <div className="flex items-center gap-2">
-                <dt className="flex items-center gap-1.5 text-muted-foreground">
-                  <Timer size={14} aria-hidden="true" />
-                  Estimate
-                </dt>
-                <dd className="text-foreground">
-                  {card.estimateMinutes > 0 ? formatMinutesAsClock(card.estimateMinutes) : "None set"}
-                </dd>
-              </div>
-              <div className="flex items-center gap-2">
-                <dt className="flex items-center gap-1.5 text-muted-foreground">
-                  <Clock size={14} aria-hidden="true" />
-                  Logged
-                </dt>
-                <dd className="text-foreground">{formatMinutesAsClock(card.loggedMinutes)}</dd>
-              </div>
-              <div className="flex items-center gap-2">
-                <dt className="flex items-center gap-1.5 text-muted-foreground">
-                  <UserRound size={14} aria-hidden="true" />
-                  Assignee
-                </dt>
-                <dd className="text-foreground">{card.assigneeName ?? "Unassigned"}</dd>
-              </div>
-              <div className="flex items-center gap-2">
-                <dt className="flex items-center gap-1.5 text-muted-foreground">
-                  <Paperclip size={14} aria-hidden="true" />
-                  Files
-                </dt>
-                <dd className="text-foreground">
-                  {card.attachmentCount === 0
-                    ? "None"
-                    : card.attachmentCount === 1
-                      ? "1 file"
-                      : `${card.attachmentCount} files`}
-                </dd>
-              </div>
-            </dl>
 
             {/* -----------------------------------------------------------
                 CHANGING THE ESTIMATE, FROM THE BOARD.
@@ -357,21 +479,14 @@ export function BoardTaskPanel({
           </section>
 
           <section aria-labelledby="task-panel-description">
-            <div className="flex items-center justify-between gap-2">
-              <h3 id="task-panel-description" className="text-sm font-semibold text-foreground">
-                Description
-              </h3>
-
-              {/* Only once the fetch has landed: an edit form built from the
-                  card would open with an empty description box over
-                  whatever had been written. */}
-              {canEditTasks && detail ? (
-                <Button type="button" variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-                  <Pencil size={14} aria-hidden="true" />
-                  Edit
-                </Button>
-              ) : null}
-            </div>
+            {/* NO EDIT BUTTON HERE ANY MORE. It edits the title and the
+                assignee as well as the description, so sitting in this
+                heading it was the one control whose scope was wider than
+                the section it was in. It is in the header menu, which is
+                where a control over the whole card belongs. */}
+            <h3 id="task-panel-description" className="text-sm font-semibold text-foreground">
+              Description
+            </h3>
 
             {isLoading ? (
               <p className="mt-1 text-sm text-muted-foreground">Loading...</p>
@@ -470,70 +585,6 @@ export function BoardTaskPanel({
                   </li>
                 ))}
               </ul>
-            </section>
-          ) : null}
-
-          {canEditTasks ? (
-            <section aria-labelledby="task-panel-move">
-              <h3 id="task-panel-move" className="text-sm font-semibold text-foreground">
-                Move
-              </h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Moving it from here appends it to the column. Drag a card, or use its menu, to choose a slot.
-              </p>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                {TASK_COLUMN_ORDER.map((column) => {
-                  const isCurrent = column === boardColumn;
-
-                  return (
-                    <Button
-                      key={column}
-                      type="button"
-                      variant={isCurrent ? "secondary" : "outline"}
-                      size="sm"
-                      aria-current={isCurrent ? "true" : undefined}
-                      disabled={isCurrent || isPending}
-                      onClick={() =>
-                        onMove(card.id, {
-                          phaseId: card.phaseId,
-                          boardColumn: column,
-                          position: endPositionFor(card.phaseId, column),
-                        })
-                      }
-                    >
-                      {TASK_COLUMN_LABELS[column]}
-                    </Button>
-                  );
-                })}
-              </div>
-
-              <Badge variant="outline" className="mt-3">
-                In {TASK_COLUMN_LABELS[boardColumn]}
-              </Badge>
-            </section>
-          ) : null}
-
-          {canEditTasks ? (
-            <section aria-labelledby="task-panel-remove">
-              <h3 id="task-panel-remove" className="text-sm font-semibold text-foreground">
-                Remove
-              </h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                A task with time logged against it cannot be deleted - move it to{" "}
-                {TASK_COLUMN_LABELS[TASK_COLUMNS.DONE]} instead.
-              </p>
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                className="mt-3"
-                disabled={isPending}
-                onClick={() => onDelete(card)}
-              >
-                <Trash2 size={14} aria-hidden="true" />
-                Delete task
-              </Button>
             </section>
           ) : null}
         </div>
