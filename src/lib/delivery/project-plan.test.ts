@@ -300,3 +300,36 @@ describe("the project itself", () => {
     expect(plan({ projectTitle: "  Portal Rebuild  " }).project.title).toBe("Portal Rebuild");
   });
 });
+
+describe("a person matched on a prefix", () => {
+  it("reports the person it actually chose, not the name that was typed", () => {
+    // "is that the right person" is the question a review asks, and echoing
+    // back what was typed answers a different one.
+    const result = plan({
+      phases: [{ name: "Build", tasks: [{ title: "Scope it", estimateHours: 8, assigneeName: "Louis" }] }],
+    });
+
+    expect(result.phases[0].tasks[0].assigneeId).toBe("u1");
+    expect(result.phases[0].tasks[0].assigneeName).toBe("Louis D'Odorico");
+  });
+
+  it("says out loud that it widened a short name", () => {
+    // The same silent widening the client path warns about, and for the same
+    // reason: this is somebody's workload.
+    const result = plan({
+      phases: [{ name: "Build", tasks: [{ title: "Scope it", estimateHours: 8, assigneeName: "Louis" }] }],
+    });
+
+    expect(result.warnings.join(" ")).toContain('"Louis" was matched to Louis D\'Odorico');
+  });
+
+  it("stays quiet when the name was typed in full", () => {
+    const result = plan({
+      phases: [
+        { name: "Build", tasks: [{ title: "Scope it", estimateHours: 8, assigneeName: "Josh Brazier" }] },
+      ],
+    });
+
+    expect(result.warnings.join(" ")).not.toContain("was matched to");
+  });
+});

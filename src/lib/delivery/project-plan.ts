@@ -346,6 +346,13 @@ function resolveTask(
     );
   } else if (match.kind === "none") {
     warnings.push(`Nobody here is called "${wanted}", so "${title}" was left unassigned.`);
+  } else if (match.name.trim().toLowerCase() !== wanted.toLowerCase()) {
+    // MATCHED ON A PREFIX, NOT THE WHOLE NAME. "Louis" reaches "Louis
+    // D'Odorico" through the same rung of the ladder a short client name
+    // does, and it is the same silent widening: the app choosing a person
+    // somebody did not fully type. Said out loud for the same reason - it
+    // is somebody's workload.
+    warnings.push(`"${wanted}" was matched to ${match.name}, who "${title}" is now assigned to.`);
   }
 
   return {
@@ -353,7 +360,11 @@ function resolveTask(
     description: draft.description?.trim() || null,
     estimateHours: draft.estimateHours,
     assigneeId: match.kind === "matched" ? match.id : null,
-    assigneeName: wanted,
+    // THE RESOLVED NAME WHEN IT RESOLVED, the asked-for name when it did
+    // not. A review asks "is that the right person", and echoing back what
+    // was typed answers a different question - it would show "Louis" for
+    // whoever "Louis" turned out to be.
+    assigneeName: match.kind === "matched" ? match.name : wanted,
   };
 }
 

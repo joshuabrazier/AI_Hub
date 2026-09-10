@@ -28,12 +28,70 @@
 //   AI_HUB_URL     http://localhost:3100 or the deployed address
 //   AI_HUB_TOKEN   from scripts/create-access-token.mjs
 //
+// Both are read from .env when they are not already in the environment,
+// which is how .mcp.json can be committed without carrying a credential.
+// There is nothing to add to a shell profile.
+//
 // TWO TOOLS, AND THE SPLIT IS THE SAFETY. plan_project reads and returns
 // what would happen; create_project writes. A model that calls the first and
 // reports "done" has told you nothing was created, which is true. Claude
 // Code's own permission prompt lands on the second.
 // ===================================================================
 import { createInterface } from "node:readline";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// -------------------------------------------------------------------
+// The token comes from .env unless the environment already has it.
+//
+// WHY THIS READS A FILE AT ALL. Claude Code starts this process itself, from
+// .mcp.json, which is committed - so the token cannot live there. It could
+// live in the machine's environment, but then setting it up means editing a
+// shell profile and restarting things, which is a bad first five minutes.
+// .env is already where this repo's secrets live and is already gitignored,
+// so the token goes in beside DATABASE_URL and .mcp.json stays free of it.
+//
+// A REAL ENVIRONMENT VARIABLE STILL WINS. Anything already set is left
+// alone, so a deployed or CI use of this is unaffected by a stray .env.
+//
+// Deliberately not dotenv: this script has no package of its own, and adding
+// a dependency to the application for a dev tool is a cost paid by every
+// install. A dozen lines that read KEY=value is the whole requirement.
+// -------------------------------------------------------------------
+function loadEnvFile() {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+  let contents;
+  try {
+    contents = readFileSync(path.join(root, ".env"), "utf8");
+  } catch {
+    // No .env is an ordinary case - the environment may carry both values
+    // already, which is how anything other than a laptop would run this.
+    return;
+  }
+
+  for (const line of contents.split(/\r?\n/)) {
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!match) continue;
+
+    const key = match[1];
+    if (process.env[key] !== undefined) continue;
+
+    // One layer of matching quotes stripped, because that is how a value
+    // with spaces is written and the quotes are not part of it.
+    const value = match[2].trim();
+    const unquoted =
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+        ? value.slice(1, -1)
+        : value;
+
+    process.env[key] = unquoted;
+  }
+}
+
+loadEnvFile();
 
 const BASE_URL = (process.env.AI_HUB_URL ?? "http://localhost:3100").replace(/\/+$/, "");
 const TOKEN = process.env.AI_HUB_TOKEN;
