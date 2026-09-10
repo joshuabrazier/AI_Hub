@@ -142,27 +142,32 @@ export function ProductivityChart({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Week stepping is links, not state: a week is a real URL that can
-                be bookmarked and sent to the person whose week it is. */}
+            {/* Stepping is links, not state: a period is a real URL that can
+                be bookmarked and sent to the person whose period it is.
+
+                THE LABELS NAME THE GRANULARITY rather than saying "week".
+                These step by whatever is selected - week, fortnight, month or
+                year - so a screen reader was told "Previous week" while the
+                button moved a year. */}
             <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
               <Button asChild variant="ghost" size="icon" className="size-8">
-                <Link href={previousHref} aria-label="Previous week" scroll={false}>
+                <Link href={previousHref} aria-label={`Previous ${period.granularity}`} scroll={false}>
                   <ChevronLeft aria-hidden />
                 </Link>
               </Button>
 
-              <span className="min-w-[124px] px-1 text-center text-sm font-medium tabular-nums">{period.label}</span>
+              <span className="min-w-[124px] px-1 text-center text-sm font-medium figure">{period.label}</span>
 
               {period.hasNext ? (
                 <Button asChild variant="ghost" size="icon" className="size-8">
-                  <Link href={nextHref} aria-label="Next week" scroll={false}>
+                  <Link href={nextHref} aria-label={`Next ${period.granularity}`} scroll={false}>
                     <ChevronRight aria-hidden />
                   </Link>
                 </Button>
               ) : (
                 // Disabled rather than hidden, so the control does not move
-                // around as you step back through the weeks.
-                <Button variant="ghost" size="icon" className="size-8" disabled aria-label="Next week">
+                // around as you step back through the periods.
+                <Button variant="ghost" size="icon" className="size-8" disabled aria-label={`Next ${period.granularity}`}>
                   <ChevronRight aria-hidden />
                 </Button>
               )}
@@ -213,15 +218,15 @@ export function ProductivityChart({
                     <TableCell className="whitespace-nowrap">
                       {point.weekdayLabel} {point.dayOfMonth}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{formatHours(point.billableHours)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatHours(point.nonBillableHours)}</TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right figure">{formatHours(point.billableHours)}</TableCell>
+                    <TableCell className="text-right figure">{formatHours(point.nonBillableHours)}</TableCell>
+                    <TableCell className="text-right figure">
                       {point.unsetHours > 0 ? formatHours(point.unsetHours) : "-"}
                     </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">
+                    <TableCell className="text-right font-medium figure">
                       {formatHours(point.loggedHours)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right figure">
                       {point.capacityHours > 0 ? formatHours(point.capacityHours) : "-"}
                     </TableCell>
                   </TableRow>
@@ -237,7 +242,7 @@ export function ProductivityChart({
               {ticks.map((tick) => (
                 <span
                   key={tick}
-                  className="absolute right-0 -translate-y-1/2 text-[11px] tabular-nums text-muted-foreground"
+                  className="absolute right-0 -translate-y-1/2 text-[11px] figure text-muted-foreground"
                   style={{ top: `${(1 - tick / top) * 100}%` }}
                 >
                   {tick}h
@@ -394,7 +399,7 @@ export function ProductivityChart({
                           {/* Every day keeps its number. */}
                           <p
                             className={cn(
-                              "text-[11px] tabular-nums leading-tight",
+                              "text-[11px] figure leading-tight",
                               point.isWorkingDay ? "text-muted-foreground" : "text-muted-foreground/60",
                             )}
                           >

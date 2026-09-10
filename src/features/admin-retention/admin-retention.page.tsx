@@ -35,7 +35,15 @@ export default async function AdminDataRetentionPage() {
         <PortalPage
           eyebrow="Admin"
           title="Data retention"
-          description={`Deactivated accounts with no sign-in for ${RETENTION_INACTIVE_MONTHS}+ months are de-identified automatically each month.`}
+          // Conditional, because the banner directly below says the
+          // opposite when the job is off - the page then reads as a preview,
+          // and a description asserting the sweep runs contradicted it in the
+          // same eyeful.
+          description={
+            jobEnabled
+              ? `Deactivated accounts with no sign-in for ${RETENTION_INACTIVE_MONTHS}+ months are de-identified automatically each month.`
+              : `Deactivated accounts with no sign-in for ${RETENTION_INACTIVE_MONTHS}+ months would be de-identified, but the monthly sweep is switched off - this is a preview and nothing is removed.`
+          }
         >
           {/* Status of the automatic job. When off, this page is a preview. */}
           {jobEnabled ? (

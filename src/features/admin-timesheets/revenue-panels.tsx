@@ -222,7 +222,7 @@ export function ConcentrationCard({
               <div key={slice.key} className="space-y-1">
                 <div className="flex items-baseline justify-between gap-3 text-sm">
                   <span className="min-w-0 truncate text-foreground">{slice.label}</span>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                  <span className="shrink-0 figure text-muted-foreground">
                     {formatCents(slice.chargeableValueCents)}
                     <span className="ml-2">{percent(slice.valueShare)}</span>
                   </span>

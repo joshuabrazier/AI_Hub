@@ -87,7 +87,7 @@ export function TwoFactorVerifyForm({ autoFocus = true }: { autoFocus?: boolean 
       </div>
 
       <Button type="submit" disabled={isPending || !code.trim()}>
-        {isPending ? "Checking..." : "Verify"}
+        {isPending ? "Checking…" : "Verify"}
       </Button>
 
       <button

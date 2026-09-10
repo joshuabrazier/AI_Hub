@@ -63,20 +63,20 @@ export function BillableStateBanner({ report }: { report: TimesheetReport }) {
         "flex items-start gap-3 rounded-xl border p-4",
         blocked
           ? "border-destructive/30 bg-destructive/10"
-          : "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950",
+          : "border-data-ok/30 bg-data-ok-surface",
       )}
     >
       {blocked ? (
         <ShieldAlert className="mt-0.5 size-5 shrink-0 text-destructive" aria-hidden />
       ) : (
-        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-data-ok" aria-hidden />
       )}
 
       <div className="min-w-0">
-        <p className={cn("font-semibold", blocked ? "text-destructive" : "text-emerald-900 dark:text-emerald-100")}>
+        <p className={cn("font-semibold", blocked ? "text-destructive" : "text-data-ok-text")}>
           {blocked ? "This period is not billable yet" : "This period is ready to bill"}
         </p>
-        <p className={cn("mt-1 text-sm", blocked ? "text-destructive/90" : "text-emerald-800 dark:text-emerald-200")}>
+        <p className={cn("mt-1 text-sm", blocked ? "text-destructive/90" : "text-data-ok-text")}>
           {blocked
             ? `${report.blockingCount} ${report.blockingCount === 1 ? "finding blocks" : "findings block"} it. ` +
               `Fix them in Jira and re-sync - nothing is edited here.`
@@ -122,11 +122,30 @@ export function StatTile({
       <LiftOnHover className="h-full">
         <Card className={cn("h-full", emphasis === "alert" && "border-destructive/40")}>
           <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+            {/* Sentence case, body face. This was briefly 10px tracked mono
+                uppercase, along with every other label in the app, and it
+                read as generated - see the note on the `figure` utility in
+                globals.css for the reversal. */}
+            <p className="text-xs font-semibold text-muted-foreground">{label}</p>
 
+            {/* -----------------------------------------------------------
+                THE FIGURE, AND A REAL BUG THAT WENT WITH IT.
+
+                This had NO tabular numerals, and the number inside it COUNTS
+                UP (see AnimatedNumber). In a proportionally spaced face the
+                digits are different widths, so the figure visibly jittered
+                left and right the whole way there. That is not a taste call:
+                an animated number needs tabular digits or it wobbles.
+
+                `figure` supplies exactly that and nothing else. It briefly
+                also forced the mono face, which fixed the wobble and made
+                every headline number in the app look like console output;
+                Plex Sans has proper tabular figures, so the heading face
+                stays and the wobble is still gone.
+                ----------------------------------------------------------- */}
             <p
               className={cn(
-                "mt-2 font-heading text-3xl font-bold",
+                "mt-2 font-heading text-3xl leading-none font-bold figure",
                 emphasis === "muted" && "text-muted-foreground",
                 emphasis === "alert" && "text-destructive",
                 emphasis === "normal" && "text-foreground",
@@ -154,11 +173,11 @@ export function StatTile({
 function SplitCells({ split }: { split: BillableSplit }) {
   return (
     <>
-      <TableCell className="text-right tabular-nums">{formatHours(split.billableHours)}</TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">
+      <TableCell className="text-right figure">{formatHours(split.billableHours)}</TableCell>
+      <TableCell className="text-right figure text-muted-foreground">
         {formatHours(split.nonBillableHours)}
       </TableCell>
-      <TableCell className="text-right tabular-nums">
+      <TableCell className="text-right figure">
         {split.unsetSeconds > 0 ? (
           <span className="font-medium text-destructive">{formatHours(split.unsetHours)}</span>
         ) : (
@@ -244,10 +263,10 @@ export function PeopleCard({
             return (
               <TableRow key={person.personId} className="transition-colors hover:bg-muted/50">
                 <TableCell className="font-medium">{person.personName ?? person.personId}</TableCell>
-                <TableCell className="text-right font-medium tabular-nums">{formatHours(person.hours)}</TableCell>
+                <TableCell className="text-right font-medium figure">{formatHours(person.hours)}</TableCell>
                 <SplitCells split={person.split} />
-                <TableCell className="text-right tabular-nums">{person.daysWorked}</TableCell>
-                <TableCell className="text-right tabular-nums">{formatPercent(utilisation)}</TableCell>
+                <TableCell className="text-right figure">{person.daysWorked}</TableCell>
+                <TableCell className="text-right figure">{formatPercent(utilisation)}</TableCell>
               </TableRow>
             );
           })}
@@ -271,7 +290,12 @@ export function ProjectsCard({
 }) {
   return (
     <PanelCard
-      title="Hours per client"
+      // TITLED FOR WHAT IT SHOWS. It said "Hours per client" while its first
+      // column is "Project item" and its rows are project items - a project
+      // item belongs to a client but is not one, and a client with three of
+      // them appears three times. Somebody reading these as client totals
+      // would under-count every client that has more than one.
+      title="Hours per project item"
       description="Rolled up to the Project item, which is the level an invoice is written at."
       index={index}
     >
@@ -304,7 +328,7 @@ export function ProjectsCard({
                   <span className="text-muted-foreground">-</span>
                 )}
               </TableCell>
-              <TableCell className="text-right font-medium tabular-nums">{formatHours(project.hours)}</TableCell>
+              <TableCell className="text-right font-medium figure">{formatHours(project.hours)}</TableCell>
               <SplitCells split={project.split} />
             </TableRow>
           ))}
@@ -312,7 +336,7 @@ export function ProjectsCard({
         <TableFooter>
           <TableRow>
             <TableCell colSpan={2}>Total</TableCell>
-            <TableCell className="text-right font-semibold tabular-nums">{formatHours(totalHours)}</TableCell>
+            <TableCell className="text-right font-semibold figure">{formatHours(totalHours)}</TableCell>
             <TableCell colSpan={3} />
           </TableRow>
         </TableFooter>
@@ -390,7 +414,7 @@ export function AuditCard({ findings, index }: { findings: Finding[]; index: num
         <CardContent>
           {findings.length === 0 ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+              <CheckCircle2 className="size-4 text-data-ok" aria-hidden />
               Nothing to report for this period.
             </p>
           ) : (

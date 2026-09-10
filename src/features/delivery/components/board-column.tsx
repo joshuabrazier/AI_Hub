@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { TASK_COLUMN_LABELS, type TaskColumn } from "@/lib/data/kysely-database-types";
 import { cn } from "@/lib/utils";
 
-import type { TaskCardDTO } from "../delivery.types";
+import type { ProjectMemberDTO, TaskCardDTO } from "../delivery.types";
 import { BoardTaskCard, type BoardPhaseOption, type MoveTaskHandler } from "./board-task-card";
 
 // -------------------------------------------------------------------
@@ -39,6 +39,8 @@ export function BoardColumn({
   onOpen,
   onLogTime,
   onDelete,
+  onAssign,
+  members,
   onMove,
   onAddTask,
   onDragStart,
@@ -57,6 +59,8 @@ export function BoardColumn({
   onOpen: (task: TaskCardDTO) => void;
   onLogTime: (task: TaskCardDTO) => void;
   onDelete: (task: TaskCardDTO) => void;
+  onAssign: (task: TaskCardDTO, assigneeId: string | null) => void;
+  members: readonly ProjectMemberDTO[];
   onMove: MoveTaskHandler;
   onAddTask: (phaseId: string, boardColumn: TaskColumn) => void;
   onDragStart: (task: TaskCardDTO) => void;
@@ -98,8 +102,16 @@ export function BoardColumn({
       onDragOver={allowDrop}
       onDragLeave={() => setIsOver(false)}
       onDrop={(event) => dropAt(event, tasks.length)}
+      // A TRANSPARENT BORDER RATHER THAN NO BORDER, so the drop highlight
+      // colours one in instead of adding one - a border appearing on
+      // dragover reflows the whole grid by two pixels under the cursor.
+      //
+      // It used to be a drawn border in every state, which put three nested
+      // outlines on the screen at once: the phase's card, the column, and
+      // the task inside it. The tint is enough to bound a column, and a
+      // board is easier to read with the one box that matters drawn.
       className={cn(
-        "flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-muted/30 p-2 transition-colors",
+        "flex min-w-0 flex-col gap-2 rounded-xl border border-transparent bg-muted/40 p-2 transition-colors",
         isOver && accepts && "border-primary bg-primary/5",
       )}
     >
@@ -144,6 +156,8 @@ export function BoardColumn({
               onOpen={onOpen}
               onLogTime={onLogTime}
               onDelete={onDelete}
+              onAssign={onAssign}
+              members={members}
               onMove={onMove}
               onDragStart={onDragStart}
               onDragEnd={onDragEnd}

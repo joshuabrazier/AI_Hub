@@ -13,7 +13,7 @@ export default async function AdminActivityPage() {
         <PortalPage
           eyebrow="Admin"
           title="Activity"
-          description="Who changed what, and when - account and role changes, team membership, and sign-in activity."
+          description="Who changed what, and when - account and role changes, project membership, and sign-in activity."
         >
           <AdminActivityTable entries={entries} />
         </PortalPage>

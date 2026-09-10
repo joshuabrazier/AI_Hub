@@ -2,6 +2,22 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+// -------------------------------------------------------------------
+// ONE EDGE TREATMENT, NOT TWO.
+//
+// A Card drew its edge with `ring-1 ring-foreground/10` while every other
+// panel in the app - the board's phase sections, the task cards, the setup
+// steps, every table - draws one with `border border-border`. Two ways of
+// saying "this is a surface", side by side on the same screen, and they do
+// not match: the ring resolved to a flat grey at 10% ink, where --border is
+// a slightly teal-biased hairline chosen with the rest of the palette. So
+// cards read as a fractionally different colour temperature to everything
+// next to them, which is the sort of thing that makes a screen feel
+// assembled rather than designed.
+//
+// It is a real border now, so it also participates in layout the way the
+// neighbouring panels do rather than floating over it.
+// -------------------------------------------------------------------
 function Card({
   className,
   size = "default",
@@ -12,7 +28,7 @@ function Card({
       data-slot="card"
       data-size={size}
       className={cn(
-        "group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-xl bg-card py-(--card-spacing) text-sm text-card-foreground ring-1 ring-foreground/10 [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl",
+        "group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-xl border border-border bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl",
         className
       )}
       {...props}

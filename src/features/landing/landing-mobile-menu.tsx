@@ -14,7 +14,11 @@ export function LandingMobileMenu() {
   return (
     <Sheet>
       <SheetTrigger asChild>
-        <Button variant="ghost" size="icon" className="text-primary-foreground md:hidden" aria-label="Open menu">
+        {/* text-FOREGROUND, not primary-foreground. The header is
+            bg-background, so a primary-foreground icon was white on white
+            in light mode - the burger was invisible on every phone, which
+            is the only place it renders. */}
+        <Button variant="ghost" size="icon" className="text-foreground md:hidden" aria-label="Open menu">
           <Menu />
         </Button>
       </SheetTrigger>

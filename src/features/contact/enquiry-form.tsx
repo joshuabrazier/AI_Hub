@@ -197,7 +197,7 @@ export function EnquiryForm({ categoryOptions }: { categoryOptions: CategoryOpti
           disabled={isPending || !form.formState.isValid}
           className="px-10"
         >
-          {isPending ? "Sending..." : "Send enquiry"}
+          {isPending ? "Sending…" : "Send enquiry"}
         </Button>
       </div>
     </form>

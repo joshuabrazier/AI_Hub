@@ -12,7 +12,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TASK_COLUMNS, type TaskColumn } from "@/lib/data/kysely-database-types";
 
-import { formatMinutesAsClock, type BoardPhaseDTO, type PhaseDTO, type TaskCardDTO } from "../delivery.types";
+import {
+  describeTaskEffort,
+  type BoardPhaseDTO,
+  type PhaseDTO,
+  type ProjectMemberDTO,
+  type TaskCardDTO,
+} from "../delivery.types";
 import { BoardColumn } from "./board-column";
 import { BoardEmptyState } from "./board-empty-state";
 import type { BoardPhaseOption, MoveTaskHandler } from "./board-task-card";
@@ -50,6 +56,8 @@ export function BoardPhaseSection({
   onOpenTask,
   onLogTime,
   onDeleteTask,
+  onAssignTask,
+  members,
   onMoveTask,
   onAddTask,
   onRenamePhase,
@@ -72,6 +80,8 @@ export function BoardPhaseSection({
   onOpenTask: (task: TaskCardDTO) => void;
   onLogTime: (task: TaskCardDTO) => void;
   onDeleteTask: (task: TaskCardDTO) => void;
+  onAssignTask: (task: TaskCardDTO, assigneeId: string | null) => void;
+  members: readonly ProjectMemberDTO[];
   onMoveTask: MoveTaskHandler;
   onAddTask: (phaseId: string, boardColumn: TaskColumn) => void;
   onRenamePhase: (phase: BoardPhaseDTO) => void;
@@ -83,6 +93,11 @@ export function BoardPhaseSection({
   const cardCount = phase.columns.reduce((total, column) => total + column.tasks.length, 0);
   const headingId = `phase-${phase.phaseId}-heading`;
 
+  // Absent stats are treated as nought here rather than in the DTO, because
+  // the only way to be missing one is for a phase to have been added between
+  // the project read and the board read.
+  const effort = describeTaskEffort(stats?.estimateMinutes ?? 0, stats?.loggedMinutes ?? 0);
+
   return (
     <section aria-labelledby={headingId} className="rounded-xl border border-border bg-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -91,11 +106,15 @@ export function BoardPhaseSection({
           <h3 id={headingId} className="text-base font-semibold text-foreground">
             {phase.phaseName}
           </h3>
+          {/* THE SAME EFFORT FORM AS THE CARDS UNDERNEATH IT. This used to
+              spell both figures out - "24h estimated, 6h logged" - which is
+              the right shape for a sentence and the wrong one for a heading
+              sitting directly above a grid of cards written the other way.
+              One form, read once, applies everywhere on the screen. */}
           <p className="mt-0.5 text-xs text-muted-foreground">
             {cardCount === 1 ? "1 task" : `${cardCount} tasks`}
-            {" - "}
-            {formatMinutesAsClock(stats?.estimateMinutes ?? 0)} estimated,{" "}
-            {formatMinutesAsClock(stats?.loggedMinutes ?? 0)} logged
+            <span aria-hidden="true" className="figure"> &middot; {effort.short}</span>
+            <span className="sr-only">, {effort.full}</span>
           </p>
         </div>
 
@@ -192,6 +211,8 @@ export function BoardPhaseSection({
             onOpen={onOpenTask}
             onLogTime={onLogTime}
             onDelete={onDeleteTask}
+            onAssign={onAssignTask}
+            members={members}
             onMove={onMoveTask}
             onAddTask={onAddTask}
             onDragStart={onDragStart}

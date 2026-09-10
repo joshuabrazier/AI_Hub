@@ -256,7 +256,7 @@ export function BoardTaskAttachments({
             ) : (
               <Upload size={14} aria-hidden="true" />
             )}
-            {isUploading ? "Uploading..." : "Attach a file"}
+            {isUploading ? "Uploading…" : "Attach a file"}
           </Button>
 
           <p className="mt-2 text-xs text-muted-foreground">

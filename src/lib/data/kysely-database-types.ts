@@ -110,6 +110,12 @@ export const AI_CHAT_REQUEST_KINDS = {
   // what the app thought about where the note should live. A note in the
   // wrong client's folder is investigated by reading the second.
   MEETING_FILING: "meeting_filing",
+  // Reading a pasted project brief into a plan. Its own kind rather than
+  // sharing 'text_summary': both take a document, but a summary hands back
+  // prose and this hands back a structure that becomes a project. "What did
+  // the model propose to create" is a different question from "what did it
+  // summarise".
+  PROJECT_PLAN: "project_plan",
 } as const;
 
 export type AiChatRequestKind = (typeof AI_CHAT_REQUEST_KINDS)[keyof typeof AI_CHAT_REQUEST_KINDS];
@@ -123,6 +129,7 @@ export const AI_CHAT_REQUEST_KIND_LABELS: Record<AiChatRequestKind, string> = {
   [AI_CHAT_REQUEST_KINDS.TEXT_SUMMARY]: "Text summary",
   [AI_CHAT_REQUEST_KINDS.TRANSCRIPTION]: "Meeting summary",
   [AI_CHAT_REQUEST_KINDS.MEETING_FILING]: "Meeting filing",
+  [AI_CHAT_REQUEST_KINDS.PROJECT_PLAN]: "Project plan",
 };
 
 // -------------------------------------------------------------------
@@ -665,15 +672,30 @@ export type UpdateTranscription = Updateable<Transcriptions>;
 // by the answer alone. Same argument as worklogFact.rndSource.
 // -------------------------------------------------------------------
 export const TRANSCRIPTION_FILING_STATUSES = {
-  // Chosen but not uploaded, or a previous attempt failed and will be
-  // retried.
+  // A destination has not been worked out yet, or working it out failed and
+  // the sweep will try again. This is the only status the sweep acts on.
   PENDING: "pending",
+  // -----------------------------------------------------------------
+  // A destination is PROPOSED and a person has to say yes.
+  //
+  // THE OPPOSITE OF PENDING, which is why it is not the same value: nothing
+  // will happen to this row until somebody acts, and the sweep must leave it
+  // alone. One value for both would make the sweep either abandon its
+  // retries or keep re-deciding something nobody has answered.
+  //
+  // NOTHING HAS BEEN WRITTEN TO SHAREPOINT while a row sits here. The
+  // proposal is a folder id, or a path for the holding folder that is not
+  // created until the answer is yes, or nothing at all when nothing matched
+  // and the person has to choose.
+  // -----------------------------------------------------------------
+  AWAITING_APPROVAL: "awaiting_approval",
   FILED: "filed",
-  // Nothing could be chosen AND no fallback folder is configured, so there
-  // is nowhere to put it. NOT an error: it means a person has to decide
-  // something, and inventing a folder is a write nobody asked for.
+  // No library could be resolved, which a person choosing a folder cannot
+  // fix - it is a configuration fault. Narrower than it used to be: "nothing
+  // matched" is now AWAITING_APPROVAL with no proposal, because somebody is
+  // going to look at it either way.
   NOWHERE: "nowhere",
-  // Graph refused in a way that will not fix itself.
+  // Graph refused. Retryable by a person, not by the sweep.
   FAILED: "failed",
 } as const;
 
@@ -681,9 +703,10 @@ export type TranscriptionFilingStatus =
   (typeof TRANSCRIPTION_FILING_STATUSES)[keyof typeof TRANSCRIPTION_FILING_STATUSES];
 
 export const TRANSCRIPTION_FILING_STATUS_LABELS: Record<TranscriptionFilingStatus, string> = {
-  [TRANSCRIPTION_FILING_STATUSES.PENDING]: "Filing",
+  [TRANSCRIPTION_FILING_STATUSES.PENDING]: "Working out where to file it",
+  [TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL]: "Waiting for you to confirm the folder",
   [TRANSCRIPTION_FILING_STATUSES.FILED]: "Filed in SharePoint",
-  [TRANSCRIPTION_FILING_STATUSES.NOWHERE]: "Nowhere to file it",
+  [TRANSCRIPTION_FILING_STATUSES.NOWHERE]: "SharePoint filing is not set up",
   [TRANSCRIPTION_FILING_STATUSES.FAILED]: "Could not be filed",
 };
 
@@ -1659,6 +1682,41 @@ export interface EstimateChanges {
 export type EstimateChange = Selectable<EstimateChanges>;
 export type NewEstimateChange = Insertable<EstimateChanges>;
 
+// -------------------------------------------------------------------
+// A credential for something that is not a browser.
+//
+// See migration 026 for the whole argument, and for the one property that
+// matters most: a token bypasses the second factor, because there is no
+// session for isTwoFactorSatisfied to check. It is narrow, expiring,
+// revocable and recorded for exactly that reason.
+//
+// Only the HASH is here. A token is 32 random bytes, so a single SHA-256 is
+// the right function - stretching defends against guessing, and there is
+// nothing to guess.
+// -------------------------------------------------------------------
+export interface PersonalAccessTokens {
+  id: string;
+  userId: string;
+  name: string;
+  tokenHash: string;
+  // The first few characters, in clear, so a person can tell their own
+  // tokens apart and match a leaked string to the row to revoke.
+  prefix: string;
+  // Which surface this token may reach. A route opts IN to a scope, so
+  // widening a service cannot quietly widen every token.
+  scope: string;
+  lastUsedAt: Date | null;
+  // NULL does not expire, which is allowed and is not the default.
+  expiresAt: Date | null;
+  // A timestamp rather than a delete, so "this was turned off on the 3rd"
+  // stays answerable.
+  revokedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
+export type PersonalAccessToken = Selectable<PersonalAccessTokens>;
+export type NewPersonalAccessToken = Insertable<PersonalAccessTokens>;
+
 export interface Database {
   users: Users;
   sessions: Sessions;
@@ -1677,6 +1735,7 @@ export interface Database {
   transcriptions: Transcriptions;
   transcriptionFiling: TranscriptionFilings;
   pushSubscriptions: PushSubscriptions;
+  personalAccessTokens: PersonalAccessTokens;
   sessionTwoFactor: SessionTwoFactors;
   auditLogs: AuditLogs;
   // Timesheet read model, derived from Jira and rebuildable from it.

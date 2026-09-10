@@ -117,7 +117,7 @@ export function SetupClientsTable({ clients }: { clients: ClientSummaryDTO[] }) 
       <DataTable
         columns={columns}
         data={clients}
-        searchPlaceholder="Search clients..."
+        searchPlaceholder="Search clients…"
         searchKeys={CLIENT_SEARCH_KEYS}
         toolbar={<Button onClick={() => setAddOpen(true)}>Add client</Button>}
         activeFilter={CLIENT_ACTIVE_FILTER}
@@ -159,7 +159,7 @@ export function SetupClientsTable({ clients }: { clients: ClientSummaryDTO[] }) 
             : undefined
         }
         confirmLabel="Retire"
-        pendingLabel="Retiring..."
+        pendingLabel="Retiring…"
         isPending={isPending}
         onConfirm={confirmRetire}
       />

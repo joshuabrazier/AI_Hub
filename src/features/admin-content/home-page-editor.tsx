@@ -203,7 +203,7 @@ function RepeatableRow({
   return (
     <li className="rounded-xl border border-border bg-muted/40 p-4">
       <div className="mb-4 flex items-center justify-between gap-2">
-        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">{position}</span>
+        <span className="text-xs font-semibold text-muted-foreground">{position}</span>
 
         <div className="flex items-center gap-1">
           <Button
@@ -338,7 +338,7 @@ function HeroSection({ hero, isIgnored }: { hero: LandingHero; isIgnored: boolea
       />
 
       <fieldset className="grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-2">
-        <legend className="px-1 font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">Image</legend>
+        <legend className="px-1 text-xs font-semibold text-muted-foreground">Image</legend>
         <FormInputField
           control={form.control}
           name="imageUrl"
@@ -360,7 +360,7 @@ function HeroSection({ hero, isIgnored }: { hero: LandingHero; isIgnored: boolea
       </fieldset>
 
       <fieldset className="grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-2">
-        <legend className="px-1 font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
+        <legend className="px-1 text-xs font-semibold text-muted-foreground">
           Primary button
         </legend>
         <FormInputField
@@ -383,7 +383,7 @@ function HeroSection({ hero, isIgnored }: { hero: LandingHero; isIgnored: boolea
       </fieldset>
 
       <fieldset className="grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-2">
-        <legend className="px-1 font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
+        <legend className="px-1 text-xs font-semibold text-muted-foreground">
           Secondary button
         </legend>
 
@@ -648,7 +648,7 @@ function FeaturesSection({ features, isIgnored }: { features: LandingFeatures; i
                 name={`items.${index}.title`}
                 id={`feature-${index}-title`}
                 label="Title"
-                placeholder="e.g. Teams and membership"
+                placeholder="e.g. Projects and membership"
                 disabled={isPending}
               />
               <FormTextareaField
@@ -737,7 +737,7 @@ function CtaSection({ cta, isIgnored }: { cta: LandingCta; isIgnored: boolean })
       />
 
       <fieldset className="grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-2">
-        <legend className="px-1 font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">Button</legend>
+        <legend className="px-1 text-xs font-semibold text-muted-foreground">Button</legend>
         <FormInputField
           control={form.control}
           name="cta.label"

@@ -176,7 +176,10 @@ export default async function OverviewView(request: TimesheetRequest) {
           <ProductivityChart
             series={periodSeries}
             period={period}
-            title="The company week"
+            // The period's own label - see the note on the same chart in
+            // timesheet.view.tsx. This said "The company week" over whatever
+            // span was actually selected.
+            title={`The company - ${period.label}`}
             showFigures={false}
             previousHref={periodHref(ROUTES.ADMIN_TIMESHEETS, filters, period.previousStart)}
             nextHref={periodHref(ROUTES.ADMIN_TIMESHEETS, filters, period.nextStart)}

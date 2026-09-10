@@ -64,7 +64,7 @@ export function RatesOverviewTable({ people }: { people: UserRateBandsDTO[] }) {
       <DataTable
         columns={columns}
         data={people}
-        searchPlaceholder="Search people..."
+        searchPlaceholder="Search people…"
         searchKeys={SEARCH_KEYS}
         activeFilter={TOGGLES}
         emptyMessage="Nobody has an account yet."

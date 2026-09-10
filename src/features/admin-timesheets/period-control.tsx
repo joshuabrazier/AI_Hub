@@ -142,7 +142,7 @@ export function PeriodControl({
         )}
 
         {period.isCurrent ? (
-          <span className="min-w-[142px] px-1 text-center text-sm font-medium tabular-nums text-foreground">
+          <span className="min-w-[142px] px-1 text-center text-sm font-medium figure text-foreground">
             {period.label}
           </span>
         ) : (
@@ -150,7 +150,7 @@ export function PeriodControl({
             href={`${pathname}?${filterQuery(filters, todayIso)}`}
             scroll={false}
             title={`Back to this ${GRANULARITY_LABELS[period.granularity].toLowerCase()}`}
-            className="min-w-[142px] px-1 text-center text-sm font-medium tabular-nums text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-w-[142px] px-1 text-center text-sm font-medium figure text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {period.label}
           </Link>

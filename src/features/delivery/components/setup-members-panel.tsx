@@ -27,7 +27,7 @@ import {
   removeProjectMemberAction,
   updateProjectMemberAction,
 } from "../delivery-setup.actions";
-import type { ProjectMemberDTO } from "../delivery.types";
+import { memberLabel, type ProjectMemberDTO } from "../delivery.types";
 
 // -------------------------------------------------------------------
 // WHO IS ON THE PROJECT, who leads it, and which of their three rate bands
@@ -66,13 +66,6 @@ export type SetupAssignablePerson = {
   name: string;
   email: string;
 };
-
-// De-identified and unnamed accounts hold valid rows - this app
-// de-identifies dormant accounts in place rather than deleting them - so the
-// name is nullable and something still has to be rendered for them.
-function memberLabel(member: Pick<ProjectMemberDTO, "name" | "email">): string {
-  return member.name ?? member.email ?? "Account with no name on record";
-}
 
 const AddMemberSchema = z.object({
   userId: z.string().min(1, "Choose somebody to add"),
@@ -283,7 +276,7 @@ export function SetupMembersPanel({ projectId, members, people }: Props) {
             : undefined
         }
         confirmLabel="Remove"
-        pendingLabel="Removing..."
+        pendingLabel="Removing…"
         isPending={isPending}
         onConfirm={confirmRemove}
       />
@@ -350,7 +343,7 @@ function SetupAddMemberDialog({
       description="They can see the project as soon as this is saved."
       onSubmit={form.handleSubmit(onSubmit)}
       submitLabel="Add member"
-      pendingLabel="Adding..."
+      pendingLabel="Adding…"
       canSubmit={form.formState.isValid}
       isPending={isPending}
     >

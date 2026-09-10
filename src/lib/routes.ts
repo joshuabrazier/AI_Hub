@@ -76,6 +76,7 @@ export const ROUTES = {
   // projects are mounted in all three areas because the left-hand nav is
   // "my projects" and every signed-in person can be on one.
   ADMIN_CLIENTS: "/admin/clients",
+  ADMIN_ACCOUNT: "/admin/account",
   ADMIN_PROJECTS: "/admin/projects",
   // Creating a project. `new` is a STATIC segment under the projects root,
   // which Next resolves ahead of the dynamic one, so /admin/projects/new is
@@ -131,6 +132,7 @@ export const ROUTES = {
   MANAGE_PROJECTS: "/manage/projects",
   MANAGE_TIMESHEET: "/manage/timesheet",
   manageProject: (projectId: string) => `/manage/projects/${encodeURIComponent(projectId)}`,
+  MANAGE_ACCOUNT: "/manage/account",
 
   // Member portal
   PORTAL: "/portal",

@@ -119,7 +119,7 @@ export function BoardLogTimeDialog({
       description={`Against "${task.title}", on your own timesheet as ${yourName}.`}
       onSubmit={form.handleSubmit(onSubmit)}
       submitLabel="Log time"
-      pendingLabel="Logging..."
+      pendingLabel="Logging…"
       canSubmit={form.formState.isValid}
       isPending={isPending}
     >

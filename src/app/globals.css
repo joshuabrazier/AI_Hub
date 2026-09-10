@@ -13,6 +13,9 @@
   --color-data-caution: var(--data-caution);
   --color-data-caution-surface: var(--data-caution-surface);
   --color-data-caution-text: var(--data-caution-text);
+  --color-data-ok: var(--data-ok);
+  --color-data-ok-surface: var(--data-ok-surface);
+  --color-data-ok-text: var(--data-ok-text);
   /* Inter carries running text. IBM Plex Sans sets headings - drawn for IBM,
      so its engineering heritage suits a data product. Plex Mono is the utility
      face for eyebrows, labels and every figure that lines up in a column. */
@@ -26,6 +29,8 @@
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+  --color-sidebar-mark: var(--sidebar-mark);
   --color-sidebar: var(--sidebar);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
@@ -71,6 +76,28 @@
   --color-signal: var(--signal);
   --color-signal-foreground: var(--signal-foreground);
   --color-signal-muted: var(--signal-muted);
+
+  /* -----------------------------------------------------------------
+     THE CHROME'S OWN MEASUREMENTS, AS TOKENS.
+
+     The navbar height and the rail widths were hardcoded in nine files -
+     `h-20` in the navbar, `pt-20` in the shell, `top-20` and
+     `h-[calc(100vh-5rem)]` in the sidebar, `min-h-[calc(100vh-5rem)]` in
+     four centred layouts, `top-20` in the pending overlay - which meant the
+     height of the bar could not be changed without finding all of them, and
+     any one missed showed up as a gap or an overlap on one route only.
+
+     They are in Tailwind's `--spacing-*` namespace, so they read as ordinary
+     utilities (`h-nav`, `top-nav`, `pt-nav`, `w-rail`) and are still
+     available to a calc as `calc(100dvh-var(--nav-h))`.
+
+     THE COLLAPSED RAIL IS EXACTLY THE NAVBAR HEIGHT, on purpose: it makes
+     the top-left corner of the chrome a square, so the rail reads as
+     hanging off the bar rather than as a second unrelated panel.
+     ----------------------------------------------------------------- */
+  --spacing-nav: var(--nav-h);
+  --spacing-rail: var(--rail-w);
+  --spacing-rail-collapsed: var(--rail-collapsed-w);
 }
 
 /* -------------------------------------------------------------------
@@ -105,15 +132,29 @@
   --signal-muted: #e8f6f8;
   --secondary: #eef4f5;
   --secondary-foreground: #16262a;
-  --muted: #f6fafb;
-  --muted-foreground: #566a6e;
+  --muted: #f2f7f8;
+  /* -----------------------------------------------------------------
+     DARKER, BECAUSE THIS COLOUR CARRIES MOST OF THE WORDS ON THE SCREEN.
+
+     Every description, label, hint, empty state and secondary figure in the
+     app is --muted-foreground. It was #566a6e, which clears the 4.5:1 floor
+     on white and does no better than clear it - and a page whose body copy
+     sits at the legal minimum reads as washed out even to people with no
+     difficulty reading it. #41565a is 7.4:1, so the secondary text is
+     properly legible rather than technically legible.
+     ----------------------------------------------------------------- */
+  --muted-foreground: #41565a;
   /* shadcn's `accent` is a hover/active SURFACE, not the brand accent -
      the brand accent is `signal` above. Kept distinct deliberately. */
   --accent: #eef4f5;
   --accent-foreground: #16262a;
   --destructive: #a32020;
-  --border: #dde7e9;
-  --input: #dde7e9;
+  /* Stronger than the #dde7e9 it was. Every panel, card, table rule and
+     input edge in the app is drawn with this, and at 1px on white the old
+     value was a suggestion of an edge rather than one - which is what made
+     a screen of cards read as floating shapes instead of a structure. */
+  --border: #ccdcdf;
+  --input: #c4d6da;
   --ring: var(--primary);
   /* Sequential teals for continuous data, closing on a warm tone so
      categorical series stay distinguishable without relying on hue alone. */
@@ -179,16 +220,107 @@
   --data-caution-surface: #fdf2f5;
   --data-caution-text: #8f1f3c;
 
-  --radius: 0.875rem;
-  /* Near-white, separated from the content by its border rather than by a
-     fill, so the app chrome does not darken the page. */
+  /* -----------------------------------------------------------------
+     OK - the state that is fine, and the token this palette was missing.
+
+     There was no positive colour in the system, so ten feature files and the
+     Badge primitive reached straight for Tailwind's `emerald-50/200/700` and
+     the `dark:emerald-900/950/300` to go with it - about 100 hardcoded
+     palette classes in a repo whose own rule is that every component styles
+     through these tokens and rebranding is one file. They also do not belong
+     to this palette: Tailwind's emerald is a neutral-green, where these
+     neutrals carry a teal bias, so a "ready to bill" panel sat at a
+     different colour temperature to the card it was inside.
+
+     A TRUE GREEN RATHER THAN A GREEN-TEAL, deliberately. The brand is teal
+     (#1b7789), and a success colour adjacent to it would read as "brand"
+     rather than as "good" - which is the same mistake the amber-as-cost
+     token above was removed for, in the other direction.
+
+     Three values, matching the caution triplet's structure exactly, so the
+     two states are interchangeable in markup: a MARK (safe as a fill or an
+     icon at 3:1+), a very light SURFACE, and a TEXT dark enough to read on
+     that surface at 4.5:1+.
+
+     Measured: #1a7f43 on white 4.83:1, #14602f on #edf8f0 7.94:1.
+     ----------------------------------------------------------------- */
+  --data-ok: #1a7f43;
+  --data-ok-surface: #edf8f0;
+  --data-ok-text: #14602f;
+
+  /* -----------------------------------------------------------------
+     CORNER RADIUS, AND WHY IT CAME DOWN.
+
+     This was 0.875rem, and the derived scale in @theme multiplies it: a
+     `rounded-xl` card came out at 1.225rem - nearly 20px - and a
+     `rounded-lg` button at 14px on a height of 32, which is most of the way
+     to a pill. That is the soft, friendly, consumer-SaaS default, and it is
+     the single strongest thing on screen telling somebody what kind of
+     product they are looking at.
+
+     This one is not. It is a ledger of sold hours being eaten into, read all
+     day by people who need to find a figure. Tighter corners read as
+     precision; they are also what makes a hairline border look drawn rather
+     than smudged around a curve. At 0.5rem the scale lands at roughly
+     5 / 6 / 8 / 11 / 14px, which is crisp without being brutalist - and
+     nothing had to change to get it, because every surface in the app
+     already derives from this one number.
+     ----------------------------------------------------------------- */
+  --radius: 0.5rem;
+
+  /* The chrome's geometry. Not themed - these are the same in light and
+     dark, and live here because :root is where the tokens are. */
+  --nav-h: 3.5rem;
+  --rail-w: 15rem;
+  --rail-collapsed-w: 3.5rem;
+
+  /* -----------------------------------------------------------------
+     THE RAIL IS A LIGHT SURFACE, and these values have now moved three
+     times, so the whole argument is on the record.
+
+     1. It began as `bg-primary` hardcoded in sidebar.tsx with `text-white/85`
+        rows - a mid-teal slab. That had a real defect underneath the colour:
+        these tokens were dead in light mode, and a rail painted in --primary
+        with literal white on it goes unreadable the moment somebody's brand
+        colour is a light one. This repo's rule is that rebranding is one file.
+
+     2. So the rail became the near-white surface these tokens described. That
+        was RIGHT for the rail and wrong for the app: with the teal band gone
+        from the tables and the chips too, the whole screen was one value with
+        grey labels on it.
+
+     3. Reading that as "the rail needs colour" was the mistake. A deep teal
+        rail put back a large block of chrome colour and it was worse than
+        either - the frame shouting over the thing it frames, and on the chat
+        screen a second teal column beside it.
+
+     THE FIX WAS NEVER HERE. The app needed colour in the CONTENT - the stat
+     chips, the header metric, the table bands, the active row - and the rail
+     needed to stay quiet and let it. So: near-white, separated by its border
+     rather than by a fill, which is what the note on this token said from the
+     start.
+
+     What survives from the detour is the token SHAPE. The component knows the
+     names and not one value, so the rail's ink is stated here per theme -
+     which is the part the original hardcoded version got wrong.
+     ----------------------------------------------------------------- */
   --sidebar: #fcfdfd;
   --sidebar-foreground: #0f1a1c;
+  /* The idle row. The same value as --muted-foreground, so a nav label and a
+     description elsewhere on the page read as the same kind of text. */
+  --sidebar-muted-foreground: #41565a;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eef4f5;
-  --sidebar-accent-foreground: #16262a;
-  --sidebar-border: #dde7e9;
+  /* Hover and the current page. A step STRONGER than --accent, because that
+     one is tuned against #ffffff and this sits on #fcfdfd - the same tint
+     would be almost invisible here. */
+  --sidebar-accent: #e4eff1;
+  --sidebar-accent-foreground: #0f1a1c;
+  --sidebar-border: #ccdcdf;
+  /* The "you are here" mark. --signal is exactly this: the palette
+     documents it as the brighter teal for "the active nav item", chosen to
+     clear 3:1 on white as a graphical mark. */
+  --sidebar-mark: var(--signal);
   --sidebar-ring: var(--primary);
 }
 
@@ -237,14 +369,52 @@
   --data-caution-surface: #3a1520;
   --data-caution-text: #f9c3ce;
 
+  /* Chosen for the dark card, not flipped from light - both move UP in
+     lightness, same as every other pair in this block. The surface is a very
+     dark green so it still reads as tinted rather than as a lighter card.
+     #52c98a on the card 8.1:1; the surface/text pair clears 10:1. */
+  --data-ok: #52c98a;
+  --data-ok-surface: #10291d;
+  --data-ok-text: #a7e8c2;
+
+  /* A step darker than --card, so the rail sits BEHIND the page rather than
+     on it - the same relationship the light theme draws with #fcfdfd against
+     #ffffff, with the values the other way up. */
   --sidebar: #0f1a1c;
   --sidebar-foreground: #e6eff0;
+  --sidebar-muted-foreground: #93a7ab;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #05171a;
   --sidebar-accent: #1b2b2f;
   --sidebar-accent-foreground: #e6eff0;
   --sidebar-border: #243437;
+  --sidebar-mark: var(--signal);
   --sidebar-ring: var(--primary);
+}
+
+/* -------------------------------------------------------------------
+   `figure` - this text is a quantity.
+
+   ONE CLASS RATHER THAN TWO. Reaching for `tabular-nums` already means
+   "this is a figure", and there were 104 places carrying it inconsistently.
+   Anything that lines up in a column, is compared against the value above
+   it, or is read as a quantity takes this. Prose that happens to contain a
+   number does not.
+
+   IT DELIBERATELY DOES NOT CHANGE THE FACE, and that is a reversal worth
+   recording. This set `font-family: var(--font-mono)` for one release, on the
+   grounds that the palette reserves Plex Mono for "every figure that lines
+   up in a column". Put on screen it was wrong: mono figures plus tracked
+   uppercase mono labels is one of the most recognisable machine-generated
+   looks going, and it made a working portal read as a developer tool.
+
+   NOTHING IS LOST BY DROPPING IT. Inter has proper tabular figures, so a
+   column still aligns to the pixel and a counting number still does not
+   jitter - which were the only two real arguments for the mono. The face
+   was never doing the work; `font-variant-numeric` was.
+   ------------------------------------------------------------------- */
+@utility figure {
+  font-variant-numeric: tabular-nums;
 }
 
 @layer base {

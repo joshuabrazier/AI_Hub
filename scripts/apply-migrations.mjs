@@ -45,12 +45,40 @@ import pg from "pg";
 // -------------------------------------------------------------------
 // Migrations that destroy data. Never applied unless named.
 //
-// This one drops the timesheet summary and report tables. That is correct
-// for any environment running current code - the features were removed -
-// but "correct" and "reversible" are different things, and the rows in
-// those tables cannot be reconstructed.
+// ADD TO THIS SET WHENEVER A MIGRATION DROPS ANYTHING. It is the only thing
+// standing between `--apply` and a table, and it is easy to forget - 024 was
+// written and shipped before it was listed here, which meant an ordinary
+// `--apply` would have dropped two tables with no gate at all.
+//
+//   010  drops the timesheet summary and report tables. Correct for any
+//        environment running current code - the features were removed - but
+//        "correct" and "reversible" are different things, and timesheet_report
+//        rows cannot be reconstructed. Export before running.
+//
+//   024  drops teams and team_members, the team_role type, and the team
+//        columns on user_invitations and audit_logs. Correct for the same
+//        reason - teams are gone from the base - and equally final: the
+//        memberships are the data.
+//
+//   003  \
+//   004   |  these five OPEN with `DROP TABLE IF EXISTS <t>` and then recreate
+//   005   |  the table empty. On a database that has never seen them that is
+//   007   |  harmless, which is how they came to be listed as safe - but the
+//   008  /   set is about what a migration DOES, not about what it usually
+//            does, and every one of these is a live table today: staff_target,
+//            staff_rate and manual_worklog all hold hand-entered data that
+//            exists nowhere else. `database-schema.sql` does not create any of
+//            them, so a re-run empties a table nothing can rebuild.
 // -------------------------------------------------------------------
-const DESTRUCTIVE = new Set(["010_drop_timesheet_summary_and_report.sql"]);
+const DESTRUCTIVE = new Set([
+  "003_staff_target.sql",
+  "004_timesheet_ai_summary.sql",
+  "005_timesheet_report.sql",
+  "007_staff_rate.sql",
+  "008_manual_worklog.sql",
+  "010_drop_timesheet_summary_and_report.sql",
+  "024_drop_teams.sql",
+]);
 
 const databaseUrl = process.env.DATABASE_URL;
 

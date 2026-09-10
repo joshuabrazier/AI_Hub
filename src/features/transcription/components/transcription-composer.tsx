@@ -443,7 +443,7 @@ export function TranscriptionComposer({
               onClick={() => fileInputRef.current?.click()}
             >
               {isConverting
-                ? "Preparing..."
+                ? "Preparing…"
                 : file
                   ? "Choose a different file"
                   : "Choose a file"}
@@ -462,7 +462,7 @@ export function TranscriptionComposer({
             // formats a phone or a meeting tool actually produces, so
             // refusing them outright would be wrong - but promising they
             // work would be too.
-            <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            <p className="flex items-start gap-2 rounded-lg border border-data-caution/40 bg-data-caution-surface p-3 text-xs text-data-caution-text">
               <TriangleAlert size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span>
                 This format is not one the transcription service formally supports. It usually works, but if it
@@ -487,7 +487,7 @@ export function TranscriptionComposer({
 
           <div className="flex justify-end">
             <Button type="button" onClick={submitFile} disabled={!file || isUploading} loading={isUploading}>
-              {isUploading ? "Uploading..." : "Transcribe"}
+              {isUploading ? "Uploading…" : "Transcribe"}
             </Button>
           </div>
         </TabsContent>
@@ -590,20 +590,20 @@ function PendingRecordingPanel({
   return (
     <div
       role="status"
-      className="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950"
+      className="mb-5 rounded-xl border border-data-caution/40 bg-data-caution-surface p-4"
     >
       <div className="flex items-start gap-2">
-        <TriangleAlert size={16} className="mt-0.5 shrink-0 text-amber-700 dark:text-amber-300" aria-hidden="true" />
+        <TriangleAlert size={16} className="mt-0.5 shrink-0 text-data-caution-text" aria-hidden="true" />
         <div className="min-w-0">
-          <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+          <p className="text-sm font-medium text-data-caution-text">
             A recording is still on this device
           </p>
-          <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
+          <p className="mt-1 text-sm text-data-caution-text">
             <span className="font-medium">{recording.title}</span>
             {recording.durationSeconds > 0 ? ` - ${formatDuration(recording.durationSeconds)}` : ""}
             {recording.byteSize > 0 ? ` - ${formatSize(recording.byteSize)}` : ""}
           </p>
-          <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+          <p className="mt-1 text-xs text-data-caution-text">
             {recording.complete
               ? "It has not been uploaded yet. Send it now, or save a copy first if you would rather not rely on this."
               : "It was interrupted before it finished, so the end may be missing. Everything captured up to that point is here."}

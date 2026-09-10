@@ -111,7 +111,17 @@ export function MeetingPromptWindow() {
       onDismiss={dismiss}
       onPopOut={() => void popOut()}
       canPopOut={supportsFloatingWindow() && pipWindow === null}
-      floating={false}
+      // TRUE, AND IT WAS FALSE. This component IS the detached window - both
+      // branches below render into one, either the picture-in-picture window
+      // or the standalone /meeting-prompt popup. `floating` decides whether
+      // "Open transcription" gets target="_blank", so with it false the link
+      // navigated the 460x680 prompt itself away to the transcription page:
+      // the prompt vanished, and with it the only control for cancelling the
+      // collection it was offering.
+      //
+      // The inline caller (meeting-prompt.tsx) passes false correctly - it
+      // sits in the app, where navigating in place is what a link should do.
+      floating
     />
   );
 

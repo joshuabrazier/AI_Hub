@@ -68,11 +68,12 @@ export function FilingPanel({ settings }: { settings: FilingSettingsDTO }) {
           Filing meeting notes
         </h2>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          When a transcription finishes, its notes are written into this library as a markdown file. The
-          folder is chosen by matching the client named in the meeting title against the catalogued folder
-          names, and where that is not certain, either by asking the model to choose from those same folders
-          or by using the holding folder below. The note then goes into a folder of its own inside that one,
-          so transcripts do not sit among a client&apos;s contracts and drawings.
+          When a transcription finishes, a folder is proposed for it - by matching the client named in the
+          meeting title against the catalogued folder names, by asking the model to choose from those same
+          folders, or by falling back to the holding folder below. The person whose meeting it was then
+          confirms that folder or picks another, and only then is anything written. The note goes into a
+          folder of its own inside whichever folder is agreed, so transcripts do not sit among a
+          client&apos;s contracts and drawings.
         </p>
       </div>
 
@@ -171,6 +172,15 @@ export function FilingPanel({ settings }: { settings: FilingSettingsDTO }) {
 
         <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
           <Count label={TRANSCRIPTION_FILING_STATUS_LABELS.filed} value={settings.counts.filed} />
+          {/* The count that matters most now that nothing files on its own.
+              A large number here is not a fault - it is a queue of meetings
+              whose owners have not looked yet, and it is the only place
+              anybody would see that building up. */}
+          <Count
+            label={TRANSCRIPTION_FILING_STATUS_LABELS.awaiting_approval}
+            value={settings.counts.awaiting_approval}
+            emphasis={settings.counts.awaiting_approval > 0}
+          />
           <Count label={TRANSCRIPTION_FILING_STATUS_LABELS.pending} value={settings.counts.pending} />
           <Count
             label={TRANSCRIPTION_FILING_STATUS_LABELS.nowhere}
@@ -188,6 +198,9 @@ export function FilingPanel({ settings }: { settings: FilingSettingsDTO }) {
             different people, so the difference is spelled out rather than
             left for somebody to infer from two labels. */}
         <p className="mt-3 max-w-2xl text-xs text-muted-foreground">
+          {settings.counts.awaiting_approval > 0
+            ? "Waiting for you to confirm the folder means the meeting's owner has not said yes yet - nothing is written to SharePoint until they do. "
+            : ""}
           {settings.counts.nowhere > 0
             ? "Nowhere to file it means no folder could be chosen and no holding folder was available - a settings problem. "
             : ""}
@@ -236,7 +249,7 @@ function Count({ label, value, emphasis = false }: { label: string; value: numbe
   return (
     <div className="flex items-baseline gap-1.5">
       <dd
-        className={`font-mono text-lg tabular-nums ${emphasis ? "text-destructive" : "text-foreground"}`}
+        className={`text-lg figure ${emphasis ? "text-destructive" : "text-foreground"}`}
       >
         {value.toLocaleString()}
       </dd>

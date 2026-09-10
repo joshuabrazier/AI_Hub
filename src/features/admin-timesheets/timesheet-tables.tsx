@@ -47,12 +47,12 @@ export function PersonDaysTable({ days, workingHoursPerDay }: { days: PersonDayT
                 return (
                   <TableRow key={`${day.personId}-${day.workDate}`} className="transition-colors hover:bg-muted/50">
                     <TableCell className="whitespace-nowrap">{formatIsoDate(day.workDate, "EEE d MMM")}</TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">{formatHours(day.hours)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatHours(day.split.billableHours)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                    <TableCell className="text-right font-medium figure">{formatHours(day.hours)}</TableCell>
+                    <TableCell className="text-right figure">{formatHours(day.split.billableHours)}</TableCell>
+                    <TableCell className="text-right figure text-muted-foreground">
                       {day.worklogCount}
                     </TableCell>
-                    <TableCell className={cn("text-right tabular-nums", over && "font-medium")}>
+                    <TableCell className={cn("text-right figure", over && "font-medium")}>
                       {day.utilisation === null ? "n/a" : `${Math.round(day.utilisation * 100)}%`}
                     </TableCell>
                   </TableRow>

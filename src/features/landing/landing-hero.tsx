@@ -84,7 +84,7 @@ export default function LandingHero({ hero }: { hero: LandingHeroContent }) {
           {hero.eyebrow && (
             <p
               className={cn(
-                "font-mono text-xs uppercase tracking-[0.18em]",
+                "text-xs font-semibold uppercase tracking-wide",
                 // /80 not /70: at 12px this is small text, so it needs the full
                 // 4.5:1 rather than the 3:1 a heading gets. See SCRIM.
                 onImage ? "text-white/80" : "text-muted-foreground",

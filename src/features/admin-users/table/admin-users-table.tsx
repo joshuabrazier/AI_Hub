@@ -91,7 +91,7 @@ export function AdminUsersTable({ users }: AdminUsersTableProps) {
       <DataTable
         columns={columns}
         data={users}
-        searchPlaceholder="Search people..."
+        searchPlaceholder="Search people…"
         searchKeys={USER_SEARCH_KEYS}
         toolbar={<Button onClick={() => setAddOpen(true)}>Invite person</Button>}
         activeFilter={USER_ACTIVE_FILTER}

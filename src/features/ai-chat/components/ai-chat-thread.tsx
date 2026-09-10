@@ -28,6 +28,12 @@ import { AI_CHAT_ROLES } from "@/lib/data/kysely-database-types";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+import {
+  ASSISTANT_NAME,
+  IS_ASSISTANT_NAMED,
+  assistantObject,
+  assistantSubject,
+} from "@/lib/ai/assistant-identity";
 import { removeAiChatAttachmentAction } from "../ai-chat.actions";
 import {
   MAX_MESSAGE_CHARS,
@@ -85,7 +91,7 @@ export function AiChatThread({
   // code path. Most of what got reported as "the AI keeps failing" was a
   // wait with nothing to explain it: on a long thread the server spends
   // twenty or thirty seconds summarising earlier turns before it asks the
-  // model anything, and a static "Thinking..." for half a minute reads as a
+  // model anything, and a static "Thinking…" for half a minute reads as a
   // page that has died. The same wait labelled "summarising earlier turns"
   // reads as work.
   // -------------------------------------------------------------------
@@ -353,19 +359,29 @@ export function AiChatThread({
   };
 
   return (
-    // No border and no card. The conversation IS the page, so a box drawn
-    // around it only makes the reading area smaller.
+    // No border and no card of its own. The workspace around it draws the
+    // panel; a second box inside that one only makes the reading area
+    // smaller.
     //
-    // h-full, not a calc. The page above is a fixed-height flex column, so
-    // this fills what is left after the header and the composer stays on
-    // screen at any window size.
-    <div className="flex h-full min-h-0 flex-col">
+    // flex-1 rather than h-full. It shares its parent column with the
+    // thread's toolbar now, and `height: 100%` would have resolved against
+    // the whole column and pushed the composer exactly the toolbar's height
+    // below the fold - the same class of bug the calc it replaced had.
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Transcript. The scroll is full-bleed so a long reply does not sit
           inside a visible frame, but the CONTENT is held to a measured
           column - prose past about 75 characters a line is measurably harder
-          to read, and a chat reply is prose. */}
+          to read, and a chat reply is prose.
+
+          The column is the ONE thing on this screen that does not grow with
+          the window, and it is the reason the page is allowed to: everything
+          around it (the panel, the list, the toolbar) now uses the full
+          width, so the measure can stay a measure instead of being the thing
+          that holds the layout in. 4xl over 3xl because a bordered panel eats
+          the visual breathing room the old bare page had, not because wider
+          reads better. */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6">
+        <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-4 py-6">
         {messages.length === 0 && !isStreaming ? (
           // The greeting on an empty thread, and the place the full terms of
           // the thing live. The page header above is one line now, so this
@@ -377,8 +393,15 @@ export function AiChatThread({
               <Sparkles size={24} aria-hidden="true" />
             </span>
 
+            {/* WHERE THE NAME IS ACTUALLY LEARNED. Everywhere else it is
+                either fine print under the composer or a divider halfway up
+                a thread, so a deployment that names its assistant and only
+                changes those has named it nowhere anybody looks. "anything"
+                is not filler either - it repeats the line the system prompt
+                opens with, because the commonest thing people got wrong
+                about this feature was assuming it only knew the portal. */}
             <h2 className="mt-4 font-heading text-xl font-semibold text-foreground">
-              What would you like to know?
+              {IS_ASSISTANT_NAMED ? `Ask ${ASSISTANT_NAME} anything` : "What would you like to know?"}
             </h2>
 
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
@@ -410,7 +433,7 @@ export function AiChatThread({
                     <span className="h-px flex-1 bg-border" />
                     <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Archive size={12} aria-hidden="true" />
-                      Everything above is summarised for the assistant
+                      Everything above is summarised for {assistantObject()}
                     </span>
                     <span className="h-px flex-1 bg-border" />
                   </li>
@@ -449,7 +472,9 @@ export function AiChatThread({
           anywhere over it rather than onto a small target. */}
       <div
         className={cn(
-          "mx-auto w-full max-w-3xl px-4 pb-4 transition-colors",
+          // Same measure as the transcript above it, so the box lines up
+          // with the text it is answering rather than with the window.
+          "mx-auto w-full max-w-4xl px-4 pb-4 transition-colors",
           isDropTarget && "opacity-90",
         )}
         onDragEnter={(event) => {
@@ -560,7 +585,7 @@ export function AiChatThread({
             value={draft}
             maxLength={MAX_MESSAGE_CHARS}
             rows={1}
-            placeholder={staged.length > 0 ? "Ask about the attached files..." : "Write a message..."}
+            placeholder={staged.length > 0 ? "Ask about the attached files…" : "Write a message…"}
             disabled={isStreaming}
             onChange={(event) => setDraft(event.target.value)}
             onPaste={(event) => {
@@ -639,7 +664,7 @@ export function AiChatThread({
             instructions above it. Somebody who already knows Enter sends
             should not read it on every visit. */}
         <p className="mt-2 text-center text-xs text-muted-foreground">
-          The assistant can be wrong. Check anything that matters against the screen it came from.
+          {assistantSubject()} can be wrong. Check anything that matters against the screen it came from.
         </p>
       </div>
     </div>
@@ -718,7 +743,7 @@ function MessageRow({
               AND IT SAYS WHAT IS HAPPENING, not just that something is. On a
               long thread the server spends real time summarising earlier
               turns before the model is asked anything, and a fixed
-              "Thinking..." through thirty seconds of that is why people
+              "Thinking…" through thirty seconds of that is why people
               reported a working feature as broken. */}
           <Loader2 size={14} className="animate-spin" aria-hidden="true" />
           {statusLabel ?? "Thinking"}...

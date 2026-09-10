@@ -62,7 +62,7 @@ export function getProjectsColumns(): ColumnDef<BudgetRow>[] {
           // statement from a job that netted to zero.
           <div className="text-right text-muted-foreground">not started</div>
         ) : (
-          <div className="text-right font-medium tabular-nums text-foreground">
+          <div className="text-right font-medium figure text-foreground">
             {row.original.actualHours.toFixed(2)} h
           </div>
         ),
@@ -73,7 +73,7 @@ export function getProjectsColumns(): ColumnDef<BudgetRow>[] {
       meta: { label: "Baseline" },
       header: columnHeader("Baseline", "right"),
       cell: ({ row }) => (
-        <div className="text-right tabular-nums text-muted-foreground">{hoursOrDash(row.original.baselineHours)}</div>
+        <div className="text-right figure text-muted-foreground">{hoursOrDash(row.original.baselineHours)}</div>
       ),
     },
     {
@@ -82,7 +82,7 @@ export function getProjectsColumns(): ColumnDef<BudgetRow>[] {
       meta: { label: "Estimate" },
       header: columnHeader("Estimate", "right"),
       cell: ({ row }) => (
-        <div className="text-right tabular-nums text-muted-foreground">{hoursOrDash(row.original.currentHours)}</div>
+        <div className="text-right figure text-muted-foreground">{hoursOrDash(row.original.currentHours)}</div>
       ),
     },
     {
@@ -94,7 +94,7 @@ export function getProjectsColumns(): ColumnDef<BudgetRow>[] {
         const over = row.original.varianceSeconds !== null && row.original.varianceSeconds > 0;
 
         return (
-          <div className={cn("text-right tabular-nums", over && "font-medium text-destructive")}>
+          <div className={cn("text-right figure", over && "font-medium text-destructive")}>
             {hoursOrDash(row.original.varianceHours)}
           </div>
         );
@@ -106,7 +106,7 @@ export function getProjectsColumns(): ColumnDef<BudgetRow>[] {
       meta: { label: "Consumed" },
       header: columnHeader("Consumed", "right"),
       cell: ({ row }) => (
-        <div className="text-right tabular-nums text-foreground">
+        <div className="text-right figure text-foreground">
           {/* Null, not zero: no estimate means nothing to be a share of. */}
           {row.original.consumedRatio === null ? "n/a" : `${Math.round(row.original.consumedRatio * 100)}%`}
         </div>

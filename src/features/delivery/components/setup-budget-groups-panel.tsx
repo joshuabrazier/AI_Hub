@@ -29,6 +29,7 @@ import {
   BUDGET_GROUP_NAME_MAX_CHARS,
   MAX_PLANNED_HOURS,
   formatMinutesAsHours,
+  memberLabel,
   type BudgetGroupReportDTO,
   type ProjectMemberDTO,
 } from "../delivery.types";
@@ -96,14 +97,6 @@ type Props = {
   /** The project's own members. Only they may be put in one of its groups. */
   members: ProjectMemberDTO[];
 };
-
-// The group report carries a name and no address; a project member carries
-// both. Either is enough to draw a row, and a de-identified account has
-// neither - this app de-identifies dormant accounts in place rather than
-// deleting them, so something still has to render for one.
-function memberLabel(member: { name: string | null; email?: string | null }): string {
-  return member.name ?? member.email ?? "Account with no name on record";
-}
 
 export function SetupBudgetGroupsPanel({ projectId, groups, members }: Props) {
   const [addOpen, setAddOpen] = useState(false);
@@ -237,7 +230,7 @@ export function SetupBudgetGroupsPanel({ projectId, groups, members }: Props) {
         title={`Delete ${deleting?.name ?? "this group"}?`}
         description="The hours logged by its people stay exactly where they are; they just stop being counted against a pool and show as ungrouped on the budget report."
         confirmLabel="Delete"
-        pendingLabel="Deleting..."
+        pendingLabel="Deleting…"
         isPending={isPending}
         onConfirm={confirmDelete}
       />
@@ -443,7 +436,7 @@ function SetupBudgetGroupPeopleDialog({
           Cancel
         </Button>
         <Button type="button" onClick={save} disabled={isPending || members.length === 0} loading={isPending}>
-          {isPending ? "Saving..." : "Save group"}
+          {isPending ? "Saving…" : "Save group"}
         </Button>
       </div>
     </AppDialog>

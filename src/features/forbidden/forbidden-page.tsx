@@ -17,7 +17,7 @@ import { ROUTES } from "@/lib/routes";
 // -------------------------------------------------------------------
 export default function ForbiddenPage() {
   return (
-    <div className="flex min-h-[calc(100vh-5rem)] flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="flex min-h-[calc(100dvh-var(--nav-h))] flex-col items-center justify-center gap-4 px-6 text-center">
       <span className="flex size-14 items-center justify-center rounded-full bg-destructive/10 text-destructive">
         <ShieldAlert className="size-7" aria-hidden="true" />
       </span>

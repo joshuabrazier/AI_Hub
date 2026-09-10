@@ -46,7 +46,7 @@ export function AdminEnquiryCategoriesTable({
       <DataTable
         columns={columns}
         data={enquiryCategories}
-        searchPlaceholder="Search categories..."
+        searchPlaceholder="Search categories…"
         searchKeys={ENQUIRY_CATEGORY_SEARCH_KEYS}
         toolbar={<Button onClick={() => setAddOpen(true)}>Add category</Button>}
         activeFilter={ENQUIRY_CATEGORY_ACTIVE_FILTER}

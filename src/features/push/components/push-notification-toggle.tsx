@@ -121,7 +121,7 @@ export function PushNotificationToggle() {
     <div
       className={cn(
         "rounded-xl border p-4 transition-colors",
-        needsAttention ? "border-red-300 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30" : "border-border",
+        needsAttention ? "border-destructive/40 bg-destructive/10" : "border-border",
       )}
     >
       <div className="flex flex-col gap-3 min-[480px]:flex-row min-[480px]:items-start min-[480px]:justify-between">
@@ -130,7 +130,7 @@ export function PushNotificationToggle() {
             className={cn(
               "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full",
               needsAttention
-                ? "bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-300"
+                ? "bg-destructive/10 text-destructive"
                 : "bg-primary/10 text-primary",
             )}
           >

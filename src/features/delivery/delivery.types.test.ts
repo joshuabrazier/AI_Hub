@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { RATE_BANDS } from "@/lib/data/kysely-database-types";
+import { RATE_BANDS, TASK_COLUMNS } from "@/lib/data/kysely-database-types";
 
 import {
   DAYS_IN_WEEK,
@@ -8,6 +8,11 @@ import {
   WEEK_DAY_NUMBERS,
   addCalendarDays,
   budgetProgress,
+  byAttention,
+  countByColumn,
+  memberLabel,
+  visibleWork,
+  WORK_CARD_ROWS,
   formatMinutesAsClock,
   formatMinutesAsHours,
   hoursToMinutes,
@@ -18,6 +23,7 @@ import {
   startOfWeek,
   weekDates,
   weekDayOf,
+  type MyWorkItemDTO,
   CreateClientSchema,
   SetUserRateSchema,
   chargedProgress,
@@ -48,6 +54,285 @@ import {
 // implementation - truncation instead of rounding, a Date-based week, a
 // division with no guard - and named it where the case exists to catch one.
 // -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+// THE EDIT ROUND TRIP.
+//
+// The timesheet cell dialog fills its Hours box from a stored entry with
+// formatMinutesAsHours, and saving sends that string back through
+// hoursToMinutes. So the pair has to be LOSSLESS across every value an entry
+// can hold, and it is not obvious that it is - the formatter rounds to two
+// decimals, and 50 minutes is 0.8333... hours.
+//
+// If it were lossy the symptom would be silent and awful: opening a 50 minute
+// entry to correct its NOTE, changing nothing about the hours, and saving a
+// different number of minutes than the one that was there. Nobody would
+// attribute that to the form.
+//
+// The guard is really on formatMinutesAsHours - two decimals is enough to
+// recover the minute, one is not. Anybody trimming it to `.toFixed(1)` for a
+// tidier column breaks this and nothing else would say so.
+// -------------------------------------------------------------------
+describe("formatMinutesAsHours and hoursToMinutes, as a pair", () => {
+  it("round-trips EVERY minute in a day without drifting", () => {
+    const drifted: number[] = [];
+
+    for (let minutes = 1; minutes <= 24 * 60; minutes += 1) {
+      if (hoursToMinutes(Number(formatMinutesAsHours(minutes))) !== minutes) drifted.push(minutes);
+    }
+
+    expect(drifted, "these minute values do not survive being shown and typed back").toEqual([]);
+  });
+
+  it("survives the thirds, which are what two decimals is there for", () => {
+    // 50 minutes is 0.8333... hours. At two decimals that is "0.83", and
+    // 0.83 * 60 is 49.8, which rounds back to 50. At ONE decimal it is
+    // "0.8", and 0.8 * 60 is 48 - a two minute loss on an entry nobody
+    // edited.
+    expect(formatMinutesAsHours(50)).toBe("0.83");
+    expect(hoursToMinutes(0.83)).toBe(50);
+
+    expect(formatMinutesAsHours(20)).toBe("0.33");
+    expect(hoursToMinutes(0.33)).toBe(20);
+  });
+
+  it("shows a whole number of hours without a trailing zero", () => {
+    // The box is pre-filled with this, so "1" is what somebody expects to
+    // see on an hour rather than "1.00".
+    expect(formatMinutesAsHours(60)).toBe("1");
+    expect(formatMinutesAsHours(90)).toBe("1.5");
+    expect(formatMinutesAsHours(15)).toBe("0.25");
+  });
+});
+
+// -------------------------------------------------------------------
+// THE DASHBOARD'S WORK LIST.
+//
+// The ordering is a product decision, so it is made in a pure function and
+// asserted here rather than being a line of JSX nobody can test. The failure
+// it guards against is quiet: a work list that looks sensible but buries the
+// blocked items, which are the ones that sit untouched for a fortnight
+// because nothing surfaces them.
+// -------------------------------------------------------------------
+describe("byAttention", () => {
+  const task = (over: Partial<MyWorkItemDTO> = {}): MyWorkItemDTO => ({
+    taskId: "t1",
+    title: "A task",
+    boardColumn: TASK_COLUMNS.TODO,
+    phaseName: "Build",
+    projectId: "p1",
+    projectTitle: "Project",
+    clientName: "Client",
+    estimateMinutes: 60,
+    loggedMinutes: 0,
+    ...over,
+  });
+
+  it("puts BLOCKED first, then in progress, then to do", () => {
+    const sorted = [
+      task({ taskId: "a", boardColumn: TASK_COLUMNS.TODO }),
+      task({ taskId: "b", boardColumn: TASK_COLUMNS.BLOCKED }),
+      task({ taskId: "c", boardColumn: TASK_COLUMNS.IN_PROGRESS }),
+    ]
+      .sort(byAttention)
+      .map((item) => item.boardColumn);
+
+    expect(sorted).toEqual([TASK_COLUMNS.BLOCKED, TASK_COLUMNS.IN_PROGRESS, TASK_COLUMNS.TODO]);
+  });
+
+  it("groups by project within a column, so a reader is not bounced between clients", () => {
+    const sorted = [
+      task({ taskId: "a", projectTitle: "Zebra" }),
+      task({ taskId: "b", projectTitle: "Apple" }),
+      task({ taskId: "c", projectTitle: "Zebra" }),
+      task({ taskId: "d", projectTitle: "Apple" }),
+    ]
+      .sort(byAttention)
+      .map((item) => item.projectTitle);
+
+    expect(sorted).toEqual(["Apple", "Apple", "Zebra", "Zebra"]);
+  });
+
+  it("the COLUMN wins over the project, which is the whole point", () => {
+    // Apple sorts before Zebra, but a blocked Zebra task still comes first -
+    // otherwise grouping by project would bury the blocked ones again.
+    const sorted = [
+      task({ taskId: "a", projectTitle: "Apple", boardColumn: TASK_COLUMNS.TODO }),
+      task({ taskId: "b", projectTitle: "Zebra", boardColumn: TASK_COLUMNS.BLOCKED }),
+    ]
+      .sort(byAttention)
+      .map((item) => item.projectTitle);
+
+    expect(sorted).toEqual(["Zebra", "Apple"]);
+  });
+
+  it("is TOTAL, so two otherwise identical rows still order deterministically", () => {
+    // Returning 0 for rows that are not the same row makes the list's order
+    // depend on the read's, which is not guaranteed. The id is the last
+    // resort.
+    const sorted = [task({ taskId: "b" }), task({ taskId: "a" })].sort(byAttention).map((i) => i.taskId);
+
+    expect(sorted).toEqual(["a", "b"]);
+  });
+
+  it("does not lose a row whose column it does not recognise", () => {
+    // `done` never reaches this - getMyWorkService excludes it - but a new
+    // column would, and sorting it to the END is a great deal better than
+    // NaN, which makes the whole sort's result implementation-defined.
+    const sorted = [
+      task({ taskId: "a", boardColumn: TASK_COLUMNS.DONE }),
+      task({ taskId: "b", boardColumn: TASK_COLUMNS.BLOCKED }),
+    ].sort(byAttention);
+
+    expect(sorted).toHaveLength(2);
+    expect(sorted[0].boardColumn).toBe(TASK_COLUMNS.BLOCKED);
+  });
+});
+
+describe("countByColumn", () => {
+  const task = (column: (typeof TASK_COLUMNS)[keyof typeof TASK_COLUMNS]): MyWorkItemDTO => ({
+    taskId: `t-${column}-${Math.random()}`,
+    title: "A task",
+    boardColumn: column,
+    phaseName: "Build",
+    projectId: "p1",
+    projectTitle: "Project",
+    clientName: "Client",
+    estimateMinutes: 60,
+    loggedMinutes: 0,
+  });
+
+  it("counts each column separately", () => {
+    const counts = countByColumn([
+      task(TASK_COLUMNS.TODO),
+      task(TASK_COLUMNS.TODO),
+      task(TASK_COLUMNS.BLOCKED),
+      task(TASK_COLUMNS.IN_PROGRESS),
+    ]);
+
+    expect(counts).toEqual({ todo: 2, inProgress: 1, blocked: 1 });
+  });
+
+  it("is all zeroes for an empty list rather than undefined", () => {
+    // The card renders "0 in progress, 0 to do" from this, so a missing key
+    // would print "undefined to do" on the screen somebody sees on their
+    // first day.
+    expect(countByColumn([])).toEqual({ todo: 0, inProgress: 0, blocked: 0 });
+  });
+});
+
+// -------------------------------------------------------------------
+// THE CAP ON THE "WAITING ON YOU" CARD.
+//
+// The card is a summary on a landing page, and somebody a year into a busy
+// project can hold thirty open tasks. Rendering all of them would push the
+// rest of the dashboard off the screen on exactly the account that most needs
+// one.
+//
+// The property worth pinning is not really "it shows five" - it is that the
+// truncation is VISIBLE. A card that quietly showed the first few and said
+// nothing would leave somebody believing they were done when they were not.
+// -------------------------------------------------------------------
+describe("visibleWork", () => {
+  const workOf = (count: number): MyWorkItemDTO[] =>
+    Array.from({ length: count }, (_, i) => ({
+      taskId: `t${i}`,
+      title: `Task ${i}`,
+      boardColumn: TASK_COLUMNS.TODO,
+      phaseName: "Build",
+      projectId: "p1",
+      projectTitle: "Project",
+      clientName: "Client",
+      estimateMinutes: 60,
+      loggedMinutes: 0,
+    }));
+
+  it("NEVER shows more than the cap, however long the list is", () => {
+    // The failure this exists for: a dashboard that is fine for a new starter
+    // and unusable for anybody with a real workload.
+    expect(visibleWork(workOf(200)).shown).toHaveLength(WORK_CARD_ROWS);
+  });
+
+  it("says how many it did not show, so the truncation is never silent", () => {
+    expect(visibleWork(workOf(30)).remaining).toBe(30 - WORK_CARD_ROWS);
+  });
+
+  it("shows everything, and reports nothing remaining, when the list is short", () => {
+    const { shown, remaining } = visibleWork(workOf(3));
+
+    expect(shown).toHaveLength(3);
+    expect(remaining).toBe(0);
+  });
+
+  it("has no off-by-one at exactly the cap - no '0 more tasks' row", () => {
+    // remaining must be 0 rather than a falsy-but-rendered value at the
+    // boundary, or the card prints "0 more tasks" and links to a page that
+    // shows the same five.
+    const { shown, remaining } = visibleWork(workOf(WORK_CARD_ROWS));
+
+    expect(shown).toHaveLength(WORK_CARD_ROWS);
+    expect(remaining).toBe(0);
+  });
+
+  it("copes with an empty list", () => {
+    expect(visibleWork([])).toEqual({ shown: [], remaining: 0 });
+  });
+
+  it("keeps the ORDER it was given, so the cap takes the most urgent", () => {
+    // It slices the front of a list the service already sorted by attention,
+    // so the five shown are the five that matter most. Re-sorting or slicing
+    // the tail would make the cap arbitrary.
+    const sorted = workOf(10).map((item, i) => ({ ...item, taskId: `t${i}` }));
+
+    expect(visibleWork(sorted).shown.map((item) => item.taskId)).toEqual([
+      "t0",
+      "t1",
+      "t2",
+      "t3",
+      "t4",
+    ]);
+  });
+
+  it("does not mutate what it was handed", () => {
+    const work = workOf(10);
+
+    visibleWork(work);
+
+    expect(work).toHaveLength(10);
+  });
+});
+
+describe("memberLabel", () => {
+  // Five screens render a person's name from this. It was written out four
+  // times before, and the four did not agree - two said "Unnamed member" and
+  // two said "Account with no name on record", for the same account.
+  it("uses the name when there is one", () => {
+    expect(memberLabel({ name: "Priya Raman", email: "priya@example.com" })).toBe("Priya Raman");
+  });
+
+  it("falls back to the EMAIL, because that is what tells two people apart", () => {
+    // An id would be correct and useless. Two people called Sam Taylor is the
+    // case this exists for.
+    expect(memberLabel({ name: null, email: "sam@example.com" })).toBe("sam@example.com");
+  });
+
+  it("says something a person can read when the account has neither", () => {
+    // De-identification clears both, and the row still renders somewhere.
+    expect(memberLabel({ name: null, email: null })).toBe("Account with no name on record");
+  });
+
+  it("copes with email being absent rather than null", () => {
+    // The budget group panel passes an object without the key at all.
+    expect(memberLabel({ name: null })).toBe("Account with no name on record");
+  });
+
+  it("does not treat an empty name as missing", () => {
+    // Deliberate: "" is a name somebody stored, and silently replacing it
+    // would hide a data problem rather than show it. If that ever becomes
+    // wrong, it should be fixed where the name is WRITTEN.
+    expect(memberLabel({ name: "", email: "sam@example.com" })).toBe("");
+  });
+});
 
 describe("hoursToMinutes", () => {
   it("converts the fractions people actually type", () => {

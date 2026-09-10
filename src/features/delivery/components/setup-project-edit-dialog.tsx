@@ -173,7 +173,7 @@ export function SetupProjectEditDialog({ project }: { project: EditableProject }
         description="Only what you change is saved, so two people on this screen cannot revert each other."
         onSubmit={form.handleSubmit(onSubmit)}
         submitLabel="Save changes"
-        pendingLabel="Saving..."
+        pendingLabel="Saving…"
         canSubmit={form.formState.isValid}
         isPending={isPending}
       >

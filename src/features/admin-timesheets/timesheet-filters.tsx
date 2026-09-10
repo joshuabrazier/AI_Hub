@@ -167,7 +167,7 @@ export function ClientSelect({ filters, options }: { filters: TimesheetFiltersDT
             <span className="flex w-full items-center justify-between gap-3">
               <span className="truncate">{option.label}</span>
               {option.value !== ALL_CATEGORIES && (
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{option.hours.toFixed(2)}h</span>
+                <span className="shrink-0 text-xs figure text-muted-foreground">{option.hours.toFixed(2)}h</span>
               )}
             </span>
           </SelectItem>
@@ -209,7 +209,7 @@ export function ProjectSelect({ filters, options }: { filters: TimesheetFiltersD
                 {option.value === ALL_CATEGORIES ? option.label : (option.summary ?? option.label)}
               </span>
               {option.value !== ALL_CATEGORIES && (
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{option.hours.toFixed(2)}h</span>
+                <span className="shrink-0 text-xs figure text-muted-foreground">{option.hours.toFixed(2)}h</span>
               )}
             </span>
           </SelectItem>
@@ -248,7 +248,7 @@ export function PersonSelect({ filters, options }: { filters: TimesheetFiltersDT
             <span className="flex w-full items-center justify-between gap-3">
               <span className="truncate">{option.label}</span>
               {option.value !== ALL_CATEGORIES && (
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{option.hours.toFixed(2)}h</span>
+                <span className="shrink-0 text-xs figure text-muted-foreground">{option.hours.toFixed(2)}h</span>
               )}
             </span>
           </SelectItem>

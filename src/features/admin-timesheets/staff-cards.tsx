@@ -87,12 +87,12 @@ export function StaffList({ people, filters }: { people: StaffSummaryDTO[]; filt
                       <div>
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Utilisation</span>
-                          <span className="text-sm font-semibold tabular-nums text-foreground">
+                          <span className="text-sm font-semibold figure text-foreground">
                             {formatPercent(person.utilisation)}
                           </span>
                         </div>
                         <Meter ratio={person.utilisation} tone="neutral" />
-                        <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                        <p className="mt-1 text-xs figure text-muted-foreground">
                           {person.loggedHours.toFixed(2)}h of {person.capacityHours.toFixed(2)}h
                         </p>
                       </div>
@@ -101,7 +101,7 @@ export function StaffList({ people, filters }: { people: StaffSummaryDTO[]; filt
                       <div>
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Billable</span>
-                          <span className="text-sm font-semibold tabular-nums text-foreground">
+                          <span className="text-sm font-semibold figure text-foreground">
                             {formatPercent(person.billableShare)}
                           </span>
                         </div>
@@ -115,7 +115,7 @@ export function StaffList({ people, filters }: { people: StaffSummaryDTO[]; filt
                                 : "under"
                           }
                         />
-                        <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                        <p className="mt-1 text-xs figure text-muted-foreground">
                           {person.billableTargetPercent === null ? (
                             "No target set"
                           ) : (
@@ -127,7 +127,7 @@ export function StaffList({ people, filters }: { people: StaffSummaryDTO[]; filt
                                   <span
                                     className={cn(
                                       person.billableVariance >= 0
-                                        ? "text-emerald-600 dark:text-emerald-400"
+                                        ? "text-data-ok"
                                         : "text-destructive",
                                     )}
                                   >

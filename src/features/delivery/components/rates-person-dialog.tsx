@@ -218,7 +218,8 @@ export function RatesPersonDialog({
           <legend className="text-sm font-medium text-foreground">Bands</legend>
           <p className="-mt-2 text-xs text-muted-foreground">
             Which band applies is decided per project member, so somebody can be discounted for one client and
-            standard for another. Leave a band blank to leave it as it is.
+            standard for another. Each band is prefilled with what it is worth today: every one with an amount
+            in it is saved from the date above, so clear a band to leave it where it is.
           </p>
 
           {RATE_BAND_ORDER.map((band) => (
@@ -277,7 +278,7 @@ export function RatesPersonDialog({
             loading={isPending}
           >
             {isPending
-              ? "Saving..."
+              ? "Saving…"
               : entered.length === 1
                 ? "Save 1 rate"
                 : `Save ${entered.length} rates`}

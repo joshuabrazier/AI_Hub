@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, type LucideIcon, Sparkles, UserCircle } from "lucide-react";
 
 import { Card, CardAction, CardContent, CardHeader } from "@/components/ui/card";
+import { chatFeatureLabel } from "@/lib/ai/assistant-identity";
 import { ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +46,9 @@ function CardHeaderRow({
 // -------------------------------------------------------------------
 const QUICK_LINKS: { label: string; description: string; href: string; icon: LucideIcon }[] = [
   {
-    label: "AI chat",
+    // Derived, so this card and the sidebar entry it duplicates cannot
+    // disagree about what the feature is called. See chatFeatureLabel.
+    label: chatFeatureLabel(),
     description: "Ask a question and get an answer",
     href: ROUTES.PORTAL_AI_CHAT,
     icon: Sparkles,

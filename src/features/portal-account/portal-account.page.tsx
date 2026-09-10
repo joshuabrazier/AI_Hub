@@ -21,13 +21,19 @@ function getInitials(name: string): string {
 }
 
 // -------------------------------------------------------------------
-// Member portal account page
+// The account page, mounted in all three areas
 //
-// The account shown is the signed-in member's, resolved from the session
+// The account shown is the signed-in person's, resolved from the session
 // inside the service. The route carries no id, so there is nothing here that
-// could be pointed at somebody else.
+// could be pointed at somebody else - which is why one page can serve all
+// three areas without a scope check between them.
+//
+// THE EYEBROW IS A PARAMETER for the same reason it is on AI chat,
+// transcription and summaries: the three route files differ by the label at
+// the top of the page and by nothing else, so the alternative was three
+// copies of a page that must not drift.
 // -------------------------------------------------------------------
-export default async function PortalAccountPage() {
+export default async function PortalAccountPage({ eyebrow }: { eyebrow: string }) {
   const account = await getPortalAccountService();
 
   // What they asked to be called, falling back to their name.
@@ -35,9 +41,9 @@ export default async function PortalAccountPage() {
 
   return (
     <PortalPage
-      eyebrow="Your portal"
+      eyebrow={eyebrow}
       title="Account"
-      description="Your details and what we email you about. Change your email or password from Settings."
+      description="Your details and what we email you about. Your email address comes from your Microsoft account, so it is not changed here."
       size="narrow"
     >
       <div className="space-y-6">
@@ -56,8 +62,12 @@ export default async function PortalAccountPage() {
             <p className="truncate text-muted-foreground">{account.email}</p>
           </div>
 
+          {/* Named for what is actually behind it. It said "Security
+              settings", and Settings holds appearance and notifications -
+              no security controls at all, and no email or password change
+              either: Entra owns the identity. */}
           <Button variant="outline" size="sm" asChild>
-            <Link href={ROUTES.SETTINGS}>Security settings</Link>
+            <Link href={ROUTES.SETTINGS}>Appearance and notifications</Link>
           </Button>
         </div>
 

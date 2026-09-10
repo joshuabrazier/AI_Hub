@@ -19,7 +19,7 @@ import { ROUTES } from "@/lib/routes";
 export default function AuthShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="h-20 shrink-0 border-b border-border bg-background">
+      <header className="h-nav shrink-0 border-b border-border bg-background">
         <div className="flex h-full items-center justify-between px-4 sm:px-6 lg:px-8">
           <Logo size="sm" />
           <Link
@@ -34,13 +34,13 @@ export default function AuthShell({ children }: { children: React.ReactNode }) {
 
       <main id="main-content" className="grid flex-1 grid-rows-1 lg:grid-cols-5">
         <div className="hidden flex-col justify-center border-r border-border bg-muted/50 px-10 lg:col-span-3 lg:flex xl:px-16">
-          <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">Secure sign in</p>
+          <p className="text-xs font-semibold text-primary">Secure sign in</p>
           <p className="mt-5 max-w-lg font-heading text-4xl font-bold leading-[1.1] tracking-tight text-foreground xl:text-5xl">
             {BRAND.name}
           </p>
           <SectionDivider className="mt-8 max-w-sm" />
           <p className="mt-8 max-w-md text-muted-foreground">
-            Your teams and your tools, in one place.
+            Your projects and your tools, in one place.
           </p>
         </div>
 
@@ -50,7 +50,7 @@ export default function AuthShell({ children }: { children: React.ReactNode }) {
       </main>
 
       <footer className="shrink-0 border-t border-border bg-muted/40 py-6">
-        <p className="px-6 text-center font-mono text-xs text-muted-foreground">{copyrightLine()}</p>
+        <p className="px-6 text-center text-xs text-muted-foreground">{copyrightLine()}</p>
       </footer>
     </div>
   );

@@ -44,7 +44,7 @@ test("a member asking for the manager area lands in their own portal", async ({ 
   const member = await seeder.user();
 
   await signInAs(page, member);
-  await page.goto("/manage/teams");
+  await page.goto("/manage/projects");
 
   await expect(page).toHaveURL(/\/portal\/?$/);
   await expect(page.getByRole("heading", { name: /welcome back/i })).toBeVisible();
@@ -57,7 +57,11 @@ test("a manager asking for the admin area lands in the manager area", async ({ p
   await signInAs(page, manager);
   await page.goto("/admin/users");
 
-  await expect(page).toHaveURL(/\/manage\/?$/);
+  // /manage is a REDIRECT to the projects list now that its teams landing
+  // page has gone, so the browser settles one hop further on. Asserting
+  // /manage itself could never match and the test failed for that rather than
+  // for anything about the proxy.
+  await expect(page).toHaveURL(/\/manage\/projects\/?$/);
   // The manager area labels itself, so this is not just "some page that is not
   // /admin/users" - it is the manager's own home.
   await expect(page.getByText("Manager").first()).toBeVisible();

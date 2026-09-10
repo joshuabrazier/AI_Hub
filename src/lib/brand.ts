@@ -30,6 +30,19 @@ export const BRAND = {
   description: envClient.NEXT_PUBLIC_APP_DESCRIPTION,
 
   /**
+   * What the AI assistant is called, or null if this deployment has not named
+   * it. It lives here rather than in the chat feature because it is a brand
+   * string, and the rule for those is that they come from the environment and
+   * are read from one place - see the note at the top.
+   *
+   * Null is a legitimate permanent answer: unnamed, every surface says "the
+   * assistant". Read it through src/lib/ai/assistant-identity.ts
+   * rather than directly, so the named and unnamed wording lives in one
+   * place instead of at every call site.
+   */
+  assistantName: envClient.NEXT_PUBLIC_AI_ASSISTANT_NAME ?? null,
+
+  /**
    * Short label for constrained spots: the logo's secondary line, the browser
    * home-screen title, the email header. Kept separate from `name` so a long
    * product name does not overflow them.

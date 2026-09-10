@@ -154,7 +154,7 @@ export function TranscriptionTeamsImport({ onImported }: { onImported: (transcri
     });
 
   if (isLoading) {
-    return <TeamsMessage title="Looking for your recent Teams meetings..." />;
+    return <TeamsMessage title="Looking for your recent Teams meetings…" />;
   }
 
   if (loadError) {
@@ -333,7 +333,7 @@ function TeamsMeetingRow({
           loading={isImporting}
         >
           <Download size={14} aria-hidden="true" />
-          {isImporting ? "Importing..." : "Import"}
+          {isImporting ? "Importing…" : "Import"}
         </Button>
       )}
     </li>

@@ -123,7 +123,7 @@ function BandCell({ rate }: { rate: UserRateDTO | null }) {
 
   return (
     <div className="min-w-0 text-sm">
-      <p className="tabular-nums text-foreground">{formatCents(rate.chargeRateCents, RATE_DECIMAL_PLACES)}/h</p>
+      <p className="figure text-foreground">{formatCents(rate.chargeRateCents, RATE_DECIMAL_PLACES)}/h</p>
       <p className="text-xs text-muted-foreground">
         {rate.costRateCents === null
           ? "No cost recorded"

@@ -67,7 +67,7 @@ export function SetupBudgetBar({
         <span className="text-foreground">
           {formatMinutesAsClock(rollup.loggedMinutes)} {usedWord} of {formatMinutesAsClock(rollup.budgetMinutes)}
         </span>
-        <span className={cn("font-mono tabular-nums", rollup.isOverBudget ? "text-destructive" : "text-muted-foreground")}>
+        <span className={cn("figure", rollup.isOverBudget ? "text-destructive" : "text-muted-foreground")}>
           {rollup.percentUsed}%
         </span>
       </div>

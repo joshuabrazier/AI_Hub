@@ -37,6 +37,7 @@ import {
   type TranscriptionDetailDTO,
   type TranscriptionFilingDTO,
 } from "../transcription.types";
+import { FilingApproval } from "./filing-approval";
 import { TranscriptionProgress } from "./transcription-progress";
 
 // -------------------------------------------------------------------
@@ -350,7 +351,12 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
             ever file it on its own and there would be nothing on screen to
             say so. */}
         {isCompleted ? (
-          <FilingNote filing={current.filing} onFileNow={fileNow} isBusy={isPending} />
+          <FilingNote
+            transcriptionId={current.id}
+            filing={current.filing}
+            onFileNow={fileNow}
+            isBusy={isPending}
+          />
         ) : null}
       </div>
     </div>
@@ -399,7 +405,7 @@ function TranscriptBody({ detail }: { detail: TranscriptionDetailDTO }) {
           // reordered or spliced, which is what makes an index unsafe.
           <li key={index} className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)]">
             <p className="text-xs font-medium text-muted-foreground">
-              <span className="tabular-nums">{formatTimestamp(segment.startMs)}</span>{" "}
+              <span className="figure">{formatTimestamp(segment.startMs)}</span>{" "}
               {speakerLabel(segment)}
             </p>
             <p className="text-sm leading-relaxed text-foreground">{segment.text}</p>
@@ -452,10 +458,12 @@ function TranscriptFootnote({ isNamed = false }: { isNamed?: boolean }) {
 // acted on.
 // -------------------------------------------------------------------
 function FilingNote({
+  transcriptionId,
   filing,
   onFileNow,
   isBusy,
 }: {
+  transcriptionId: string;
   // Null means no filing record at all: filing is not configured, or this
   // transcription finished before the feature existed. Neither is a failure
   // and neither must read like one - but both need a way out, which is the
@@ -500,9 +508,20 @@ function FilingNote({
     return (
       <p className="mt-5 flex items-center gap-2 border-t border-border pt-4 text-xs text-muted-foreground">
         <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-        Filing these notes in SharePoint.
+        Working out where these notes should go.
       </p>
     );
+  }
+
+  // The two states that need a person, and they get the same panel: a
+  // proposal to accept or replace, and a failed write to retry or redirect.
+  // Splitting them into two components would duplicate the folder picker,
+  // which is the part with the actual complexity in it.
+  if (
+    filing.status === TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL ||
+    filing.status === TRANSCRIPTION_FILING_STATUSES.FAILED
+  ) {
+    return <FilingApproval transcriptionId={transcriptionId} filing={filing} />;
   }
 
   if (filing.status === TRANSCRIPTION_FILING_STATUSES.FILED) {
@@ -535,29 +554,22 @@ function FilingNote({
     );
   }
 
-  const isNowhere = filing.status === TRANSCRIPTION_FILING_STATUSES.NOWHERE;
-
+  // Only 'nowhere' reaches here, and it now means something narrower than it
+  // used to: no library could be resolved. A person choosing a folder cannot
+  // fix that, which is why this branch offers no picker - the remedy is an
+  // administrator's, and the sentence says so.
   return (
     <div className="mt-5 border-t border-border pt-4">
       <p className="flex items-center gap-2 text-xs font-medium text-foreground">
         <TriangleAlert size={13} className="text-muted-foreground" aria-hidden="true" />
-        {isNowhere ? "These notes have not been filed" : "These notes could not be filed"}
+        These notes have not been filed
       </p>
       <p className="mt-1 break-words text-xs text-muted-foreground">
-        {/* The reason first, because on a 'nowhere' row it IS the remedy -
-            "no folder matches this client" tells somebody what to do. */}
-        {filing.reason ?? filing.error ?? "No destination could be chosen."}
-        {isNowhere ? " The transcript is here either way." : ""}
+        {filing.reason ?? filing.error ?? "SharePoint filing is not set up."} The transcript is here either
+        way.
       </p>
-      {!isNowhere && filing.error && filing.reason ? (
-        <p className="mt-0.5 break-words text-xs text-muted-foreground">{filing.error}</p>
-      ) : null}
 
-      {/* Neither of these states is retried by the sweep - a folder somebody
-          deleted fails identically forever - so the only way out is a person
-          deciding to try again after fixing whatever the sentence above
-          names. */}
-      {fileNowButton("Try filing again")}
+      {fileNowButton("Try again")}
     </div>
   );
 }

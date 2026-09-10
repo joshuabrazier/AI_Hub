@@ -52,7 +52,7 @@ export function MoneyAmount({ cents, className }: { cents: number | null; classN
   }
 
   return (
-    <span className={cn("tabular-nums", cents < 0 && "text-data-caution", className)}>
+    <span className={cn("figure", cents < 0 && "text-data-caution", className)}>
       {formatCents(cents, MONEY_DECIMAL_PLACES)}
     </span>
   );

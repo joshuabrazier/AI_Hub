@@ -5,17 +5,25 @@ import { ADMIN_USER_DISPLAY_STATUS, USER_OR_INVITATION } from "@/features/admin-
 import PortalPage from "@/features/layout/portal-page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, USER_ROLES } from "@/lib/data/kysely-database-types";
 import { ROUTES } from "@/lib/routes";
+
 
 import { SetupBudgetGroupsPanel } from "./components/setup-budget-groups-panel";
 import { SetupMembersPanel, type SetupAssignablePerson } from "./components/setup-members-panel";
 import { SetupPhasesPanel } from "./components/setup-phases-panel";
 import { SetupProjectArchiveButton } from "./components/setup-project-archive-button";
 import { SetupProjectEditDialog } from "./components/setup-project-edit-dialog";
+import { SetupPlanWithAi } from "./components/setup-plan-with-ai";
 import { SetupProjectCreateForm } from "./components/setup-project-create-form";
+import { SetupDone, SetupStep } from "./components/setup-step";
+import {
+  describeBudgetPools,
+  describePhases,
+  describeTeam,
+  missingForBoard,
+} from "./components/setup-summary";
 import {
   getClientOptionsService,
   getProjectBudgetGroupsService,
@@ -62,8 +70,18 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
     return (
       <PortalPage
         title="New project"
-        description="Start a project for a client. Members, phases and budget groups come next."
+        description="Start from a brief, or fill it in yourself."
       >
+        {/* -----------------------------------------------------------
+            ABOVE THE FORM, because it replaces it rather than assisting
+            it. Somebody who has the brief in an email should not read
+            past a form they are not going to fill in - and somebody who
+            does not have one should meet a single line and then the form.
+            Collapsed until asked for, so it is an offer rather than a
+            detour.
+            ----------------------------------------------------------- */}
+        <SetupPlanWithAi />
+
         <SetupProjectCreateForm clients={clients} />
       </PortalPage>
     );
@@ -100,11 +118,27 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
 
   const isArchived = detail.project.status === PROJECT_STATUSES.ARCHIVED;
 
+  // -----------------------------------------------------------------
+  // WHAT EACH STEP SAYS WHEN IT IS CLOSED.
+  //
+  // The answer to the step's own question, phrased as a fact - "Louis
+  // leading, and 3 others" rather than "4 members". A count is a thing you
+  // have to open the step to make sense of, which defeats collapsing it.
+  //
+  // The wording lives in setup-summary.ts, tested, because every way it goes
+  // wrong is prose rather than a crash: a missing plural, a lead who is not
+  // there, a de-identified account with no name.
+  // -----------------------------------------------------------------
+  const team = describeTeam(detail.members);
+  const phases = describePhases(detail.phases);
+  const budgetSummary = describeBudgetPools(groups);
+  const missing = missingForBoard(team, phases);
+
   return (
     <PortalPage
       // Typed by somebody, so it renders as a text node.
       title={detail.project.title}
-      description="Who is on the project, how its budget is pooled, and the phases its board is organised under."
+      description="Two things to set, and one you probably will not need."
       actions={
         <div className="flex flex-wrap gap-2">
           {/* -------------------------------------------------------------
@@ -132,13 +166,15 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
               status: detail.project.status,
             }}
           />
-          <Button asChild variant="outline">
-            <Link href={ROUTES.adminProject(detail.project.id)}>Open the board</Link>
-          </Button>
-          {/* The budget report link is deliberately NOT here. It was on this
-              header and on the board's, which between them is every project
-              screen - see the note on the board page. The sidebar's Budgets
-              entry is the way in. */}
+          {/* "Open the board" is deliberately NOT here any more. It was in
+              this header AND at the foot of the page, and the one at the
+              foot is the real end of the job - the header is where somebody
+              looks to leave a screen, not to finish one. Two buttons with
+              one label is a choice nobody should have to make.
+
+              The budget report link is not here either, for the reason on
+              the board page: it was on every project screen. The sidebar's
+              Budgets entry is the way in. */}
           {/* Only where there is something to do - restoring an archived
               project is an edit, and the dialog above owns it. */}
           {isArchived ? null : (
@@ -150,83 +186,100 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
         </div>
       }
     >
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-center gap-2">
-          {/* The client's name is typed by somebody too. */}
-          <span className="text-sm text-muted-foreground">For {detail.project.clientName}</span>
-          <Badge variant={detail.project.status === PROJECT_STATUSES.ACTIVE ? "success" : "warning"}>
-            {PROJECT_STATUS_LABELS[detail.project.status]}
-          </Badge>
-          <Badge variant="outline">{detail.project.isBillable ? "Billable" : "Not billable"}</Badge>
-        </div>
+      <div className="mb-8 flex flex-wrap items-center gap-2">
+        {/* The client's name is typed by somebody, so it renders as a text
+            node. */}
+        <span className="text-sm text-muted-foreground">For {detail.project.clientName}</span>
+        <Badge variant={detail.project.status === PROJECT_STATUSES.ACTIVE ? "success" : "warning"}>
+          {PROJECT_STATUS_LABELS[detail.project.status]}
+        </Badge>
+        <Badge variant="outline">{detail.project.isBillable ? "Billable" : "Not billable"}</Badge>
+      </div>
 
-        {isArchived && (
-          // Said up front, because archiving is this module's soft delete
-          // and the phase mutations below are refused on an archived
-          // project. Membership and budget groups still work - restoring
-          // the project should bring back the team that was on it.
-          <p role="status" className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-foreground">
-            This project is archived. Its phases cannot be changed until an administrator makes it active
-            again, which is a status change in <strong>Edit project</strong>.
-          </p>
-        )}
+      {isArchived && (
+        // Said up front, because archiving is this module's soft delete and
+        // the phase step below is refused on an archived project. Membership
+        // and pooled budgets still work - restoring the project should bring
+        // back the team that was on it.
+        <p
+          role="status"
+          className="mb-8 rounded-lg border border-border bg-muted/40 p-3 text-sm text-foreground"
+        >
+          This project is archived. Its phases cannot be changed until an administrator makes it active
+          again, which is a status change in <strong>Edit project</strong>.
+        </p>
+      )}
 
-        {/* -----------------------------------------------------------
-            THE BUDGET NUDGE IS NOT HERE ANY MORE. It moved to the board.
+      {/* -------------------------------------------------------------
+          THE ORDER IS THE DEPENDENCY, NOT A PREFERENCE.
 
-            It was the FIRST panel on this page and the LAST thing anybody
-            does, which is the wrong way round on a screen people work down
-            in order - but the placement was the smaller half of the problem.
-            What it measures is the total of the TASK ESTIMATES against the
-            budgeted pool, and there are no tasks on this screen: a project
-            reaches setup with none, and the board is where they are made. So
-            it sat at the top reading 0% of the budget assigned, on every
-            project, until somebody went and did the work somewhere else.
+          SetupBudgetGroupsPanel takes the member list, so people genuinely
+          come before pools. A board with no phases has nowhere to put a
+          task, so phases come before anybody opens it. Those two are the
+          sequence; pooling is a thing some projects do and most do not.
 
-            On the board it has something to say, and it is where the person
-            who has just finished estimating already is.
-            ----------------------------------------------------------- */}
+          It used to run people, pools, phases - the dependent step in the
+          middle and a required one last, which is the order they happened to
+          be written in rather than the order they are done in.
+          ------------------------------------------------------------- */}
+      <div>
+        <SetupStep
+          step={1}
+          title="People"
+          question="Add everyone working on this, and mark one of them the lead."
+          summary={team.summary}
+          isComplete={team.isComplete}
+          defaultOpen={!team.isComplete}
+        >
+          <SetupMembersPanel projectId={detail.project.id} members={detail.members} people={people} />
+        </SetupStep>
 
-        <SetupMembersPanel projectId={detail.project.id} members={detail.members} people={people} />
+        <SetupStep
+          step={2}
+          title="Phases"
+          question="Name the stages of work. The board gets a column of cards under each one."
+          summary={phases.summary}
+          isComplete={phases.isComplete}
+          // Opens only once people are sorted, so arriving at a brand new
+          // project shows one thing to do rather than two.
+          defaultOpen={team.isComplete && !phases.isComplete}
+        >
+          <SetupPhasesPanel
+            projectId={detail.project.id}
+            phases={detail.phases}
+            // The server's own answer to "lead or admin", never re-derived
+            // from a role in a component - AND the archived check, which it
+            // does not carry: canEditProjectTasks looks at role and lead,
+            // never at status. Without this the banner above says phases
+            // cannot be changed while Add, Rename, Reorder and Delete all
+            // stay live, and the service refuses each one only after
+            // somebody has filled it in.
+            canEditTasks={detail.project.canEditTasks && !isArchived}
+          />
+        </SetupStep>
 
-        <SetupBudgetGroupsPanel projectId={detail.project.id} groups={groups} members={detail.members} />
+        <SetupStep
+          title="Pooled budgets"
+          question="Give a group of people one budget between them, where a project needs it."
+          summary={budgetSummary}
+          isComplete={groups.length > 0}
+          // Never opens on arrival. Most projects do not pool, and a panel
+          // that unfolds itself is a panel that looks like it wants filling
+          // in - which is how the old page had people building groups of one.
+          defaultOpen={false}
+        >
+          <SetupBudgetGroupsPanel
+            projectId={detail.project.id}
+            groups={groups}
+            members={detail.members}
+          />
+        </SetupStep>
 
-        <SetupPhasesPanel
-          projectId={detail.project.id}
-          phases={detail.phases}
-          // The server's own answer to "lead or admin", never re-derived
-          // from a role in a component.
-          canEditTasks={detail.project.canEditTasks}
-        />
-
-        {/* -----------------------------------------------------------
-            THE END OF THE JOB, AT THE END OF THE PAGE.
-
-            Creating a project lands here with nothing on it - no members, no
-            phases, no groups - and the panels above are that work, in the
-            order it is done. There was no last step: the page simply stopped,
-            and the only way on was a link in the header, which is where
-            somebody looks to LEAVE a screen rather than to finish one.
-
-            It is a link and not a save. Every panel above writes as it goes,
-            so nothing is pending by the time anybody reaches this - which is
-            why it says the work is done rather than offering to do it.
-            ----------------------------------------------------------- */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Ready to go</CardTitle>
-            <CardDescription>
-              Everything above saves as you change it, so there is nothing left to submit. The board is where
-              phases get their tasks - and where the last of the planning, assigning the budget to those tasks,
-              is finished off.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button asChild>
-              <Link href={ROUTES.adminProject(detail.project.id)}>Open the board</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <SetupDone isReady={team.isComplete && phases.isComplete} missing={missing}>
+          <Button asChild>
+            <Link href={ROUTES.adminProject(detail.project.id)}>Open the board</Link>
+          </Button>
+        </SetupDone>
       </div>
     </PortalPage>
   );

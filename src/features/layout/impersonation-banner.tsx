@@ -31,7 +31,7 @@ export function ImpersonationBanner({ viewingAsName }: { viewingAsName: string }
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 border-b border-amber-300 bg-amber-100 px-4 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 border-b border-data-caution/40 bg-data-caution-surface px-4 py-2 text-sm text-data-caution-text">
       <ShieldAlert size={16} aria-hidden="true" className="shrink-0" />
       <span className="text-center">
         You&apos;re viewing the portal as <strong className="font-semibold">{viewingAsName}</strong>. Changes are saved
@@ -42,7 +42,7 @@ export function ImpersonationBanner({ viewingAsName }: { viewingAsName: string }
         variant="outline"
         onClick={handleReturn}
         disabled={loading}
-        className="border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-100 dark:hover:bg-amber-800"
+        className="border-data-caution/40 bg-data-caution-surface text-data-caution-text hover:bg-data-caution/15"
       >
         {loading ? "Returning…" : "Return to admin"}
       </Button>

@@ -203,7 +203,7 @@ export function RatesDeleteDialog({
                 disabled={isPending || impact === null}
                 loading={isPending}
               >
-                {isPending ? "Removing..." : "Remove rate"}
+                {isPending ? "Removing…" : "Remove rate"}
               </Button>
             </>
           )}

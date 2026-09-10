@@ -149,13 +149,13 @@ function ClientRow({
           </Badge>
         )}
 
-        <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
+        <span className="shrink-0 text-sm figure text-muted-foreground">
           {projects.length} {projects.length === 1 ? "project" : "projects"}
         </span>
 
         <span
           className={cn(
-            "w-24 shrink-0 text-right font-heading text-sm font-semibold tabular-nums",
+            "w-24 shrink-0 text-right text-sm font-semibold figure",
             quiet ? "text-muted-foreground" : "text-foreground",
           )}
         >
@@ -201,13 +201,13 @@ function ProjectRow({ project }: { project: BudgetRow }) {
         </span>
       </span>
 
-      <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+      <span className="shrink-0 text-right text-xs figure text-muted-foreground">
         {project.currentHours !== null ? `${project.currentHours.toFixed(2)}h budget` : "No estimate"}
       </span>
 
       <span
         className={cn(
-          "w-24 shrink-0 text-right text-sm tabular-nums",
+          "w-24 shrink-0 text-right text-sm figure",
           over ? "font-semibold text-data-caution" : untouched ? "text-muted-foreground" : "text-foreground",
         )}
       >

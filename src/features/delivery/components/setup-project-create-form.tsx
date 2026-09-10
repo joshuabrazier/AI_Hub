@@ -184,7 +184,7 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || !form.formState.isValid} loading={isPending}>
-              {isPending ? "Creating..." : "Create project"}
+              {isPending ? "Creating…" : "Create project"}
             </Button>
           </div>
         </form>

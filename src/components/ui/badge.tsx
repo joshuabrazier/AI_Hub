@@ -13,11 +13,30 @@ const badgeVariants = cva(
         secondary: "bg-secondary text-secondary-foreground [a]:hover:bg-secondary/80",
         destructive:
           "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
-        // Status badges - dark-aware so they read correctly in both themes.
-        success:
-          "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
-        warning:
-          "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300",
+        // -------------------------------------------------------------
+        // STATUS BADGES, THROUGH THE TOKENS.
+        //
+        // These were `emerald-200/50/700` and `amber-200/50/700` with a
+        // `dark:` triple each - six hardcoded Tailwind palette classes per
+        // variant, in the one primitive every status badge in the app goes
+        // through. Off-palette in a repo whose rule is that rebranding is
+        // one file, and off-temperature too: Tailwind's emerald and amber
+        // are neutral-based where these neutrals carry a teal bias.
+        //
+        // NO `dark:` VARIANTS ANY MORE, and that is the tell that this is
+        // right rather than merely renamed. The tokens are themed, so one
+        // declaration is correct in both themes - the old version had to
+        // state the dark case because a literal shade cannot know.
+        //
+        // WARNING USES THE CAUTION FAMILY THAT ALREADY EXISTED. The palette
+        // defines --data-caution as "look at this", explicitly kept apart
+        // from --destructive, and nothing was using it for the thing it
+        // describes. It is a rose rather than an amber, on purpose: the note
+        // beside --data-cost says the amber it replaced "kept saying" a
+        // normal cost was a warning, and one caution colour is the point.
+        // -------------------------------------------------------------
+        success: "border-data-ok/30 bg-data-ok-surface text-data-ok-text",
+        warning: "border-data-caution/30 bg-data-caution-surface text-data-caution-text",
         outline: "border-border text-foreground font-bold [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         // The tinted outlines share `outline`'s muted hover. `light-muted` /
         // `active` were never tokens (see globals.css), so they resolved to no
@@ -25,7 +44,7 @@ const badgeVariants = cva(
         outline_secondary:
           "border-secondary text-secondary font-bold [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         outline_active:
-          "border-emerald-200 text-emerald-700 font-bold dark:border-emerald-900 dark:text-emerald-300 [a]:hover:bg-muted [a]:hover:text-muted-foreground",
+          "border-data-ok/50 text-data-ok-text font-bold [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         outline_destructive:
           "border-destructive text-destructive font-bold [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost: "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",

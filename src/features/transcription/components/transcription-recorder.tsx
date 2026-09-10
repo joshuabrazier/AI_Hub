@@ -555,7 +555,7 @@ export function TranscriptionRecorder({
           carries an implicit aria-live of "off" - stated explicitly here
           because announcing it once a second is exactly what a screen
           reader must not do during an hour-long meeting. */}
-      <p role="timer" aria-live="off" className="mt-4 font-mono text-2xl tabular-nums text-foreground">
+      <p role="timer" aria-live="off" className="mt-4 text-2xl figure text-foreground">
         {formatDuration(elapsedSeconds)}
       </p>
 
@@ -577,7 +577,7 @@ export function TranscriptionRecorder({
       {isActive && !canHoldScreenAwake ? (
         <p
           role="status"
-          className="mt-3 max-w-sm rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+          className="mt-3 max-w-sm rounded-lg border border-data-caution/40 bg-data-caution-surface p-2.5 text-xs text-data-caution-text"
         >
           This browser cannot keep the screen on by itself. Set your screen timeout to never, or check the
           phone every few minutes - if it sleeps, recording stops.

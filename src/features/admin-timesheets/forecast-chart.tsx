@@ -135,7 +135,7 @@ export function ForecastChart({
                   <div className="mt-2 flex flex-col items-center gap-0.5">
                     <span
                       className={cn(
-                        "text-[10px] leading-none tabular-nums",
+                        "text-[10px] leading-none figure",
                         isToday ? "font-semibold text-foreground" : "text-muted-foreground",
                       )}
                     >

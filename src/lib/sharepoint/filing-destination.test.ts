@@ -192,3 +192,55 @@ describe("chooseFilingDestination", () => {
     }
   });
 });
+
+// ===================================================================
+// THE SAME CHECK, NOW GUARDING A SECOND CALLER
+//
+// admitModelFolder was written for the model's answer. It now also admits a
+// folder id that came back from a BROWSER, when somebody overrides the
+// suggested folder - and those two callers deserve the same treatment for
+// the same reason.
+//
+// It is not defensiveness about the person. A person picks from a list this
+// app rendered, and the id travels through a form; a stale tab, a copied id
+// or a tampered request is what the check is for. The rule is the one the
+// timesheet ask box already follows: a shape check proves a value is a
+// string, never that it is something anybody offered.
+//
+// These are written as the browser case explicitly, because the function's
+// name says "model" and the next person to read it should not conclude that
+// the user-supplied path is unguarded.
+// ===================================================================
+describe("admitModelFolder, guarding a folder id from a browser", () => {
+  it("admits a folder the app actually offered", () => {
+    expect(admitModelFolder("id:Clients/Bowhill Engineering", CLIENTS)?.path).toBe(
+      "Clients/Bowhill Engineering",
+    );
+  });
+
+  it("REFUSES an id that was never in the catalogue", () => {
+    // The one that matters. Passing this through would address a write at a
+    // folder nobody chose, in somebody else's client folder.
+    expect(admitModelFolder("id:Clients/Somebody Else", CLIENTS)).toBeNull();
+  });
+
+  it("refuses an id from a catalogue that has since changed", () => {
+    // A proposal can sit for a week, and a folder can be renamed or deleted
+    // in a week. The id is re-checked at the moment of the write rather than
+    // trusted because this app wrote it down earlier.
+    const afterRecrawl = CLIENTS.filter((folder) => folder.itemId !== "id:Clients/Perks");
+
+    expect(admitModelFolder("id:Clients/Perks", CLIENTS)).not.toBeNull();
+    expect(admitModelFolder("id:Clients/Perks", afterRecrawl)).toBeNull();
+  });
+
+  it("refuses an empty catalogue rather than admitting anything", () => {
+    expect(admitModelFolder("id:Clients/Perks", [])).toBeNull();
+  });
+
+  it("refuses a blank or missing id", () => {
+    expect(admitModelFolder("", CLIENTS)).toBeNull();
+    expect(admitModelFolder(null, CLIENTS)).toBeNull();
+    expect(admitModelFolder(undefined, CLIENTS)).toBeNull();
+  });
+});

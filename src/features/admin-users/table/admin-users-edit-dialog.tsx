@@ -174,7 +174,7 @@ function TwoFactorResetSection({ user }: { user: AdminUserResponseDTO }) {
         {isConfirming ? (
           <>
             <Button type="button" variant="destructive" onClick={onReset} disabled={isPending}>
-              {isPending ? "Resetting..." : "Yes, reset it"}
+              {isPending ? "Resetting…" : "Yes, reset it"}
             </Button>
             <Button
               type="button"

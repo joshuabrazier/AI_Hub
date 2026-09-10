@@ -42,7 +42,7 @@ function areaFor(role: UserRole): string {
     case USER_ROLES.ADMIN:
       return "the admin area";
     case USER_ROLES.MANAGER:
-      return "the manager area, scoped to the teams an administrator has assigned them";
+      return "the manager area, scoped to the projects they are a member of";
     default:
       return "their own portal area";
   }
@@ -99,9 +99,11 @@ export function appKnowledgePrompt(role: UserRole, userName: string | null): str
     // ask about a file they cannot find, and "I do not know" sends them
     // looking through 95 client folders by hand. Kept to what a person needs
     // in order to check the answer themselves.
-    "MEETING NOTES ARE FILED INTO SHAREPOINT AUTOMATICALLY once a meeting has been transcribed and summarised.",
-    "The app picks the folder: it matches the client named in the meeting title against the client folders it has catalogued,",
-    "and where that is not certain it either asks a model to choose from those same folders or puts the note in a holding folder.",
+    "MEETING NOTES ARE FILED INTO SHAREPOINT, but only after the person whose meeting it was confirms where. Nothing is written until they do.",
+    "The app PROPOSES a folder: it matches the client named in the meeting title against the client folders it has catalogued,",
+    "and where that is not certain it either asks a model to choose from those same folders or suggests a holding folder.",
+    "The proposal appears on the Transcription screen with a button to accept it and a way to pick a different folder instead.",
+    "So a meeting that has not been filed is usually waiting for somebody to confirm it rather than broken.",
     "The note goes into a folder of its own inside whichever folder was matched, so transcripts do not sit among a client's contracts.",
     "It NEVER invents a folder beyond that one and the configured holding folder, and it refuses rather than guessing between two clients -",
     "a note in the wrong client's folder is a confidentiality problem, so being unfiled is the deliberate safer outcome.",

@@ -31,7 +31,7 @@ export function EntriesDataTable({ facts }: { facts: WorklogFactRow[] }) {
     <DataTable
       columns={columns}
       data={facts}
-      searchPlaceholder="Search by person, job or work..."
+      searchPlaceholder="Search by person, job or work…"
       // Ids are excluded on purpose: searching an accountId finds nothing a
       // human was looking for, and matching one floods the results.
       searchKeys={["personName", "issueKey", "issueSummary", "parentSummary", "billable"]}
@@ -39,7 +39,7 @@ export function EntriesDataTable({ facts }: { facts: WorklogFactRow[] }) {
       pageSize={20}
       toolbar={
         <p className="text-sm text-muted-foreground">
-          <span className="font-medium tabular-nums text-foreground">{totalHours.toFixed(2)} h</span> across{" "}
+          <span className="font-medium figure text-foreground">{totalHours.toFixed(2)} h</span> across{" "}
           {facts.length} {facts.length === 1 ? "entry" : "entries"}
         </p>
       }
@@ -87,7 +87,7 @@ export function JobsDataTable({ jobs }: { jobs: BudgetRow[] }) {
     <DataTable
       columns={columns}
       data={jobs}
-      searchPlaceholder="Search projects..."
+      searchPlaceholder="Search projects…"
       searchKeys={["projectKey", "projectSummary", "category", "billable"]}
       emptyMessage="No projects match this filter."
       pageSize={20}

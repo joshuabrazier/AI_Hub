@@ -97,7 +97,7 @@ export function RatesHistoryList({ history }: { history: UserRateHistoryDTO }) {
                         {formatIsoDate(rate.effectiveFrom)}
                       </TableCell>
 
-                      <TableCell className="text-right tabular-nums text-foreground">
+                      <TableCell className="text-right figure text-foreground">
                         {formatCents(rate.chargeRateCents, RATE_DECIMAL_PLACES)}/h
                       </TableCell>
 
@@ -108,7 +108,7 @@ export function RatesHistoryList({ history }: { history: UserRateHistoryDTO }) {
                         {rate.costRateCents === null ? (
                           <span className="text-sm text-muted-foreground">Not recorded</span>
                         ) : (
-                          <span className="tabular-nums text-foreground">
+                          <span className="figure text-foreground">
                             {formatCents(rate.costRateCents, RATE_DECIMAL_PLACES)}/h
                           </span>
                         )}

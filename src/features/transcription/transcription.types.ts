@@ -365,6 +365,29 @@ export type TranscriptionDetailDTO = TranscriptionSummaryDTO & {
 // question. A decision the reader cannot see the basis of cannot be
 // checked, so both the how and the why travel to the screen.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// Saying yes to a proposed folder, or naming a different one.
+//
+// folderItemId IS AN ID FROM THE CATALOGUE, never a path. A free-text path
+// would let a typo create a folder anywhere in the library, and the whole
+// filing feature is built on choosing among folders that were actually
+// found rather than naming locations. Omitted means "the one you suggested".
+// -------------------------------------------------------------------
+export const ConfirmTranscriptionFilingSchema = z.object({
+  transcriptionId: transcriptionIdSchema,
+  folderItemId: z.string().trim().min(1).max(512).nullish(),
+});
+
+export type ConfirmTranscriptionFilingRequestDTO = z.infer<typeof ConfirmTranscriptionFilingSchema>;
+
+// One folder somebody may file into. The path is what a person recognises;
+// the id is what the write is addressed at, and the server re-checks it
+// against the catalogue rather than trusting what comes back.
+export type FilingFolderChoiceDTO = {
+  itemId: string;
+  path: string;
+};
+
 export type TranscriptionFilingDTO = {
   status: TranscriptionFilingStatus;
   folderPath: string | null;
@@ -384,7 +407,11 @@ export type TranscriptionFilingDTO = {
 const DECIDED_VIA_LABELS: Record<string, string> = {
   "client-name": "The folder name matches the client",
   model: "Chosen by the assistant from the folders in the library",
-  fallback: "Filed in the holding folder because nothing was certain",
+  fallback: "The holding folder, because nothing matched this meeting",
+  // The most certain of the four, and worth telling apart from the model's
+  // guess that somebody happened to accept - "a person picked this" and "a
+  // person did not object to this" are different facts about a folder.
+  chosen: "You chose this folder",
 };
 
 export function filingDecisionLabel(decidedVia: string | null): string | null {

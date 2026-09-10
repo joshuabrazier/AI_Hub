@@ -1,6 +1,7 @@
 import "server-only";
 
 import { requireUser } from "@/lib/auth/session-auth-server";
+import { matchByName } from "@/lib/resolve-by-name";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
 import { getUserByUserIdRepo } from "@/lib/data/repositories/users.repository";
 import { getWorklogFactsInRangeRepo } from "@/lib/data/repositories/timesheet.repository";
@@ -177,29 +178,27 @@ export function resolveNamed(
   options: { value: string; label: string }[],
   kind: "person" | "client" | "project",
 ): { id: string | null; note: string | null } {
+  // THE LADDER MOVED, THE WORDING DID NOT. matchByName owns exact-then-
+  // case-insensitive-then-unique-prefix, because the project planner needs
+  // exactly the same rule and a second copy of it is a second copy that
+  // drifts. What stayed here is the prose: "no client filter was applied"
+  // and "logged time in this period" are true of this screen and meaningless
+  // to somebody creating a project, so each caller says what a miss means to
+  // it rather than sharing a sentence that has to suit both.
+  const match = matchByName(
+    wanted,
+    options.map((option) => ({ id: option.value, name: option.label })),
+  );
+
+  if (match.kind === "matched") return { id: match.id, note: null };
+
   const trimmed = wanted.trim();
   if (!trimmed) return { id: null, note: null };
 
-  // A key rather than a name. The model is told to use names, but a key is
-  // unambiguous and refusing one would be pedantry.
-  const byValue = options.filter((option) => option.value.toLowerCase() === trimmed.toLowerCase());
-  if (byValue.length === 1) return { id: byValue[0].value, note: null };
-
-  const exact = options.filter((option) => option.label === trimmed);
-  if (exact.length === 1) return { id: exact[0].value, note: null };
-
-  const lower = trimmed.toLowerCase();
-
-  const insensitive = options.filter((option) => option.label.toLowerCase() === lower);
-  if (insensitive.length === 1) return { id: insensitive[0].value, note: null };
-
-  const prefix = options.filter((option) => option.label.toLowerCase().startsWith(lower));
-  if (prefix.length === 1) return { id: prefix[0].value, note: null };
-
-  if (prefix.length > 1) {
+  if (match.kind === "ambiguous") {
     return {
       id: null,
-      note: `"${trimmed}" matches more than one ${kind} (${prefix.map((o) => o.label).join(", ")}); no ${kind} filter was applied.`,
+      note: `"${trimmed}" matches more than one ${kind} (${match.candidates.join(", ")}); no ${kind} filter was applied.`,
     };
   }
 

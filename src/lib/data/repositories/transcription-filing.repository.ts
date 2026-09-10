@@ -219,6 +219,7 @@ export async function countTranscriptionFilingsByStatusRepo(
     // as absent, and the caller never has to decide what a missing key means.
     const counts: TranscriptionFilingCounts = {
       [TRANSCRIPTION_FILING_STATUSES.PENDING]: 0,
+      [TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL]: 0,
       [TRANSCRIPTION_FILING_STATUSES.FILED]: 0,
       [TRANSCRIPTION_FILING_STATUSES.NOWHERE]: 0,
       [TRANSCRIPTION_FILING_STATUSES.FAILED]: 0,

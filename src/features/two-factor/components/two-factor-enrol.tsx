@@ -50,7 +50,7 @@ export function TwoFactorEnrol({ email, requiresPassword }: { email: string; req
     if (requiresPassword || started.current) return;
     started.current = true;
 
-    void begin();
+    void begin();
   }, [requiresPassword]);
 
   // Re-authentication before a security setting is changed, for the one
@@ -92,7 +92,7 @@ export function TwoFactorEnrol({ email, requiresPassword }: { email: string; req
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <Button type="submit" disabled={!password || submitting} className="self-start">
-          {submitting ? "Checking..." : "Continue"}
+          {submitting ? "Checking…" : "Continue"}
         </Button>
       </form>
     );
@@ -110,7 +110,7 @@ export function TwoFactorEnrol({ email, requiresPassword }: { email: string; req
   }
 
   if (!enrolment) {
-    return <p className="mt-6 text-sm text-muted-foreground">Preparing your setup code...</p>;
+    return <p className="mt-6 text-sm text-muted-foreground">Preparing your setup code…</p>;
   }
 
   // The backup codes are shown once and are not retrievable afterwards, so

@@ -40,7 +40,9 @@ import {
   putAttachment,
 } from "@/lib/storage/attachment-storage";
 import { requireUser } from "@/lib/auth/session-auth-server";
+import { BRAND } from "@/lib/brand";
 
+import { ASSISTANT_NAME, chatNotConfiguredMessage } from "@/lib/ai/assistant-identity";
 import { appKnowledgePrompt } from "./ai-chat-app-knowledge";
 import { CHAT_TOOL_CONFIG, MAX_TOOL_ROUNDS, runChatTool } from "./ai-chat-tools";
 import {
@@ -160,7 +162,28 @@ const SYSTEM_PROMPT = [
   // before what it happens to be embedded in, so the app block reads as
   // context rather than as a boundary.
   // -----------------------------------------------------------------
-  "You are a general-purpose AI assistant. You are exactly as capable and as broad here as anywhere else.",
+  // -----------------------------------------------------------------
+  // THE NAME, WHEN THERE IS ONE, GOES IN THE FIRST SENTENCE.
+  //
+  // Not in a block of its own further down: a model asked "who are you"
+  // answers from how it was introduced, and an identity stated after four
+  // paragraphs about a staff portal gets answered as the portal's helper.
+  // It also has to be told the name is ITS name - given only "Saga" as a
+  // word in a prompt, a model will as happily decide Saga is the product,
+  // the company or the person it is talking to.
+  //
+  // Unnamed deployments keep the original sentence exactly. See
+  // assistant-identity.ts for why there is no generic default name.
+  // -----------------------------------------------------------------
+  ASSISTANT_NAME === null
+    ? "You are a general-purpose AI assistant. You are exactly as capable and as broad here as anywhere else."
+    : `Your name is ${ASSISTANT_NAME}. You are a general-purpose AI assistant. You are exactly as capable and as broad here as anywhere else.`,
+  ...(ASSISTANT_NAME === null
+    ? []
+    : [
+        `If somebody asks what you are called or who you are, you are ${ASSISTANT_NAME}, the assistant built into ${BRAND.name}.`,
+        "Do not sign your replies with your name or announce it at the start of an answer - you are asked, you are not introducing yourself each time.",
+      ]),
   "Help with whatever is asked: writing and editing, analysis, code, maths, research questions, explanations, planning, brainstorming, working through a problem, and general knowledge.",
   "You can also read and work with files the user attaches to the conversation - documents, spreadsheets, PDFs, images - and answer questions about them, summarise them, pull figures out of them or critique them.",
   "You happen to be embedded in a staff portal, and you know about that portal and can look up its timesheet figures. That is one useful thing you can do, NOT the limit of what you do.",
@@ -1347,7 +1370,7 @@ export async function* streamAiChatReplyService(
   const subject = await requireOwnedSubject(requestDTO.subjectId, user.id);
 
   if (!isBedrockConfigured()) {
-    throw new DisplayErrorMessage("AI chat is not configured on this environment.");
+    throw new DisplayErrorMessage(chatNotConfiguredMessage());
   }
 
   // Declared out here so the `finally` can record what was actually sent even

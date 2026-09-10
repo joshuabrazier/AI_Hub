@@ -223,7 +223,7 @@ export function TimesheetAddRowDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || taskId === null} loading={isPending}>
-              {isPending ? "Adding..." : "Add the row"}
+              {isPending ? "Adding…" : "Add the row"}
             </Button>
           </div>
         </form>
