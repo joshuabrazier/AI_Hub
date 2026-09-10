@@ -82,7 +82,7 @@ export function SetupProjectArchiveButton({
         // React renders as a text node like everything else in this feature.
         description={`"${projectTitle}" will be taken out of the nav, the project pickers and every default list, and no more time can be logged against it. Nothing is deleted - the board, its phases and every hour logged stay readable, and an administrator can make it active again.`}
         confirmLabel="Archive project"
-        pendingLabel="Archiving..."
+        pendingLabel="Archiving…"
         isPending={isPending}
         onConfirm={confirm}
       />

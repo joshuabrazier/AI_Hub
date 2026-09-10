@@ -127,7 +127,7 @@ export function AdminActivityTable({ entries }: { entries: AuditLogEntryDTO[] })
       <DataTable
         columns={columns}
         data={dateFilteredEntries}
-        searchPlaceholder="Search activity..."
+        searchPlaceholder="Search activity…"
         searchKeys={ACTIVITY_SEARCH_KEYS}
         sortOptions={ACTIVITY_SORTS}
         facetFilters={facetFilters}

@@ -523,7 +523,7 @@ export function BoardWorkspace({
         title="Delete this task?"
         description={`"${deletingTask?.title ?? ""}" will be permanently deleted, along with any files attached to it. A task with time logged against it cannot be deleted - move it to ${TASK_COLUMN_LABELS[TASK_COLUMNS.DONE]} instead.`}
         confirmLabel="Delete task"
-        pendingLabel="Deleting..."
+        pendingLabel="Deleting…"
         isPending={isPending}
         onConfirm={confirmDeleteTask}
       />
@@ -536,7 +536,7 @@ export function BoardWorkspace({
         title="Delete this phase?"
         description={`"${deletingPhase?.phaseName ?? ""}" and every task in it will be permanently deleted. A phase with time logged against it cannot be deleted.`}
         confirmLabel="Delete phase"
-        pendingLabel="Deleting..."
+        pendingLabel="Deleting…"
         isPending={isPending}
         onConfirm={confirmDeletePhase}
       />

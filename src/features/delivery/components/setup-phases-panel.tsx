@@ -223,7 +223,7 @@ export function SetupPhasesPanel({ projectId, phases, canEditTasks }: Props) {
             : undefined
         }
         confirmLabel="Delete"
-        pendingLabel="Deleting..."
+        pendingLabel="Deleting…"
         isPending={isPending}
         onConfirm={confirmDelete}
       />

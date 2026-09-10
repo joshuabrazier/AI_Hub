@@ -283,7 +283,7 @@ export function SetupMembersPanel({ projectId, members, people }: Props) {
             : undefined
         }
         confirmLabel="Remove"
-        pendingLabel="Removing..."
+        pendingLabel="Removing…"
         isPending={isPending}
         onConfirm={confirmRemove}
       />
@@ -350,7 +350,7 @@ function SetupAddMemberDialog({
       description="They can see the project as soon as this is saved."
       onSubmit={form.handleSubmit(onSubmit)}
       submitLabel="Add member"
-      pendingLabel="Adding..."
+      pendingLabel="Adding…"
       canSubmit={form.formState.isValid}
       isPending={isPending}
     >

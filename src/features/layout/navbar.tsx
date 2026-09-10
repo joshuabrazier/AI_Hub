@@ -55,6 +55,7 @@ export default function Navbar() {
                 type="button"
                 aria-label={collapsed ? "Expand the menu" : "Collapse the menu"}
                 aria-expanded={!collapsed}
+                aria-controls="app-sidebar"
                 onClick={toggle}
                 className="hidden size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:flex"
               >

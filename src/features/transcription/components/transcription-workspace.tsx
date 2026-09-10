@@ -392,7 +392,7 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || renameTitle.trim().length === 0} loading={isPending}>
-              {isPending ? "Saving..." : "Save"}
+              {isPending ? "Saving…" : "Save"}
             </Button>
           </div>
         </form>
@@ -407,7 +407,7 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
         title="Delete this transcription?"
         description={`"${deleting?.title ?? ""}", its transcript and its summary will be permanently deleted. This cannot be undone.`}
         confirmLabel="Delete"
-        pendingLabel="Deleting..."
+        pendingLabel="Deleting…"
         isPending={isPending}
         onConfirm={confirmDelete}
       />

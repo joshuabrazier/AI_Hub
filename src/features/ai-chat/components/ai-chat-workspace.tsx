@@ -42,18 +42,39 @@ import { AiChatThread } from "./ai-chat-thread";
 // every render, so putting it in the URL grants nothing.
 //
 // THE TWO COLUMNS ARE TWO SURFACES, not one surface with a gap in it. The
-// list is `bg-secondary`; the thread paints nothing and so wears the page's
+// list is `bg-sidebar`; the thread paints nothing and so wears the page's
 // own background; and there is a border between them. The previous version
 // separated them with whitespace alone, which on a wide monitor is one field
 // of white with some links floating in it.
+//
+// `bg-sidebar` RATHER THAN `bg-secondary`, WHICH IT WAS. This list is a
+// navigation rail - a set of things you pick one of - and so is the app's own
+// rail immediately to its left. They were two different tints, and once the
+// app rail became the near-white surface its token always specified, the
+// difference read as a mistake: an almost-white outer rail with a visibly
+// darker inner one nested inside it. One token, one surface language, and the
+// border is still what separates them.
 //
 // `bg-muted` IS THE TRAP HERE, and it is worth naming because it is the
 // obvious choice for a quiet panel. Check the tokens in globals.css: in the
 // light theme it is #f6fafb, a step off #ffffff that you cannot see, and in
 // the dark theme it is #131f22 - the SAME VALUE as `--card`. A muted panel
 // is invisible in one theme and, beside a card, absent in the other.
-// `secondary` is the only neutral surface that steps away from both the
-// background and the card in both themes.
+//
+// `--sidebar` IS #fcfdfd IN LIGHT MODE, WHICH IS ALSO A STEP OFF WHITE, and
+// this used `bg-secondary` for exactly that reason: it was the only neutral
+// that steps away from both the background and the card in both themes. So
+// the swap above needs an answer rather than an assertion.
+//
+// The answer is the BORDER, and the app's own rail is the proof: it is this
+// same near-white token, two inches to the left, and it reads as a column
+// because a hairline separates it rather than a fill. That is what the
+// palette's note on --sidebar says to do - "separated from the content by
+// its border rather than by a fill, so the app chrome does not darken the
+// page" - and this list is the same kind of thing, a set of items you pick
+// one of. `border-r border-border` below is therefore load-bearing here in a
+// way it was not when the fill did the work: remove it and this column
+// genuinely does vanish in light mode.
 //
 // The open conversation's row is `bg-background` - the thread's own surface
 // - so the selection reads as the leading edge of the column it opens rather
@@ -198,7 +219,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
             aria-hidden - that would fix only the second half. */}
         <aside
           className={cn(
-            "hidden shrink-0 overflow-hidden bg-secondary transition-[width] duration-300 ease-in-out motion-reduce:transition-none md:block",
+            "hidden shrink-0 overflow-hidden bg-sidebar transition-[width] duration-300 ease-in-out motion-reduce:transition-none md:block",
             railOpen ? "w-[17rem] border-r border-border" : "w-0",
           )}
           inert={!railOpen}
@@ -256,7 +277,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
                   <MessagesSquare size={16} aria-hidden="true" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="gap-0 bg-secondary p-0">
+              <SheetContent side="left" className="gap-0 bg-sidebar p-0">
                 {/* A VISIBLE header, not an sr-only one. SheetContent paints
                     its own close button at top-3 right-3, so with the list
                     flush to the top edge that button sits on top of the "New
@@ -349,7 +370,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
               disabled={isPending || renameTitle.trim().length === 0}
               loading={isPending}
             >
-              {isPending ? "Saving..." : "Save"}
+              {isPending ? "Saving…" : "Save"}
             </Button>
           </div>
         </form>
@@ -364,7 +385,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
         title="Delete this conversation?"
         description={`"${deleting?.title ?? ""}" and its messages will be permanently deleted. This cannot be undone.`}
         confirmLabel="Delete"
-        pendingLabel="Deleting..."
+        pendingLabel="Deleting…"
         isPending={isPending}
         onConfirm={confirmDelete}
       />

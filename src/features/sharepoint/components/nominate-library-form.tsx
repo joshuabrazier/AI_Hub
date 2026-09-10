@@ -20,7 +20,7 @@ import type { SharepointSiteLookup } from "../sharepoint.types";
 // their mind. Only choosing a library adds a row.
 //
 // The address is what somebody has in their address bar. It is deliberately
-// not a drive id: those look like "b!x7Kd..." and nobody has one to hand.
+// not a drive id: those look like "b!x7Kd…" and nobody has one to hand.
 // -------------------------------------------------------------------
 export function NominateLibraryForm() {
   const [siteUrl, setSiteUrl] = useState("");

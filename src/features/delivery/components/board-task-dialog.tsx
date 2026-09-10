@@ -133,7 +133,7 @@ export function BoardTaskDialog({
       description="It lands in the phase and column you choose. The estimate is in hours."
       onSubmit={form.handleSubmit(onSubmit)}
       submitLabel="Add task"
-      pendingLabel="Adding..."
+      pendingLabel="Adding…"
       canSubmit={form.formState.isValid}
       isPending={isPending}
     >

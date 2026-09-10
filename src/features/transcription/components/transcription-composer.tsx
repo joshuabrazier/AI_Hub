@@ -443,7 +443,7 @@ export function TranscriptionComposer({
               onClick={() => fileInputRef.current?.click()}
             >
               {isConverting
-                ? "Preparing..."
+                ? "Preparing…"
                 : file
                   ? "Choose a different file"
                   : "Choose a file"}
@@ -487,7 +487,7 @@ export function TranscriptionComposer({
 
           <div className="flex justify-end">
             <Button type="button" onClick={submitFile} disabled={!file || isUploading} loading={isUploading}>
-              {isUploading ? "Uploading..." : "Transcribe"}
+              {isUploading ? "Uploading…" : "Transcribe"}
             </Button>
           </div>
         </TabsContent>

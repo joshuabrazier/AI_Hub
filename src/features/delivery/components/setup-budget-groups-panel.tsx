@@ -237,7 +237,7 @@ export function SetupBudgetGroupsPanel({ projectId, groups, members }: Props) {
         title={`Delete ${deleting?.name ?? "this group"}?`}
         description="The hours logged by its people stay exactly where they are; they just stop being counted against a pool and show as ungrouped on the budget report."
         confirmLabel="Delete"
-        pendingLabel="Deleting..."
+        pendingLabel="Deleting…"
         isPending={isPending}
         onConfirm={confirmDelete}
       />
@@ -443,7 +443,7 @@ function SetupBudgetGroupPeopleDialog({
           Cancel
         </Button>
         <Button type="button" onClick={save} disabled={isPending || members.length === 0} loading={isPending}>
-          {isPending ? "Saving..." : "Save group"}
+          {isPending ? "Saving…" : "Save group"}
         </Button>
       </div>
     </AppDialog>

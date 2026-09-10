@@ -79,7 +79,7 @@ export function AdminUsersInvitationDialog({ open, onOpenChange }: AdminUserInvi
       beforeForm={<Separator />}
       onSubmit={form.handleSubmit(onSubmit)}
       submitLabel="Send invitation"
-      pendingLabel="Sending..."
+      pendingLabel="Sending…"
       canSubmit={canSubmit}
       isPending={isPending}
     >

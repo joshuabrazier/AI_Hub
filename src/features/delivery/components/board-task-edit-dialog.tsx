@@ -142,7 +142,7 @@ export function BoardTaskEditDialog({
       description="The estimate is changed separately, so it keeps its history."
       onSubmit={form.handleSubmit(onSubmit)}
       submitLabel="Save changes"
-      pendingLabel="Saving..."
+      pendingLabel="Saving…"
       canSubmit={form.formState.isValid}
       isPending={isPending}
     >

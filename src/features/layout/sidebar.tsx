@@ -192,7 +192,10 @@ function NavCollapsibleRow({
       )}
 
       {open && (
-        <div
+        // A nested list, because that is what a nested nav is - and it is
+        // what tells a screen reader these belong to the row above rather
+        // than being four more siblings of it.
+        <ul
           className={cn(
             "mt-0.5 space-y-0.5",
             // A hairline the children hang off, so an open group reads as one
@@ -226,16 +229,18 @@ function NavCollapsibleRow({
               </Link>
             );
 
-            if (!collapsed) return <div key={child.href}>{childLink}</div>;
+            if (!collapsed) return <li key={child.href}>{childLink}</li>;
 
             return (
-              <Tooltip key={child.href}>
-                <TooltipTrigger asChild>{childLink}</TooltipTrigger>
-                <TooltipContent side="right">{child.label}</TooltipContent>
-              </Tooltip>
+              <li key={child.href}>
+                <Tooltip>
+                  <TooltipTrigger asChild>{childLink}</TooltipTrigger>
+                  <TooltipContent side="right">{child.label}</TooltipContent>
+                </Tooltip>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
     </div>
   );
@@ -249,6 +254,11 @@ export default function Sidebar() {
 
   return (
     <aside
+      // Named so the navbar's toggle can point `aria-controls` at it. The
+      // toggle carries `aria-expanded`, and an expanded-state control that
+      // does not say what it expands leaves a screen reader announcing a
+      // state with no subject.
+      id="app-sidebar"
       className={cn(
         "fixed top-nav left-0 z-40 hidden h-[calc(100dvh-var(--nav-h))] flex-col border-r border-sidebar-border bg-sidebar md:flex",
         "transition-[width] duration-300 ease-in-out motion-reduce:transition-none",
@@ -261,40 +271,58 @@ export default function Sidebar() {
         // when collapsed and a scrollbar there is most of a row's width.
         className="flex-1 overflow-x-hidden overflow-y-auto pt-2 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        {navGroups.map((group, groupIndex) => (
-          <div key={group.label}>
-            {collapsed ? (
-              // No room for a name, so the grouping is a rule instead. Not
-              // above the first group, where it would read as a border under
-              // the navbar that is already there.
-              groupIndex > 0 && <hr className="mx-3 my-2 border-sidebar-border" />
-            ) : (
+        {/* -----------------------------------------------------------
+            THE GROUPING IS PROGRAMMATIC, NOT JUST VISUAL.
+
+            `role="group"` with `aria-labelledby` means the section name
+            reaches a screen reader in BOTH states. Collapsed there is no
+            room to draw the label, and the first version of this simply
+            dropped it and put a rule there instead - so the grouping that
+            makes a fifteen-item nav readable existed only for people who
+            could see the width to draw it in. The label is `sr-only` when
+            collapsed rather than absent, and the rule that stands in for it
+            is `aria-hidden` because it is now decoration rather than the
+            only signal.
+
+            A REAL LIST, TOO. These were bare divs, so the rail announced as
+            a run of links with no count and no structure. `<ul>`/`<li>`
+            inside a `<nav>` is what a navigation tree is.
+            ----------------------------------------------------------- */}
+        {navGroups.map((group, groupIndex) => {
+          const labelId = `nav-group-${group.label.replace(/\s+/g, "-").toLowerCase()}`;
+
+          return (
+            <div key={group.label} role="group" aria-labelledby={labelId}>
+              {collapsed && groupIndex > 0 && <hr aria-hidden="true" className="mx-3 my-2 border-sidebar-border" />}
+
               <p
+                id={labelId}
                 className={cn(
-                  "px-4 pb-1.5 font-mono text-[0.625rem] font-medium tracking-[0.18em] text-muted-foreground/75 uppercase",
-                  groupIndex === 0 ? "pt-1" : "pt-5",
+                  collapsed
+                    ? "sr-only"
+                    : cn(
+                        "px-4 pb-1.5 font-mono text-[0.625rem] font-medium tracking-[0.18em] text-muted-foreground/75 uppercase",
+                        groupIndex === 0 ? "pt-1" : "pt-5",
+                      ),
                 )}
               >
                 {group.label}
               </p>
-            )}
 
-            <div className="space-y-0.5">
-              {group.items.map((entry) =>
-                isCollapsible(entry) ? (
-                  <NavCollapsibleRow key={entry.label} entry={entry} collapsed={collapsed} pathname={pathname} />
-                ) : (
-                  <NavLinkRow
-                    key={entry.href}
-                    entry={entry}
-                    collapsed={collapsed}
-                    active={pathname === entry.href}
-                  />
-                ),
-              )}
+              <ul className="space-y-0.5">
+                {group.items.map((entry) => (
+                  <li key={isCollapsible(entry) ? entry.label : entry.href}>
+                    {isCollapsible(entry) ? (
+                      <NavCollapsibleRow entry={entry} collapsed={collapsed} pathname={pathname} />
+                    ) : (
+                      <NavLinkRow entry={entry} collapsed={collapsed} active={pathname === entry.href} />
+                    )}
+                  </li>
+                ))}
+              </ul>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
     </aside>
   );

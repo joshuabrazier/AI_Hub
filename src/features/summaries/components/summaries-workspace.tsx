@@ -270,7 +270,7 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
         <div className="flex flex-wrap gap-2">
           <Button type="button" onClick={submit} disabled={!canSubmit} loading={isStreaming}>
             <Sparkles size={16} aria-hidden="true" />
-            {isStreaming ? "Summarising..." : "Summarise"}
+            {isStreaming ? "Summarising…" : "Summarise"}
           </Button>
 
           {isStreaming ? (
@@ -336,7 +336,7 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
                   <FileText size={22} aria-hidden="true" />
                 </span>
                 <p className="mt-3 text-sm text-muted-foreground">
-                  {isStreaming ? "Reading it now..." : "The summary will appear here."}
+                  {isStreaming ? "Reading it now…" : "The summary will appear here."}
                 </p>
               </div>
             )}

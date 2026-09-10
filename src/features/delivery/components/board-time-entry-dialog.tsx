@@ -130,7 +130,7 @@ export function BoardTimeEntryDialog({
       description="Only what you change is saved, so the note stays unless you clear it."
       onSubmit={form.handleSubmit(onSubmit)}
       submitLabel="Save changes"
-      pendingLabel="Saving..."
+      pendingLabel="Saving…"
       canSubmit={form.formState.isValid}
       isPending={isPending}
     >

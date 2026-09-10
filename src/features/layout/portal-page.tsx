@@ -153,7 +153,9 @@ export default function PortalPage({
                 <p className="font-mono text-[0.625rem] font-medium tracking-[0.18em] text-muted-foreground uppercase md:hidden">
                   {eyebrow}
                 </p>
-                <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+                <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance text-foreground">
+                  {title}
+                </h1>
                 {description && (
                   <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
                 )}
@@ -161,20 +163,32 @@ export default function PortalPage({
 
               {(metric || actions) && (
                 <div className="flex shrink-0 items-center gap-5">
+                  {/* A NAME AND A VALUE, MARKED UP AS ONE. It was two
+                      unrelated paragraphs, so a screen reader read "6h /
+                      240h" and then "logged / estimated" as two separate
+                      facts and nothing tied them together - the same problem
+                      the board card has, where a compact figure is not
+                      self-describing.
+
+                      `flex-col-reverse` is what lets the DOM be correct and
+                      the layout be right at the same time: a <dl> requires
+                      the <dt> first, and the design wants the figure on top.
+                      No interactive elements are involved, so there is no
+                      focus order to disagree with. */}
                   {metric && (
-                    <div className="text-right">
-                      <p
+                    <dl className="flex flex-col-reverse text-right">
+                      <dt className="mt-1 font-mono text-[0.625rem] tracking-[0.14em] text-muted-foreground uppercase">
+                        {metric.label}
+                      </dt>
+                      <dd
                         className={cn(
                           "text-xl leading-none font-semibold figure",
                           metric.tone === "caution" ? "text-data-caution" : "text-foreground",
                         )}
                       >
                         {metric.value}
-                      </p>
-                      <p className="mt-1 font-mono text-[0.625rem] tracking-[0.14em] text-muted-foreground uppercase">
-                        {metric.label}
-                      </p>
-                    </div>
+                      </dd>
+                    </dl>
                   )}
 
                   {actions && <div className="shrink-0">{actions}</div>}

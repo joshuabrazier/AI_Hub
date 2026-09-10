@@ -313,7 +313,7 @@ export function BoardTaskPanel({
 
   // Reading it again after a mutation. An event handler rather than an
   // effect, and deliberately NOT touching `isLoading`: the panel is already
-  // full, and blanking it back to "Loading..." between a save and its result
+  // full, and blanking it back to "Loading…" between a save and its result
   // is a flicker rather than information.
   const refresh = useCallback(async () => {
     apply(await getTaskDetailAction({ taskId }));
@@ -490,7 +490,7 @@ export function BoardTaskPanel({
             </h3>
 
             {isLoading ? (
-              <p className="mt-1 text-sm text-muted-foreground">Loading...</p>
+              <p className="mt-1 text-sm text-muted-foreground">Loading…</p>
             ) : detail?.description ? (
               // Typed by a person. `whitespace-pre-wrap` keeps the line
               // breaks they typed without any markup being interpreted.
@@ -507,7 +507,7 @@ export function BoardTaskPanel({
               <h3 id="task-panel-files-loading" className="text-sm font-semibold text-foreground">
                 Files
               </h3>
-              <p className="mt-1 text-sm text-muted-foreground">Loading...</p>
+              <p className="mt-1 text-sm text-muted-foreground">Loading…</p>
             </section>
           ) : detail ? (
             <BoardTaskAttachments
@@ -525,7 +525,7 @@ export function BoardTaskPanel({
             </h3>
 
             {isLoading ? (
-              <p className="mt-1 text-sm text-muted-foreground">Loading...</p>
+              <p className="mt-1 text-sm text-muted-foreground">Loading…</p>
             ) : detail && detail.timeEntries.length > 0 ? (
               <ul className="mt-2 space-y-2">
                 {detail.timeEntries.map((entry) => (
@@ -645,7 +645,7 @@ export function BoardTaskPanel({
             : ""
         }
         confirmLabel="Delete entry"
-        pendingLabel="Deleting..."
+        pendingLabel="Deleting…"
         isPending={deletingEntryId !== null}
         onConfirm={() => {
           if (deletingEntry) deleteEntry(deletingEntry);

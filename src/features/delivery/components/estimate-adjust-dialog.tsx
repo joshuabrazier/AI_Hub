@@ -328,7 +328,7 @@ export function EstimateAdjustDialog({
           </Button>
           <Button type="submit" disabled={isPending || !canSubmit} loading={isPending}>
             {isPending
-              ? "Saving..."
+              ? "Saving…"
               : mode === "project"
                 ? direction === "add"
                   ? "Add to the estimate"

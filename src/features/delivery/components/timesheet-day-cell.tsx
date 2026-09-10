@@ -206,6 +206,17 @@ export function TimesheetDayCell({
         value={value}
         placeholder="-"
         aria-label={`Hours on ${row.taskTitle}, ${dayLabel}`}
+        // A `type="text"` field in a grid is exactly what a browser offers to
+        // autofill and to spell-check. Neither is wanted on a column of
+        // hours: the autofill dropdown covers the cells below it, and a red
+        // squiggle under "1.5" is nonsense. Both off, explicitly, because
+        // `inputMode` only changes the on-screen keyboard.
+        autoComplete="off"
+        spellCheck={false}
+        // No double-tap-zoom delay before a cell takes focus on a tablet,
+        // which on a grid of 35 of them is the difference between typing and
+        // waiting.
+        style={{ touchAction: "manipulation" }}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={onKeyDown}
         // A cell commits when it is left, so Tab is the whole gesture and

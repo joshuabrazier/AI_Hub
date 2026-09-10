@@ -256,7 +256,7 @@ export function TimesheetCellDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || !canSubmit} loading={isPending}>
-              {isPending ? "Saving..." : "Log time"}
+              {isPending ? "Saving…" : "Log time"}
             </Button>
           </div>
         </form>
@@ -287,7 +287,7 @@ export function TimesheetCellDialog({
         title="Clear this day?"
         description={`${formatMinutesAsClock(cell.minutes)} on "${row.taskTitle}" for ${dayLabel} will be permanently deleted, along with any note on it. This cannot be undone.`}
         confirmLabel="Clear the day"
-        pendingLabel="Clearing..."
+        pendingLabel="Clearing…"
         isPending={isPending}
         onConfirm={clearDay}
       />

@@ -69,7 +69,7 @@ export function DataTable<TData>({
   data,
   emptyMessage = "No results.",
   className,
-  searchPlaceholder = "Search...",
+  searchPlaceholder = "Search…",
   searchKeys,
   toolbar,
   activeFilter,

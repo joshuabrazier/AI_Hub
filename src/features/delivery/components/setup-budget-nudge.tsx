@@ -160,7 +160,7 @@ export function SetupBudgetNudge({ projectId, budgetAssignedAt, groups, assigned
 
         <div className="flex justify-end">
           <Button type="button" variant="outline" onClick={() => stamp(true)} disabled={isPending} loading={isPending}>
-            {isPending ? "Saving..." : "Finished planning"}
+            {isPending ? "Saving…" : "Finished planning"}
           </Button>
         </div>
       </CardContent>

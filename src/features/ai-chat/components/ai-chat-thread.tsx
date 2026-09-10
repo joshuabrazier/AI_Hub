@@ -91,7 +91,7 @@ export function AiChatThread({
   // code path. Most of what got reported as "the AI keeps failing" was a
   // wait with nothing to explain it: on a long thread the server spends
   // twenty or thirty seconds summarising earlier turns before it asks the
-  // model anything, and a static "Thinking..." for half a minute reads as a
+  // model anything, and a static "Thinking…" for half a minute reads as a
   // page that has died. The same wait labelled "summarising earlier turns"
   // reads as work.
   // -------------------------------------------------------------------
@@ -585,7 +585,7 @@ export function AiChatThread({
             value={draft}
             maxLength={MAX_MESSAGE_CHARS}
             rows={1}
-            placeholder={staged.length > 0 ? "Ask about the attached files..." : "Write a message..."}
+            placeholder={staged.length > 0 ? "Ask about the attached files…" : "Write a message…"}
             disabled={isStreaming}
             onChange={(event) => setDraft(event.target.value)}
             onPaste={(event) => {
@@ -743,7 +743,7 @@ function MessageRow({
               AND IT SAYS WHAT IS HAPPENING, not just that something is. On a
               long thread the server spends real time summarising earlier
               turns before the model is asked anything, and a fixed
-              "Thinking..." through thirty seconds of that is why people
+              "Thinking…" through thirty seconds of that is why people
               reported a working feature as broken. */}
           <Loader2 size={14} className="animate-spin" aria-hidden="true" />
           {statusLabel ?? "Thinking"}...

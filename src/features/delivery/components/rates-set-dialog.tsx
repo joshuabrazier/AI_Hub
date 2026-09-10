@@ -297,7 +297,7 @@ export function RatesSetDialog({
             disabled={isPending || effectiveFrom.trim().length === 0 || chargeRate.trim().length === 0}
             loading={isPending}
           >
-            {isPending ? "Saving..." : isCorrection ? "Correct rate" : "Save rate"}
+            {isPending ? "Saving…" : isCorrection ? "Correct rate" : "Save rate"}
           </Button>
         </div>
       </form>

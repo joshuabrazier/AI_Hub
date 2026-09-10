@@ -52,9 +52,6 @@ export default async function AdminDashboardPage() {
           href={ROUTES.ADMIN_USERS}
         />
       </div>
-
-      <div className="mt-6 grid items-start gap-6">
-      </div>
     </PortalPage>
   );
 }

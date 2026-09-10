@@ -278,7 +278,7 @@ export function RatesPersonDialog({
             loading={isPending}
           >
             {isPending
-              ? "Saving..."
+              ? "Saving…"
               : entered.length === 1
                 ? "Save 1 rate"
                 : `Save ${entered.length} rates`}

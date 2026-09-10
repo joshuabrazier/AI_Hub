@@ -50,7 +50,7 @@ export function FormDialog({
   beforeForm,
   onSubmit,
   submitLabel,
-  pendingLabel = "Saving...",
+  pendingLabel = "Saving…",
   canSubmit,
   isPending,
   footer,
