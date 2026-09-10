@@ -1,4 +1,4 @@
-import { MailPlus, ShieldCheck, Users } from "lucide-react";
+import { FolderKanban, ShieldCheck, Users } from "lucide-react";
 
 import {
   DeliveryStatTiles,
@@ -54,9 +54,9 @@ export default async function AdminDashboardPage() {
     >
       <SignInSuccessToast />
 
-      {/* Headline counts. Each one links to the page that owns it. */}
-      {/* Three, since the Teams tile went. Sized to what is here rather
-          than left at four, which put a quarter-width hole on the right. */}
+      {/* Headline counts about the ORGANISATION. Each one links to the page
+          that owns it. Three, sized to what is here rather than left at
+          four, which put a quarter-width hole on the right. */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         <StatTile
           icon={Users}
@@ -70,11 +70,16 @@ export default async function AdminDashboardPage() {
           label="Staff accounts"
           href={ROUTES.ADMIN_USERS}
         />
+        {/* Was "Pending invites", which reported on a door nobody comes
+            through: sign-in is Microsoft only and the app auto-provisions, so
+            an invitation is a role pre-assignment rather than a gate and this
+            deployment does not use them. A headline figure that is
+            structurally zero teaches people to stop reading the row. */}
         <StatTile
-          icon={MailPlus}
-          value={dashboard.stats.pendingInvitations}
-          label="Pending invites"
-          href={ROUTES.ADMIN_USERS}
+          icon={FolderKanban}
+          value={dashboard.stats.activeProjects}
+          label="Active projects"
+          href={ROUTES.ADMIN_PROJECTS}
         />
       </div>
 
