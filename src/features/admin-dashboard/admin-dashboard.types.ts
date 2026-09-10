@@ -16,16 +16,22 @@ export type DashboardStatsDTO = {
   activeMembers: number;
   // Admins and managers with a usable account.
   activeStaff: number;
-  // Invitations sent and not yet accepted, so an admin can see at a glance
-  // that people are waiting to be onboarded.
-  pendingInvitations: number;
-};
-
-// One team on the side column, with how many people are in it.
-export type DashboardTeamDTO = {
-  id: string;
-  name: string;
-  memberCount: number;
+  // -----------------------------------------------------------------
+  // Projects at status 'active' - the work actually in flight.
+  //
+  // THIS TILE USED TO BE PENDING INVITATIONS, and it was reporting on a door
+  // nobody comes through. Sign-in is Microsoft only and the app
+  // AUTO-PROVISIONS anyone on an allowed domain, so an invitation is no
+  // longer a gate - it is a ROLE pre-assignment for somebody who has not
+  // signed in yet, and this deployment does not use them. A headline count
+  // that is structurally zero teaches people to stop reading the row it
+  // sits in.
+  //
+  // 'active' specifically, not "not archived": on hold and completed are
+  // both live rows and neither is work in flight. Archived is the module's
+  // soft delete.
+  // -----------------------------------------------------------------
+  activeProjects: number;
 };
 
 export type AdminDashboardDTO = {

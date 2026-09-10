@@ -25,6 +25,7 @@ import {
   UserRound,
   Users,
   Wallet,
+  WandSparkles,
 } from "lucide-react";
 
 import { chatFeatureLabel, chatFeatureTooltip } from "@/lib/ai/assistant-identity";
@@ -58,6 +59,16 @@ export type NavCollapsible = {
   icon: LucideIcon;
   tooltip: string;
   children: NavLink[];
+  /**
+   * Whether it starts open. Unset means "open when the current page is one of
+   * its children", which is right for a group of OTHER screens - somewhere you
+   * go occasionally, and which should not take up room until you do.
+   *
+   * It is wrong for a group that is the point of the sidebar. Projects start
+   * open, because a list that is shut on every page except the ones already
+   * inside it is a list nobody can navigate WITH.
+   */
+  defaultOpen?: boolean;
 };
 
 export type NavEntry = NavLink | NavCollapsible;
@@ -69,7 +80,95 @@ export function isCollapsible(entry: NavEntry): entry is NavCollapsible {
 export type NavGroup = {
   label: string;
   items: NavEntry[];
+  /**
+   * Pinned to the BOTTOM of the rail, below the scrolling list and outside
+   * it. For the entries somebody looks for by POSITION rather than by
+   * reading - an account row is the standard example, and it is where every
+   * other product puts one.
+   *
+   * Outside the scroll is the point. Last-in-the-list and pinned-to-the-
+   * bottom are the same thing only while the nav is short enough to fit; add
+   * a dozen projects and a list-ordered account row is somewhere below the
+   * fold, which is exactly when somebody is hunting for it.
+   */
+  footer?: boolean;
 };
+
+// -------------------------------------------------------------------
+// THE AI TOOLS, AS ONE GROUP.
+//
+// Chat, transcription and summaries were three sibling rows at the top of
+// every tree, which is three of the first four things anybody saw and made
+// the tools look like the app. They are a category, so they get a category's
+// row and a disclosure triangle.
+//
+// WRITTEN ONCE RATHER THAN THREE TIMES, which is a departure from the rest of
+// this file and is justified by these three being the ONE part of the nav
+// that is genuinely identical in all three areas: same feature, same page,
+// same words, only the area prefix differs. Everything else is repeated on
+// purpose, because the three audiences see different products and a shared
+// definition would invite a change meant for one of them to land in all
+// three.
+//
+// IT IS NOT `defaultOpen`. Unset means it opens when you are already inside
+// it, which is right for a group of tools somebody reaches for now and then -
+// unlike Projects, which is the day job and starts open.
+//
+// The `label` is a plain "AI" rather than the assistant's name: the name
+// belongs to the chat feature, and a deployment that names its assistant
+// should not have that name label transcription and summaries too. The chat
+// row underneath still carries it.
+// -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// THE ACCOUNT GROUP, PINNED TO THE BOTTOM IN EVERY AREA.
+//
+// It was in the member tree only, because the page it opens was mounted only
+// under /portal and its service guarded on MEMBER - so an administrator or a
+// manager had no account screen at all, not merely no link to one. Both are
+// fixed together: the page is mounted in all three areas and the guard is
+// requireUser, because nothing on it is scoped by role.
+//
+// Written once for the same reason aiTools is: identical in all three areas
+// bar the href, and a copy per tree is a copy that drifts.
+// -------------------------------------------------------------------
+function accountGroup(href: string): NavGroup {
+  return {
+    label: "Account",
+    footer: true,
+    items: [{ label: "Account", href, icon: UserCircle, tooltip: "Your details" }],
+  };
+}
+
+function aiTools(routes: { chat: string; transcription: string; summaries: string }): NavCollapsible {
+  return {
+    label: "AI",
+    icon: WandSparkles,
+    tooltip: "Chat, meeting transcription and text summaries",
+    children: [
+      // DERIVED, NOT LITERAL. A deployment may name its assistant
+      // (NEXT_PUBLIC_AI_ASSISTANT_NAME), and this is a base repo - so the
+      // name must not be written down here. Named, this reads "Saga AI" and
+      // "Chat with Saga"; unnamed, "AI chat" and "Chat with the assistant".
+      // Both halves matter: the tooltip is one of the sentences
+      // appKnowledgePrompt hands the assistant about its own app, so a
+      // literal string here would have it telling people to open a menu
+      // entry that no longer exists under that name.
+      { label: chatFeatureLabel(), href: routes.chat, icon: Sparkles, tooltip: chatFeatureTooltip() },
+      {
+        label: "Transcription",
+        href: routes.transcription,
+        icon: AudioLines,
+        tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
+      },
+      {
+        label: "Summaries",
+        href: routes.summaries,
+        icon: ScrollText,
+        tooltip: "Summarise pasted text",
+      },
+    ],
+  };
+}
 
 // -------------------------------------------------------------------
 // Admin - the whole product.
@@ -79,27 +178,11 @@ const ADMIN_NAV: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Home", href: ROUTES.ADMIN_DASHBOARD, icon: House, tooltip: "Home" },
-      // DERIVED, NOT LITERAL. A deployment may name its assistant
-      // (NEXT_PUBLIC_AI_ASSISTANT_NAME), and this is a base repo - so the
-      // name must not be written down here. Named, this reads "Saga AI" and
-      // "Chat with Saga"; unnamed, "AI chat" and "Chat with the assistant".
-      // Both halves matter: the tooltip is one of the sentences
-      // appKnowledgePrompt hands the assistant about its own app, so a
-      // literal string here would have it telling people to open a menu
-      // entry that no longer exists under that name.
-      { label: chatFeatureLabel(), href: ROUTES.ADMIN_AI_CHAT, icon: Sparkles, tooltip: chatFeatureTooltip() },
-      {
-        label: "Transcription",
-        href: ROUTES.ADMIN_TRANSCRIPTION,
-        icon: AudioLines,
-        tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
-      },
-      {
-        label: "Summaries",
-        href: ROUTES.ADMIN_SUMMARIES,
-        icon: ScrollText,
-        tooltip: "Summarise pasted text",
-      },
+      aiTools({
+        chat: ROUTES.ADMIN_AI_CHAT,
+        transcription: ROUTES.ADMIN_TRANSCRIPTION,
+        summaries: ROUTES.ADMIN_SUMMARIES,
+      }),
     ],
   },
   {
@@ -120,32 +203,34 @@ const ADMIN_NAV: NavGroup[] = [
   // DELIVERY, AND WHY IT IS ITS OWN GROUP RATHER THAN PART OF THE TWO IT
   // LOOKS LIKE IT BELONGS TO.
   //
-  // It is not "Time and billing". That group is the Jira-era reporting
+  // It is not "Time and billing". That group is the Jira-era REPORTING
   // screens, which read a different table about work that has already been
   // logged somewhere else. Delivery is where the work is planned and the
-  // hours are entered. Filing them together would put two things called
-  // some version of "timesheet" under one parent, over two data sets, and
-  // the first person to reconcile a figure between them would be comparing
-  // the wrong two screens.
+  // hours are entered. Filing them together would put two things over two
+  // data sets under one parent, and the first person to reconcile a figure
+  // between them would be comparing the wrong two screens. Naming that group's
+  // parent "Reports" rather than "Timesheets" is the other half of the same
+  // point.
   //
-  // It is not "Overview" either. Overview is Home plus the three AI
-  // features, each of which is a tool somebody opens now and then. This is
-  // the day job, and a group of its own is what says so.
+  // It is not "Overview" either. Overview is Home plus the AI group, which
+  // holds three tools somebody opens now and then. This is the day job, and
+  // a group of its own is what says so.
   //
-  // THE SPLIT INSIDE IT IS THE ACCESS MODEL SHOWING THROUGH. Projects and
-  // the timesheet are top-level because MEMBERSHIP decides what they show,
-  // not role - they are the same two entries in all three trees, and the
-  // identical shape is deliberate. Everything under "Delivery admin" is
-  // admin-only: a client is admin-only, a rate is a client's price and a pay
-  // proxy, and the budget report is the one screen in the module carrying
-  // money. Collapsing those four keeps this section three rows tall in the
-  // ordinary case, the same decision Timesheets made below when five
-  // siblings at the top level made it the longest thing in the sidebar.
+  // THE SPLIT IS THE ACCESS MODEL SHOWING THROUGH. What is left in here -
+  // "All projects" and "Your timesheet" - is top-level because MEMBERSHIP
+  // decides what it shows, not role: they are the same two entries in all
+  // three trees, and the identical shape is deliberate. "Delivery admin" is
+  // admin-only and now sits in a GROUP OF ITS OWN, immediately below, so the
+  // person's actual project boards can be spliced in between the two. A
+  // client is admin-only, a rate is a client's price and a pay proxy, and the
+  // budget report is the one screen in the module carrying money - so
+  // collapsing those four keeps that section one row tall in the ordinary
+  // case, the same decision Reports made below when five siblings at the top
+  // level made it the longest thing in the sidebar.
   //
   // "Your timesheet" rather than "Timesheet", because time here is always
   // your own - no screen in the module offers to log an hour for somebody
-  // else - and because it has to be told apart at a glance from
-  // "Timesheets" under Time and billing.
+  // else.
   //
   // The tooltips are load-bearing beyond the sidebar: appKnowledgePrompt
   // generates what the assistant knows about this app from these entries,
@@ -169,6 +254,23 @@ const ADMIN_NAV: NavGroup[] = [
         icon: CalendarClock,
         tooltip: "Log your own week across every project you are on",
       },
+    ],
+  },
+  // -------------------------------------------------------------------
+  // ITS OWN GROUP, PURELY SO THE PROJECTS LAND ABOVE IT.
+  //
+  // useNavGroups splices the person's own projects in after the group called
+  // "Delivery", and the rail flattens groups into one list - so while this
+  // sat inside Delivery, the boards somebody opens all day appeared BELOW a
+  // disclosure of admin screens they open occasionally. Moving it out is the
+  // whole change: same entries, same order within itself, one group later.
+  //
+  // The label is not rendered anywhere. It exists for this splice and for
+  // appKnowledgePrompt, which prefixes children with their parent's label.
+  // -------------------------------------------------------------------
+  {
+    label: "Delivery admin",
+    items: [
       {
         label: "Delivery admin",
         icon: FolderCog,
@@ -203,7 +305,14 @@ const ADMIN_NAV: NavGroup[] = [
       {
         // Collapsed under one parent, like People. Five sibling links at the
         // top level made this the longest section in the sidebar.
-        label: "Timesheets",
+        //
+        // "Reports" rather than "Timesheets", which is what these are: they
+        // READ time that was logged elsewhere and present it by client, by
+        // person and by project. The old name also had to be told apart from
+        // "Your timesheet" two groups up, which is where somebody actually
+        // enters hours - two entries a few rows apart, both called some
+        // version of the same word, over two different data sets.
+        label: "Reports",
         icon: Clock,
         tooltip: "Time, jobs, staff and data quality",
         children: [
@@ -277,6 +386,7 @@ const ADMIN_NAV: NavGroup[] = [
       },
     ],
   },
+  accountGroup(ROUTES.ADMIN_ACCOUNT),
 ];
 
 // -------------------------------------------------------------------
@@ -291,19 +401,11 @@ const MANAGER_NAV: NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { label: chatFeatureLabel(), href: ROUTES.MANAGE_AI_CHAT, icon: Sparkles, tooltip: chatFeatureTooltip() },
-      {
-        label: "Transcription",
-        href: ROUTES.MANAGE_TRANSCRIPTION,
-        icon: AudioLines,
-        tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
-      },
-      {
-        label: "Summaries",
-        href: ROUTES.MANAGE_SUMMARIES,
-        icon: ScrollText,
-        tooltip: "Summarise pasted text",
-      },
+      aiTools({
+        chat: ROUTES.MANAGE_AI_CHAT,
+        transcription: ROUTES.MANAGE_TRANSCRIPTION,
+        summaries: ROUTES.MANAGE_SUMMARIES,
+      }),
     ],
   },
   // The same two entries as the admin tree, in a group with the same name,
@@ -329,11 +431,7 @@ const MANAGER_NAV: NavGroup[] = [
       },
     ],
   },
-  {
-    label: "Your work",
-    items: [
-    ],
-  },
+  accountGroup(ROUTES.MANAGE_ACCOUNT),
 ];
 
 // -------------------------------------------------------------------
@@ -344,20 +442,11 @@ const MEMBER_NAV: NavGroup[] = [
     label: "Your portal",
     items: [
       { label: "Home", href: ROUTES.PORTAL, icon: House, tooltip: "Home" },
-      { label: chatFeatureLabel(), href: ROUTES.PORTAL_AI_CHAT, icon: Sparkles, tooltip: chatFeatureTooltip() },
-      {
-        label: "Transcription",
-        href: ROUTES.PORTAL_TRANSCRIPTION,
-        icon: AudioLines,
-        tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
-      },
-      {
-        label: "Summaries",
-        href: ROUTES.PORTAL_SUMMARIES,
-        icon: ScrollText,
-        tooltip: "Summarise pasted text",
-      },
-      { label: "Account", href: ROUTES.PORTAL_ACCOUNT, icon: UserCircle, tooltip: "Your details" },
+      aiTools({
+        chat: ROUTES.PORTAL_AI_CHAT,
+        transcription: ROUTES.PORTAL_TRANSCRIPTION,
+        summaries: ROUTES.PORTAL_SUMMARIES,
+      }),
     ],
   },
   // Its own group here too, rather than two more rows under "Your portal".
@@ -383,6 +472,10 @@ const MEMBER_NAV: NavGroup[] = [
       },
     ],
   },
+  // Last in the array as well as pinned, so it is last in the reading order
+  // for anything that flattens this tree - the mobile sheet and
+  // appKnowledgePrompt both do.
+  accountGroup(ROUTES.PORTAL_ACCOUNT),
 ];
 
 // -------------------------------------------------------------------
@@ -426,14 +519,28 @@ export function projectsNavGroup(role: UserRole, projects: readonly NavProject[]
 
   return {
     label: "Projects",
-    items: projects.map((project) => ({
-      label: project.title,
-      href: projectBoardForRole(role, project.id),
-      icon: FolderKanban,
-      // The client, because two projects called "Website" for two clients is
-      // the ordinary case and the label alone cannot tell them apart.
-      tooltip: `${project.title} - ${project.clientName}`,
-    })),
+    items: [
+      {
+        label: "Projects",
+        icon: FolderKanban,
+        tooltip: "The projects you are on",
+        // OPEN UNLESS SHUT BY HAND. The sidebar's own default is to open a
+        // group only when you are already inside it, which for these would
+        // mean the projects were hidden on every screen where seeing them is
+        // worth anything.
+        defaultOpen: true,
+        children: projects.map((project) => ({
+          label: project.title,
+          href: projectBoardForRole(role, project.id),
+          icon: FolderKanban,
+          // The client, because two projects called "Website" for two clients
+          // is the ordinary case and the label alone cannot tell them apart.
+          // It is also what the row shows on hover, since a long title is
+          // truncated to the width of the rail.
+          tooltip: `${project.title} - ${project.clientName}`,
+        })),
+      },
+    ],
   };
 }
 

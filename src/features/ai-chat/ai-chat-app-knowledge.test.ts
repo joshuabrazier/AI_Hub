@@ -31,6 +31,26 @@ describe("appKnowledgePrompt", () => {
     expect(prompt).toContain("/admin/timesheets/clients");
   });
 
+  it("descends into COLLAPSIBLE groups, so nesting a screen does not hide it", () => {
+    // The three AI features live under an "AI" group rather than at the top
+    // level. appKnowledgePrompt walks children as well as top-level entries,
+    // and if it stopped at the top the assistant would quietly lose the
+    // ability to tell anybody where transcription is - with nothing failing.
+    // That is the whole reason this is pinned: the regression is invisible.
+    const prompt = appKnowledgePrompt(USER_ROLES.ADMIN, "Philipp Rohlfshagen");
+
+    expect(prompt).toContain("AI > ");
+    expect(prompt).toContain("/admin/transcription");
+    expect(prompt).toContain("/admin/summaries");
+    expect(prompt).toContain("/admin/ai-chat");
+
+    // And the same for a member, whose tree carries the same group.
+    const memberPrompt = appKnowledgePrompt(USER_ROLES.MEMBER, "Philipp Rohlfshagen");
+
+    expect(memberPrompt).toContain("/portal/transcription");
+    expect(memberPrompt).toContain("/portal/summaries");
+  });
+
   it("never mentions an admin path to a member", () => {
     const prompt = appKnowledgePrompt(USER_ROLES.MEMBER, "Someone");
 

@@ -47,6 +47,7 @@ import {
   type TimeEntryDTO,
 } from "../delivery.types";
 import { BoardTaskAttachments } from "./board-task-attachments";
+import { AssigneeMenuItems } from "./board-assign";
 import { BoardTaskEditDialog } from "./board-task-edit-dialog";
 import type { MoveTaskHandler } from "./board-task-card";
 import { BoardTimeEntryDialog } from "./board-time-entry-dialog";
@@ -231,6 +232,7 @@ export function BoardTaskPanel({
   onDelete,
   onMove,
   onAdjustEstimate,
+  onAssign,
 }: {
   task: TaskCardDTO;
   boardColumn: TaskColumn;
@@ -252,6 +254,12 @@ export function BoardTaskPanel({
    * dialog with it mid-edit.
    */
   onAdjustEstimate: (task: TaskCardDTO) => void;
+  /**
+   * `onDone` runs after the write and the board refresh. The panel passes its
+   * own refetch, because router.refresh() rebuilds the BOARD and this panel
+   * holds a separately fetched copy of the same card.
+   */
+  onAssign: (task: TaskCardDTO, assigneeId: string | null, onDone?: () => void) => void;
 }) {
   const [detail, setDetail] = useState<TaskDetailDTO | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -398,10 +406,48 @@ export function BoardTaskPanel({
             }
           />
 
-          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <UserRound size={14} aria-hidden="true" />
-            {card.assigneeName ?? "Unassigned"}
-          </span>
+          {/* -----------------------------------------------------------
+              WHO HAS IT, AS A CONTROL.
+
+              Two changes met here. The assignee used to be a plain text row
+              inside a description list headed "Effort" - which is not what
+              an assignee is - and the only way to CHANGE it was the Edit
+              button beside the Description heading three sections down, a
+              button that edits the whole task from a place that says
+              otherwise. That list is gone and Edit is in the menu on the
+              right, so this is where both halves land: the fact and the way
+              to change it, next to the column, which is the same shape.
+              ----------------------------------------------------------- */}
+          {canEditTasks ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                {/* Disabled while a write is in flight, like the column
+                    control beside it. Somebody who sees nothing change
+                    should not be able to stack a second assignment on the
+                    first. */}
+                <Button type="button" variant="outline" size="sm" disabled={isPending}>
+                  <UserRound size={14} aria-hidden="true" />
+                  {card.assigneeName ?? "Unassigned"}
+                  <ChevronDown size={14} aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-h-72 w-56 overflow-y-auto">
+                <AssigneeMenuItems
+                  members={members}
+                  assigneeId={card.assigneeId}
+                  // The refetch, so this panel's own copy of the card catches
+                  // up. The board behind it is refreshed by the workspace
+                  // either way.
+                  onAssign={(assigneeId) => onAssign(card, assigneeId, () => void refresh())}
+                />
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <UserRound size={14} aria-hidden="true" />
+              {card.assigneeName ?? "Unassigned"}
+            </span>
+          )}
 
           {canEditTasks ? (
             <div className="ml-auto">

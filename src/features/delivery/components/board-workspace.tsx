@@ -1,7 +1,6 @@
 "use client";
 
 import { useOptimistic, useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Layers, Plus } from "lucide-react";
@@ -21,11 +20,11 @@ import {
 } from "@/lib/data/kysely-database-types";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import type { ServerApiResponse } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
-import { deleteTaskAction, moveTaskAction } from "../delivery-board.actions";
+import { deleteTaskAction, moveTaskAction, updateTaskAction } from "../delivery-board.actions";
 import { deletePhaseAction, reorderPhasesAction } from "../delivery-setup.actions";
 import {
+  memberLabel,
   type BoardDTO,
   type BoardPhaseDTO,
   type PhaseDTO,
@@ -53,10 +52,15 @@ import type { BoardPhaseOption } from "./board-task-card";
 // -------------------------------------------------------------------
 // BoardWorkspace
 //
-// The two-column screen: the projects this person is on down the left, the
-// open one's board on the right. Deliberately the same shape as the
-// transcription workspace and AI chat, because they are the same kind of
-// screen and somebody who has used one should not have to learn another.
+// The board, and the whole width of the page. It used to be the right-hand
+// column of a two-column screen, with the projects this person is on listed
+// down the left - the same shape as the transcription workspace and AI chat.
+//
+// THAT LIST IS NOW IN THE SIDEBAR, under "Projects", so the in-page copy
+// was a second navigation to the same places sitting inside the first one,
+// costing 18rem of a screen whose entire job is columns of cards. A board
+// with four columns and a phase per section is the widest thing in this
+// app, and it was the one paying for a nav it no longer needed.
 //
 // WHICH PROJECT IS OPEN LIVES IN THE URL - it is the path segment the route
 // already carries - so a board is linkable, survives a refresh and works
@@ -81,19 +85,8 @@ import type { BoardPhaseOption } from "./board-task-card";
 // derives it from a role, and every write is re-checked there anyway.
 // -------------------------------------------------------------------
 
-/** One entry in the left-hand list. The href is built on the server, by role. */
-export type BoardProjectLink = {
-  id: string;
-  title: string;
-  clientName: string;
-  status: ProjectStatus;
-  href: string;
-};
-
 export function BoardWorkspace({
-  projects,
   project,
-  activeProjectId,
   projectStatus,
   board,
   phaseStats,
@@ -101,10 +94,8 @@ export function BoardWorkspace({
   yourName,
   yourUserId,
 }: {
-  projects: readonly BoardProjectLink[];
   /** This project's summary, folded into a catalogue for the estimate dialog. */
   project: ProjectSummaryDTO;
-  activeProjectId: string;
   projectStatus: ProjectStatus;
   board: BoardDTO;
   /** Per-phase totals from the project read, keyed up by phase id below. */
@@ -271,6 +262,42 @@ export function BoardWorkspace({
     );
   };
 
+  // -------------------------------------------------------------------
+  // ASSIGNING SOMEBODY, FROM THE BOARD OR THE PANEL.
+  //
+  // One write and a refresh, rather than an optimistic patch: the card shows
+  // a NAME, and the board only holds ids plus the name the server resolved -
+  // so drawing it optimistically would mean looking the name up here, which
+  // is a second answer to what somebody is called. A move is optimistic
+  // because a drag has already visibly happened and snapping back reads as
+  // broken; a menu choice has not.
+  //
+  // `onDone` IS NOT OPTIONAL DECORATION. router.refresh() rebuilds the board,
+  // but the task panel holds its own fetched copy of the card and is keyed on
+  // an id that does not change - so it reconciles rather than remounting and
+  // keeps showing the old assignee. The panel passes its own refetch here.
+  // Without it the two halves of one screen disagree, and worse: the guard
+  // below then compares against that stale copy, so putting a mistaken
+  // assignment BACK does nothing at all and says nothing about it.
+  //
+  // The service re-checks the assignee against project_members, so a stale
+  // menu naming somebody since removed is refused in words rather than
+  // written.
+  // -------------------------------------------------------------------
+  const assignTask = (task: TaskCardDTO, assigneeId: string | null, onDone?: () => void) => {
+    if (task.assigneeId === assigneeId) return;
+
+    setPendingTaskId(task.id);
+
+    const who = assigneeId === null ? null : members.find((member) => member.userId === assigneeId);
+
+    run(
+      () => updateTaskAction({ taskId: task.id, assigneeId }),
+      who ? `Assigned to ${memberLabel(who)}` : "Assignee removed",
+      onDone,
+    );
+  };
+
   const confirmDeleteTask = () => {
     if (!deletingTask) return;
 
@@ -310,49 +337,19 @@ export function BoardWorkspace({
 
   return (
     <>
-      <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
-        {/* Projects. Membership decides what is in this list, which is why
-            it is the same list in all three areas. */}
-        <aside className="flex min-w-0 flex-col gap-3">
-          <nav aria-label="Your projects">
-            <ul className="space-y-1">
-              {projects.map((project) => {
-                const isActive = project.id === activeProjectId;
-
-                return (
-                  <li key={project.id}>
-                    <Link
-                      href={project.href}
-                      aria-current={isActive ? "page" : undefined}
-                      className={cn(
-                        "block rounded-lg px-3 py-2 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-                        isActive ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted",
-                      )}
-                    >
-                      {/* Project titles and client names are typed by
-                          people. Text nodes, always. */}
-                      <span className="block truncate text-sm font-medium">{project.title}</span>
-                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                        {project.clientName}
-                        {project.status === PROJECT_STATUSES.ACTIVE
-                          ? ""
-                          : ` - ${PROJECT_STATUS_LABELS[project.status]}`}
-                      </span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </nav>
-        </aside>
-
-        {/* The open project's board */}
-        <section className="min-w-0 space-y-4">
+      <section className="min-w-0 space-y-4">
           {/* THE ROLLUP LINE HAS GONE FROM HERE. It said "6h logged of 240h
               estimated" directly beneath a page header that said nothing at
               all, so the figure is in the header now - see the `metric` prop
-              on this page - and this row is left with just the controls it
-              always had. One fewer line, and the header earns its height. */}
+              on delivery-board.page - and this row is left with just the
+              controls it always had. One fewer line, and the header earns
+              its height.
+
+              The project list that used to sit to the left of this section
+              has gone too, for a different reason: the rail lists the
+              projects themselves now, so it was a second navigation to the
+              same screens sitting inside the first one and costing 18rem of
+              the widest page in the app. */}
           <div className="flex flex-wrap items-center justify-end gap-3">
             <div className="flex flex-wrap items-center gap-2">
               {projectStatus === PROJECT_STATUSES.ACTIVE ? null : (
@@ -413,6 +410,8 @@ export function BoardWorkspace({
                   onOpenTask={(task) => setOpenTaskId(task.id)}
                   onLogTime={setLoggingTime}
                   onDeleteTask={setDeletingTask}
+                  onAssignTask={assignTask}
+                  members={members}
                   onMoveTask={moveTask}
                   onAddTask={(phaseId, boardColumn) => setAddingTo({ phaseId, boardColumn })}
                   onRenamePhase={(target) => setPhaseDialog({ phase: target })}
@@ -424,8 +423,7 @@ export function BoardWorkspace({
               ))}
             </div>
           )}
-        </section>
-      </div>
+      </section>
 
       {openTask ? (
         <BoardTaskPanel
@@ -450,6 +448,7 @@ export function BoardWorkspace({
           onDelete={setDeletingTask}
           onMove={moveTask}
           onAdjustEstimate={setAdjustingTask}
+          onAssign={assignTask}
         />
       ) : null}
 

@@ -29,6 +29,7 @@ import {
   BUDGET_GROUP_NAME_MAX_CHARS,
   MAX_PLANNED_HOURS,
   formatMinutesAsHours,
+  memberLabel,
   type BudgetGroupReportDTO,
   type ProjectMemberDTO,
 } from "../delivery.types";
@@ -96,14 +97,6 @@ type Props = {
   /** The project's own members. Only they may be put in one of its groups. */
   members: ProjectMemberDTO[];
 };
-
-// The group report carries a name and no address; a project member carries
-// both. Either is enough to draw a row, and a de-identified account has
-// neither - this app de-identifies dormant accounts in place rather than
-// deleting them, so something still has to render for one.
-function memberLabel(member: { name: string | null; email?: string | null }): string {
-  return member.name ?? member.email ?? "Account with no name on record";
-}
 
 export function SetupBudgetGroupsPanel({ projectId, groups, members }: Props) {
   const [addOpen, setAddOpen] = useState(false);

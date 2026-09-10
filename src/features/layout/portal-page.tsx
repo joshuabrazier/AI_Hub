@@ -19,8 +19,15 @@ import { cn } from "@/lib/utils";
 //
 // It expects `headerHidden`. A full page with a visible header would run the
 // eyebrow and title flush into the window edge, which is not a look anything
-// here wants; if a workspace ever needs a header, give the header its own
-// gutters rather than handing the gutters back to the whole page.
+// here wants.
+//
+// `size="wide"` is the middle setting, and the one most screens that feel
+// cramped actually want: the gutters and the header stay exactly as they are,
+// and only the max-width cap goes. For content that is WIDE BY NATURE and has
+// no reading width to protect - the delivery board is four columns per phase,
+// and max-w-7xl was stranding them in the middle of a large window. A table or
+// a form is not this: those want the cap, because a row of text 2000px across
+// is harder to read, not easier.
 // -------------------------------------------------------------------
 export default function PortalPage({
   eyebrow = "Admin",
@@ -82,7 +89,7 @@ export default function PortalPage({
   description?: string;
   actions?: React.ReactNode;
   metric?: { value: string; label: string; tone?: "default" | "caution" };
-  size?: "default" | "narrow" | "full";
+  size?: "default" | "narrow" | "wide" | "full";
   fill?: boolean;
   headerHidden?: boolean;
   children: React.ReactNode;
@@ -106,8 +113,9 @@ export default function PortalPage({
           "mx-auto w-full",
           size === "narrow" && "max-w-2xl",
           size === "default" && "max-w-7xl",
-          // "full" gets no cap at all - see the note at the top.
-          size === "full" && "max-w-none",
+          // "wide" and "full" both drop the cap. They differ in the gutters,
+          // which "wide" keeps - see the note at the top.
+          (size === "wide" || size === "full") && "max-w-none",
           fill && "flex min-h-0 flex-1 flex-col",
         )}
       >

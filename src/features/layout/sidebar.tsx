@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 
-import { isCollapsible, type NavCollapsible, type NavLink as NavLinkEntry } from "./nav-items";
+import { isCollapsible, type NavCollapsible, type NavGroup, type NavLink as NavLinkEntry } from "./nav-items";
 import { useNavGroups } from "./useNavGroups";
 import { useSidebar } from "./sidebar-context";
 import { NavigationPendingReporter } from "./navigation-pending";
@@ -17,39 +17,41 @@ import { cn } from "@/lib/utils";
 // THE RAIL
 // ===================================================================
 //
-// THE RAIL IS COLOURED, AND IT TOOK TWO GOES TO GET HERE. Both are recorded
-// because the second one is only defensible against the first.
+// THE RAIL IS QUIET, AND IT TOOK THREE GOES TO ACCEPT THAT.
 //
-// It was `bg-primary dark:bg-sidebar` hardcoded in this file, with rows in
+// It was `bg-primary dark:bg-sidebar` hardcoded here, with rows in
 // `text-white/85`, `bg-white/20` and `border-white/15`. Two things were wrong
-// with that and only one of them was the colour: every --sidebar-* token was
-// dead in light mode, and a rail painted in `--primary` with literal white on
-// it breaks the moment somebody's brand colour is a light one - the nav goes
-// invisible and nothing in the token file explains why. This repo's rule is
-// that rebranding is one file.
+// and only one of them was the colour: every --sidebar-* token was dead in
+// light mode, and a rail painted in `--primary` with literal white on it goes
+// unreadable the moment somebody's brand colour is a light one. This repo's
+// rule is that rebranding is one file.
 //
-// The fix for that was to make the rail the near-white surface the tokens
-// described. THAT WAS A WORSE SCREEN. A near-white rail beside a white canvas
-// took out the last large area of colour in the app, and what was left was
-// one value everywhere with grey labels on it. "Predominantly white" is a
-// good argument for a canvas and a bad one for the chrome around it: the rail
-// is what frames the page, and a frame needs to be a different thing from
-// what it frames.
+// Replacing it with the near-white surface the tokens describe left the app
+// with no large area of colour anywhere, because the same pass had also taken
+// the tint off the tables and the fill off the dashboard chips. Reading that
+// as "the rail needs colour back" produced a deep teal slab that was worse
+// than either - the frame shouting over the thing it frames, and a second
+// teal column beside it on the chat screen.
 //
-// So: a deep teal rail, and the colours live in the tokens. The component
-// knows the names `--sidebar`, `--sidebar-foreground`,
-// `--sidebar-muted-foreground`, `--sidebar-accent` and `--sidebar-mark`, and
-// not one value. That keeps the real fix from the first attempt and drops the
-// part of it that was wrong.
+// THE COLOUR BELONGS IN THE CONTENT. The stat chips, the header metric, the
+// table bands and the active row below carry it; the rail's whole job is to
+// stay out of the way of the screen it borders. So it is near-white,
+// separated by its border rather than by a fill, which is what the note on
+// --sidebar said from the start.
+//
+// What survives from the detour is the token SHAPE: this component knows
+// `--sidebar`, `--sidebar-foreground`, `--sidebar-muted-foreground`,
+// `--sidebar-accent` and `--sidebar-mark` by name and not one value. That was
+// the real fix, and it is independent of which way the colours go.
 //
 // -------------------------------------------------------------------
-// THE MARK is `--sidebar-mark`, not `--signal`. Signal is documented as the
-// brighter teal for "the active nav item" and was used in exactly one place
-// in the app - but it was chosen to read on WHITE, and on a deep teal rail it
-// sits near enough to the background to vanish. A mark you have to hunt for
-// is not a mark. The rail carries its own, bright enough to read as a light
-// on it, and the active row takes a lighter fill of the rail's own hue
-// underneath it.
+// THE MARK is `--sidebar-mark`, which resolves to `--signal`. The palette
+// documents signal as the brighter teal for exactly this - "the active nav
+// item" - and it had one use in the whole app, an icon picker. It is indirect
+// rather than used directly because the rail is the thing that has to be able
+// to change its mark when its surface changes: on the teal rail signal
+// vanished into the background, and the indirection is what let that be a
+// one-line answer.
 //
 // -------------------------------------------------------------------
 // IT IS SECTIONED NOW. `useNavGroups` has always returned groups with labels,
@@ -58,17 +60,9 @@ import { cn } from "@/lib/utils";
 // Delivery, Projects, Time and billing, Settings - flattened into one
 // fifteen-item list, which is a scan every single time rather than a look.
 //
-// THE LABELS ARE SENTENCE CASE IN THE BODY FACE, and that is the second
-// reversal in this file. They were 10px Plex Mono, uppercase, letter-spaced
-// to 0.18em, on the grounds that the palette reserves the mono face for
-// "eyebrows, labels". On screen, tracked mono uppercase is the most
-// identifiable machine-generated label treatment there is, and it made the
-// section names harder to read than the links beneath them. Weight and
-// colour separate them instead.
-//
-// Collapsed, there is no room for a label, so a group becomes a hairline rule
-// and the name goes `sr-only` - the grouping still reads and is still
-// announced; it just stops being drawn.
+// The sections render through NavGroupBlock below, which also holds the note
+// on their type treatment and on why the grouping is programmatic rather
+// than only drawn.
 //
 // -------------------------------------------------------------------
 // THE ROWS HAVE HONEST GEOMETRY. A row was `h-10` containing a `size-10` icon
@@ -85,22 +79,24 @@ import { cn } from "@/lib/utils";
 const ROW =
   "group relative flex items-center rounded-md text-sm transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring/60 focus-visible:outline-none";
 
-// ON THE RAIL'S OWN TOKENS, NOT THE PAGE'S. `text-muted-foreground` was
-// correct while the rail was near-white and is unreadable on a deep teal
-// one - which is exactly the trap the original `text-white/85` was in, just
-// pointing the other way. `--sidebar-muted-foreground` is the rail's idle
-// ink and is measured against the rail.
+// ON THE RAIL'S OWN TOKENS, NOT THE PAGE'S. The values happen to match
+// --muted-foreground and --accent in the light theme, and that is the point
+// of keeping them separate anyway: the rail sits on #fcfdfd rather than
+// #ffffff, so a tint tuned against white is a step too weak here, and
+// whoever changes the rail's surface next needs one place to change its ink
+// with it. That was the actual defect in the original `text-white/85` rail -
+// not the colour, but that the ink was stated in the component.
 const ROW_IDLE =
-  "text-sidebar-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground";
-const ROW_ACTIVE = "bg-sidebar-accent font-semibold text-sidebar-accent-foreground";
+  "text-sidebar-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
+
+// THE CURRENT PAGE IS THE ONE COLOURED THING IN THE RAIL. `text-primary`
+// rather than the accent foreground, because on a quiet near-white rail the
+// fill alone is a very small difference to spot, and this is the row people
+// look for first. Paired with the bar in the margin below.
+const ROW_ACTIVE = "bg-sidebar-accent font-semibold text-primary";
 
 /**
  * The "you are here" bar: 3px in the rail's own margin.
- *
- * `--sidebar-mark` rather than `--signal`. Signal is a mid teal chosen to
- * read on WHITE, and on a deep teal rail it is close enough to the
- * background to disappear - a mark that needs hunting for is not a mark. The
- * rail carries its own, bright enough to read as a light on it.
  *
  * A pseudo-element rather than a real node so it cannot be tabbed to or read
  * out - the row already carries `aria-current`, which is what announces this.
@@ -137,7 +133,11 @@ function NavLinkRow({
       )}
     >
       <Icon size={18} aria-hidden="true" className="shrink-0" />
-      {!collapsed && <span className="min-w-0 truncate">{entry.label}</span>}
+      {/* min-w-0 AND flex-1 are both load-bearing: a flex child defaults to
+          min-width:auto and will not go narrower than its own text, so
+          `truncate` alone does nothing and a long project name runs under the
+          rail's edge. flex-1 is what makes the rail's edge the boundary. */}
+      {!collapsed && <span className="min-w-0 flex-1 truncate">{entry.label}</span>}
       <NavigationPendingReporter />
     </Link>
   );
@@ -172,8 +172,40 @@ function NavCollapsibleRow({
 }) {
   const Icon = entry.icon;
   const childActive = entry.children.some((child) => child.href === pathname);
-  // Open by default when one of its children is the current page.
-  const [open, setOpen] = useState(childActive);
+  // Open by default when one of its children is the current page, unless the
+  // group says otherwise - see NavCollapsible.defaultOpen. State lives here
+  // rather than in a store, so it survives navigation (the sidebar is mounted
+  // once, in the root layout) and resets on a reload.
+  const [open, setOpen] = useState(entry.defaultOpen ?? childActive);
+
+  // -----------------------------------------------------------------
+  // RE-OPEN WHEN NAVIGATION LANDS INSIDE A SHUT GROUP.
+  //
+  // useState above is a SEED, read once. The sidebar is mounted by the root
+  // layout and never unmounts, so without this a group shut on one page stays
+  // shut after navigating into it - and the current page's row is then
+  // invisible, with the highlight that says "you are here" hidden behind a
+  // triangle. Somebody clicking Summaries from Home would watch nothing at
+  // all happen in the nav.
+  //
+  // ADJUSTED DURING RENDER RATHER THAN IN AN EFFECT. React documents this
+  // shape for "a prop changed and some state should follow it", and the
+  // react-hooks/set-state-in-effect rule exists to push you to it: an effect
+  // would paint the shut group first and then open it, which is a visible
+  // flicker on every navigation into a group.
+  //
+  // ONE DIRECTION ONLY. It opens on arrival and never closes on departure, so
+  // a group somebody deliberately shut stays shut until they go into it -
+  // rather than a nav that reaches out and collapses a section while they are
+  // reading it. Shutting a group you are CURRENTLY inside still works, since
+  // this only fires on the render where childActive CHANGES.
+  // -----------------------------------------------------------------
+  const [wasChildActive, setWasChildActive] = useState(childActive);
+
+  if (childActive !== wasChildActive) {
+    setWasChildActive(childActive);
+    if (childActive) setOpen(true);
+  }
 
   const groupButton = (
     <button
@@ -193,7 +225,7 @@ function NavCollapsibleRow({
       <Icon size={18} aria-hidden="true" className="shrink-0" />
       {!collapsed && (
         <>
-          <span className="min-w-0 truncate">{entry.label}</span>
+          <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
           <ChevronRight
             size={14}
             aria-hidden="true"
@@ -237,6 +269,12 @@ function NavCollapsibleRow({
                 href={child.href}
                 aria-current={active ? "page" : undefined}
                 aria-label={child.label}
+                // The full name on hover, and ONLY when the rail is expanded.
+                // A collapsed rail already wraps this row in a Tooltip below,
+                // and setting both puts two bubbles on screen with different
+                // text in them. Expanded is exactly the case the native one is
+                // for, because that is when the label is truncated.
+                title={collapsed ? undefined : child.tooltip}
                 className={cn(
                   ROW,
                   "h-8",
@@ -248,7 +286,7 @@ function NavCollapsibleRow({
                 )}
               >
                 <ChildIcon size={collapsed ? 18 : 15} aria-hidden="true" className="shrink-0" />
-                {!collapsed && <span className="min-w-0 truncate">{child.label}</span>}
+                {!collapsed && <span className="min-w-0 flex-1 truncate">{child.label}</span>}
                 <NavigationPendingReporter />
               </Link>
             );
@@ -270,11 +308,100 @@ function NavCollapsibleRow({
   );
 }
 
+// -------------------------------------------------------------------
+// ONE SECTION OF THE RAIL.
+//
+// Extracted because there are now two places that render sections - the
+// scrolling list and the pinned footer - and a footer that rendered its rows
+// loose would lose its name and its rule, reading as two orphans under a
+// line.
+//
+// THE GROUPING IS PROGRAMMATIC, NOT JUST VISUAL. `role="group"` with
+// `aria-labelledby` means the section name reaches a screen reader in BOTH
+// states. Collapsed there is no room to draw the label, and the first version
+// of this simply dropped it for a rule - so the grouping that makes a
+// fifteen-item nav readable existed only for people who could see the width
+// it was drawn in. The label goes `sr-only` there instead, and the rule that
+// stands in for it is `aria-hidden`, because it is now decoration rather than
+// the only signal.
+//
+// A REAL LIST, TOO. These were bare divs, so the rail announced as a run of
+// links with no count and no structure. `<ul>`/`<li>` inside a `<nav>` is
+// what a navigation tree is.
+// -------------------------------------------------------------------
+function NavGroupBlock({
+  group,
+  collapsed,
+  pathname,
+  isFirst,
+}: {
+  group: NavGroup;
+  collapsed: boolean;
+  pathname: string;
+  /** Suppresses the leading rule and the extra top padding. */
+  isFirst: boolean;
+}) {
+  const labelId = `nav-group-${group.label.replace(/\s+/g, "-").toLowerCase()}`;
+
+  return (
+    <div role="group" aria-labelledby={labelId}>
+      {collapsed && !isFirst && <hr aria-hidden="true" className="mx-3 my-2 border-sidebar-border" />}
+
+      {/* SENTENCE CASE, IN THE BODY FACE. This was 10px Plex Mono, uppercase,
+          letter-spaced to 0.18em, and tracked mono uppercase is the single
+          most identifiable machine-generated label treatment there is. It
+          also made the section names harder to read than the links under
+          them, which is backwards for the thing telling you where you are.
+          Weight and colour do the separating instead. */}
+      <p
+        id={labelId}
+        className={cn(
+          collapsed
+            ? "sr-only"
+            : cn("px-2.5 pb-1 text-xs font-semibold text-foreground/70", isFirst ? "pt-1" : "pt-5"),
+        )}
+      >
+        {group.label}
+      </p>
+
+      <ul className="space-y-0.5">
+        {group.items.map((entry) => (
+          <li key={isCollapsible(entry) ? entry.label : entry.href}>
+            {isCollapsible(entry) ? (
+              <NavCollapsibleRow entry={entry} collapsed={collapsed} pathname={pathname} />
+            ) : (
+              <NavLinkRow entry={entry} collapsed={collapsed} active={pathname === entry.href} />
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
   const { collapsed } = useSidebar();
 
   const navGroups = useNavGroups();
+
+  // -----------------------------------------------------------------
+  // TWO LISTS, NOT ONE. Everything scrolls except the groups marked
+  // `footer`, which sit below the scroll and are always on screen.
+  //
+  // Ordering alone would not do it. A footer group is last in the array too,
+  // so with a short nav the two are indistinguishable - but the rail holds a
+  // row per project, and once the list is taller than the window an
+  // order-only account row is below the fold, which is exactly the moment
+  // somebody is looking for it.
+  //
+  // SPLIT AS GROUPS RATHER THAN FLATTENED TO ENTRIES, which is the one change
+  // from the version this came from: the rail is sectioned now, so a footer
+  // that dropped its group would lose its name and its rule and read as two
+  // loose rows under a line.
+  // -----------------------------------------------------------------
+  const scrollGroups = navGroups.filter((group) => !group.footer);
+  const footerGroups = navGroups.filter((group) => group.footer);
 
   return (
     <aside
@@ -295,70 +422,32 @@ export default function Sidebar() {
         // when collapsed and a scrollbar there is most of a row's width.
         className="flex-1 overflow-x-hidden overflow-y-auto pt-2 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        {/* -----------------------------------------------------------
-            THE GROUPING IS PROGRAMMATIC, NOT JUST VISUAL.
-
-            `role="group"` with `aria-labelledby` means the section name
-            reaches a screen reader in BOTH states. Collapsed there is no
-            room to draw the label, and the first version of this simply
-            dropped it and put a rule there instead - so the grouping that
-            makes a fifteen-item nav readable existed only for people who
-            could see the width to draw it in. The label is `sr-only` when
-            collapsed rather than absent, and the rule that stands in for it
-            is `aria-hidden` because it is now decoration rather than the
-            only signal.
-
-            A REAL LIST, TOO. These were bare divs, so the rail announced as
-            a run of links with no count and no structure. `<ul>`/`<li>`
-            inside a `<nav>` is what a navigation tree is.
-            ----------------------------------------------------------- */}
-        {navGroups.map((group, groupIndex) => {
-          const labelId = `nav-group-${group.label.replace(/\s+/g, "-").toLowerCase()}`;
-
-          return (
-            <div key={group.label} role="group" aria-labelledby={labelId}>
-              {collapsed && groupIndex > 0 && <hr aria-hidden="true" className="mx-3 my-2 border-sidebar-border" />}
-
-              {/* SENTENCE CASE, IN THE BODY FACE. This was 10px Plex Mono,
-                  uppercase, letter-spaced to 0.18em - and tracked mono
-                  uppercase is the single most identifiable
-                  machine-generated label treatment there is. It also made
-                  the section names harder to read than the links under
-                  them, which is backwards for the thing that tells you
-                  where you are in a fifteen-item nav.
-
-                  Weight and colour do the separating instead: semibold, at
-                  the rail's brightest ink, against links that are dimmer
-                  and lighter. */}
-              <p
-                id={labelId}
-                className={cn(
-                  collapsed
-                    ? "sr-only"
-                    : cn(
-                        "px-2.5 pb-1 text-xs font-semibold text-sidebar-foreground/70",
-                        groupIndex === 0 ? "pt-1" : "pt-5",
-                      ),
-                )}
-              >
-                {group.label}
-              </p>
-
-              <ul className="space-y-0.5">
-                {group.items.map((entry) => (
-                  <li key={isCollapsible(entry) ? entry.label : entry.href}>
-                    {isCollapsible(entry) ? (
-                      <NavCollapsibleRow entry={entry} collapsed={collapsed} pathname={pathname} />
-                    ) : (
-                      <NavLinkRow entry={entry} collapsed={collapsed} active={pathname === entry.href} />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })}
+        {scrollGroups.map((group, groupIndex) => (
+          <NavGroupBlock
+            key={group.label}
+            group={group}
+            collapsed={collapsed}
+            pathname={pathname}
+            isFirst={groupIndex === 0}
+          />
+        ))}
       </nav>
+
+      {/* Below the scroll, so it stays put however long the list above it
+          gets. `shrink-0` is what stops flex compressing it when the nav is
+          taller than the rail - without it the row would be squashed to
+          nothing rather than the list scrolling. */}
+      {footerGroups.length > 0 && (
+        // `border-sidebar-border`, not `border-white/15`. That worked while
+        // the rail was a dark slab and is invisible on a near-white one -
+        // the same class of bug as the row ink, and the reason the rail's
+        // edges are a token now.
+        <div className="shrink-0 border-t border-sidebar-border py-2">
+          {footerGroups.map((group) => (
+            <NavGroupBlock key={group.label} group={group} collapsed={collapsed} pathname={pathname} isFirst />
+          ))}
+        </div>
+      )}
     </aside>
   );
 }

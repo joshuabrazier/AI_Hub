@@ -1,11 +1,8 @@
 import "server-only";
 
 import { requireUserRole } from "@/lib/auth/session-auth-server";
-import { USER_ROLES } from "@/lib/data/kysely-database-types";
-import {
-  getPendingMemberUserInvitationsRepo,
-  getPendingStaffUserInvitationsRepo,
-} from "@/lib/data/repositories/user-invitations.repository";
+import { PROJECT_STATUSES, USER_ROLES } from "@/lib/data/kysely-database-types";
+import { getAllProjectsRepo } from "@/lib/data/repositories/projects.repository";
 import { getActiveStaffUsersRepo, getMemberUsersRepo } from "@/lib/data/repositories/users.repository";
 import { handleError } from "@/lib/handle-errors";
 
@@ -33,11 +30,14 @@ export async function getAdminDashboardService(): Promise<AdminDashboardDTO> {
   try {
     const user = await requireUserRole([USER_ROLES.ADMIN]);
 
-    const [members, staff, staffInvitations, memberInvitations] = await Promise.all([
+    const [members, staff, projects] = await Promise.all([
       getMemberUsersRepo(),
       getActiveStaffUsersRepo(),
-      getPendingStaffUserInvitationsRepo(),
-      getPendingMemberUserInvitationsRepo(),
+      // Archived excluded at the query, the rest counted below - the same
+      // shape as the two reads above it, which also count from a list rather
+      // than asking for a number. Worth revisiting together if this page ever
+      // gets slow; one of the three is not the problem.
+      getAllProjectsRepo({ sort: "alphabetical", includeArchived: false }),
     ]);
 
     return {
@@ -48,7 +48,8 @@ export async function getAdminDashboardService(): Promise<AdminDashboardDTO> {
         // person still using the product.
         activeMembers: members.filter((member) => member.isActive && member.deidentifiedAt === null).length,
         activeStaff: staff.length,
-        pendingInvitations: staffInvitations.length + memberInvitations.length,
+        // On hold and completed are live rows and neither is work in flight.
+        activeProjects: projects.filter((project) => project.status === PROJECT_STATUSES.ACTIVE).length,
       },
     };
   } catch (error) {

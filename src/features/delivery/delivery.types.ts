@@ -2306,6 +2306,142 @@ export type MyWorkItemDTO = {
   loggedMinutes: number;
 };
 
+// -------------------------------------------------------------------
+// WHAT A LANDING PAGE NEEDS TO SHOW SOMEBODY ABOUT THEIR OWN WORK.
+//
+// Assembled from three reads that already exist and are already tested -
+// getMyWorkService, getMyProjectsService and getTimesheetWeekService - so
+// nothing here is a new way to reach the data, and a figure on a dashboard
+// cannot disagree with the page it links to.
+//
+// EVERY FIGURE IS SERVER-SIDE. The cards format and never compute, which is
+// the same rule the timesheet grid follows: a dashboard that re-divides
+// minutes by sixty is how a tile and the screen behind it come to differ by
+// a rounding step.
+// -------------------------------------------------------------------
+export type WorkColumnCountsDTO = {
+  todo: number;
+  inProgress: number;
+  blocked: number;
+};
+
+export type MyDeliverySummaryDTO = {
+  // Not-done tasks assigned to the caller, ordered by ORDER_OF_ATTENTION -
+  // blocked, then in progress, then to do. The full list, so a count and the
+  // rows below it are the same set.
+  work: MyWorkItemDTO[];
+  counts: WorkColumnCountsDTO;
+  projectCount: number;
+  week: {
+    // 'YYYY-MM-DD' - the week the service settled on, which is what the
+    // heading and the timesheet link both read from.
+    weekStart: string;
+    dates: string[];
+    dayTotalMinutes: number[];
+    totalMinutes: number;
+  };
+};
+
+// -------------------------------------------------------------------
+// THE ORDER A WORK LIST IS READ IN, and it is not the board's order.
+//
+// A board is arranged by where work has got to. A list of what is waiting on
+// somebody is arranged by what needs them FIRST, and blocked is top because
+// it is the only column where the next move is usually a conversation rather
+// than the work itself - it is the one that sits untouched for a fortnight
+// if nothing surfaces it.
+//
+// Exported and pure so the ordering is tested rather than inspected. `done`
+// never reaches this: getMyWorkService excludes it, because a work list is
+// what remains.
+// -------------------------------------------------------------------
+const ORDER_OF_ATTENTION: Record<string, number> = {
+  [TASK_COLUMNS.BLOCKED]: 0,
+  [TASK_COLUMNS.IN_PROGRESS]: 1,
+  [TASK_COLUMNS.TODO]: 2,
+};
+
+export function byAttention(a: MyWorkItemDTO, b: MyWorkItemDTO): number {
+  const columns =
+    (ORDER_OF_ATTENTION[a.boardColumn] ?? Number.MAX_SAFE_INTEGER) -
+    (ORDER_OF_ATTENTION[b.boardColumn] ?? Number.MAX_SAFE_INTEGER);
+
+  if (columns !== 0) return columns;
+
+  // Then by project, so somebody scanning the list is not bounced between
+  // three clients on consecutive rows. localeCompare rather than < so names
+  // with accents sort where a reader expects.
+  const projects = a.projectTitle.localeCompare(b.projectTitle);
+
+  if (projects !== 0) return projects;
+
+  // A stable last resort. Two tasks with the same title on the same project
+  // is possible, so this falls through to the id rather than returning 0 for
+  // rows that are not the same row.
+  return a.title.localeCompare(b.title) || a.taskId.localeCompare(b.taskId);
+}
+
+// -------------------------------------------------------------------
+// HOW MANY ROWS THE "WAITING ON YOU" CARD SHOWS.
+//
+// A landing page card is a SUMMARY. Somebody a year into a busy project can
+// hold thirty open tasks, and a card that rendered all of them would push the
+// rest of the dashboard off the screen - the week, the quick links, anything
+// added later - on exactly the account that most needs a dashboard.
+//
+// FIVE, and the number is here rather than in the component so it is one
+// decision with a test on it. Enough to read as a to-do list, few enough that
+// the card stays the height of the one beside it.
+//
+// TRUNCATION IS NEVER SILENT, which is the property that actually matters and
+// the reason this returns `remaining` rather than just a slice. The tile above
+// the card counts the WHOLE set, and the card says "N more tasks" and links to
+// the page that lists them. A card that quietly showed the first five and said
+// nothing would have somebody believing they were done when they were not,
+// which is worse than a long card.
+// -------------------------------------------------------------------
+export const WORK_CARD_ROWS = 5;
+
+export function visibleWork(work: readonly MyWorkItemDTO[]): {
+  shown: MyWorkItemDTO[];
+  remaining: number;
+} {
+  const shown = work.slice(0, WORK_CARD_ROWS);
+
+  return { shown, remaining: work.length - shown.length };
+}
+
+// -------------------------------------------------------------------
+// HOW A PERSON READS IN A LIST, when their account may carry neither a name
+// nor an address.
+//
+// ONE DEFINITION. This rule was written out FOUR times across this feature -
+// and the four did not agree: two said "Unnamed member" and two said "Account
+// with no name on record", for the same account, on screens one click apart.
+//
+// The EMAIL is the fallback rather than an id, because it is what tells two
+// people with the same name apart, which is the whole reason ProjectMemberDTO
+// carries it. An id would be correct and useless.
+//
+// BOTH CAN BE MISSING, and that is a real row rather than a broken one: this
+// app DE-IDENTIFIES dormant accounts in place rather than deleting them,
+// because their time entries are billing history. So a member row with
+// neither a name nor an address still has to render as something, and the
+// third branch is what it renders as. Some callers also hold a shape carrying
+// a name and no address at all, which is why `email` is optional here.
+// -------------------------------------------------------------------
+export function memberLabel(member: { name: string | null; email?: string | null }): string {
+  return member.name ?? member.email ?? "Account with no name on record";
+}
+
+export function countByColumn(work: readonly MyWorkItemDTO[]): WorkColumnCountsDTO {
+  return {
+    todo: work.filter((item) => item.boardColumn === TASK_COLUMNS.TODO).length,
+    inProgress: work.filter((item) => item.boardColumn === TASK_COLUMNS.IN_PROGRESS).length,
+    blocked: work.filter((item) => item.boardColumn === TASK_COLUMNS.BLOCKED).length,
+  };
+}
+
 // Metadata only. The bytes live in Azure Blob and are streamed back through a
 // download route, never handed out as a signed URL - the same decision chat
 // attachments made, for the same reason: a signed URL is a bearer token that

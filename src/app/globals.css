@@ -275,47 +275,53 @@
   --rail-collapsed-w: 3.5rem;
 
   /* -----------------------------------------------------------------
-     THE RAIL IS COLOURED, AND THIS IS THE SECOND TIME THESE VALUES HAVE
-     MOVED - so both attempts are on the record.
+     THE RAIL IS A LIGHT SURFACE, and these values have now moved three
+     times, so the whole argument is on the record.
 
-     It began as `bg-primary` hardcoded in sidebar.tsx with `text-white/85`
-     rows, which meant these tokens were dead in light mode and a light
-     brand colour would have made the nav invisible. The fix for that was to
-     make the rail the near-white surface these tokens described (#fcfdfd,
-     separated by its border). On screen that was worse, not better: a
-     near-white rail against a white canvas removed the last large area of
-     colour in the app and left a page that was almost entirely one value,
-     with grey labels on it. "Predominantly white" is a good argument for a
-     CANVAS and a bad one for the chrome around it.
+     1. It began as `bg-primary` hardcoded in sidebar.tsx with `text-white/85`
+        rows - a mid-teal slab. That had a real defect underneath the colour:
+        these tokens were dead in light mode, and a rail painted in --primary
+        with literal white on it goes unreadable the moment somebody's brand
+        colour is a light one. This repo's rule is that rebranding is one file.
 
-     So: a DEEP teal rail, through the tokens. Deeper than --primary rather
-     than equal to it, for two reasons - white sits on it at a real contrast
-     ratio instead of a passable one, and a primary-filled button placed on
-     the rail is still visible against it.
+     2. So the rail became the near-white surface these tokens described. That
+        was RIGHT for the rail and wrong for the app: with the teal band gone
+        from the tables and the chips too, the whole screen was one value with
+        grey labels on it.
 
-     Measured: #dceff2 on #0f5866 is 8.9:1, and the idle row colour
-     (#a9cfd6) is 4.9:1 - both clear body text on their own surface, which
-     `text-white/85` over a mid teal did not.
+     3. Reading that as "the rail needs colour" was the mistake. A deep teal
+        rail put back a large block of chrome colour and it was worse than
+        either - the frame shouting over the thing it frames, and on the chat
+        screen a second teal column beside it.
 
-     The point is that the values are HERE now. A rebrand changes these six
-     lines and the nav follows; nothing in the component knows a colour.
+     THE FIX WAS NEVER HERE. The app needed colour in the CONTENT - the stat
+     chips, the header metric, the table bands, the active row - and the rail
+     needed to stay quiet and let it. So: near-white, separated by its border
+     rather than by a fill, which is what the note on this token said from the
+     start.
+
+     What survives from the detour is the token SHAPE. The component knows the
+     names and not one value, so the rail's ink is stated here per theme -
+     which is the part the original hardcoded version got wrong.
      ----------------------------------------------------------------- */
-  --sidebar: #0f5866;
-  --sidebar-foreground: #dceff2;
-  /* The idle row. Dimmer than the foreground so the active one stands out,
-     but still readable on its own - this is the replacement for white/85. */
-  --sidebar-muted-foreground: #a9cfd6;
+  --sidebar: #fcfdfd;
+  --sidebar-foreground: #0f1a1c;
+  /* The idle row. The same value as --muted-foreground, so a nav label and a
+     description elsewhere on the page read as the same kind of text. */
+  --sidebar-muted-foreground: #41565a;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
-  /* Hover and the current page. A lighter step of the same hue rather than
-     translucent white, which is what let the old rail drift. */
-  --sidebar-accent: #17707f;
-  --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #1b6f7e;
-  /* The "you are here" mark. Bright enough to read as a light against the
-     rail - --signal is too near the rail's own value to register on it. */
-  --sidebar-mark: #5fd8e8;
-  --sidebar-ring: var(--sidebar-mark);
+  /* Hover and the current page. A step STRONGER than --accent, because that
+     one is tuned against #ffffff and this sits on #fcfdfd - the same tint
+     would be almost invisible here. */
+  --sidebar-accent: #e4eff1;
+  --sidebar-accent-foreground: #0f1a1c;
+  --sidebar-border: #ccdcdf;
+  /* The "you are here" mark. --signal is exactly this: the palette
+     documents it as the brighter teal for "the active nav item", chosen to
+     clear 3:1 on white as a graphical mark. */
+  --sidebar-mark: var(--signal);
+  --sidebar-ring: var(--primary);
 }
 
 /* Dark theme: designed, not inverted. The teals lighten so they stay legible
@@ -371,20 +377,19 @@
   --data-ok-surface: #10291d;
   --data-ok-text: #a7e8c2;
 
-  /* The dark theme keeps a near-black rail - a teal one here would be
-     LIGHTER than the page behind it, which inverts the relationship the
-     light theme is built on. The accent and the mark carry the colour
-     instead, which is the same division of labour, just the other way up. */
-  --sidebar: #0c1719;
+  /* A step darker than --card, so the rail sits BEHIND the page rather than
+     on it - the same relationship the light theme draws with #fcfdfd against
+     #ffffff, with the values the other way up. */
+  --sidebar: #0f1a1c;
   --sidebar-foreground: #e6eff0;
   --sidebar-muted-foreground: #93a7ab;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #05171a;
-  --sidebar-accent: #17454e;
-  --sidebar-accent-foreground: #eafaff;
-  --sidebar-border: #1d3236;
-  --sidebar-mark: #4fd6e6;
-  --sidebar-ring: var(--sidebar-mark);
+  --sidebar-accent: #1b2b2f;
+  --sidebar-accent-foreground: #e6eff0;
+  --sidebar-border: #243437;
+  --sidebar-mark: var(--signal);
+  --sidebar-ring: var(--primary);
 }
 
 /* -------------------------------------------------------------------

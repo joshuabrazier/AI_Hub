@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { test, expect } from "./helpers/test";
 
-import { getTeamRoleForUser, getUserIdByEmail, getUserInvitationStatusById, getUserRoleByEmail } from "./helpers/db";
+import { getUserInvitationStatusById, getUserRoleByEmail } from "./helpers/db";
 import { SEED_PASSWORD, Seeder } from "./helpers/seed";
 import { readEnvVar } from "./helpers/env";
 import { fillAndSubmit } from "./helpers/sign-in";
@@ -28,9 +28,9 @@ test.afterEach(async () => {
 // Accepting an invitation
 //
 // This is the only path that creates an account, and the only one that can
-// grant a role above 'member' or place somebody into a team. Everything it
-// grants comes from the stored invitation row - so these tests check the
-// STORED result (role, team membership), not what the page said.
+// grant a role above 'member'. Everything it grants comes from the stored
+// invitation row - so these tests check the STORED result (the role), not what
+// the page said.
 // -------------------------------------------------------------------
 test("an invited user can set a password and complete sign up", async ({ page, request }) => {
   seeder = new Seeder(request);
@@ -93,51 +93,6 @@ test("an invited user can set a password and complete sign up", async ({ page, r
 
   // ...and the invitation is marked completed so it can't be reused
   expect(await getUserInvitationStatusById(inviteToken)).toBe("completed");
-});
-
-// -------------------------------------------------------------------
-// Team placement comes off the invitation row an admin created, never off the
-// request. Accepting is what applies it - and membership is the app's security
-// boundary, so it is worth reading back from the database rather than trusting
-// that the flow said it worked.
-// -------------------------------------------------------------------
-test("an invitation carrying a team places the new account in that team", async ({ page, request }) => {
-  seeder = new Seeder(request);
-
-  const inviter = await seeder.user({ name: "E2E Inviter" });
-  const team = await seeder.team({ name: seeder.label("E2E Invited Team") });
-  const inviteeEmail = seeder.claimEmail(`e2e-team-invitee-${randomBytes(6).toString("hex")}@example.com`);
-  const inviteToken = await seeder.invitation({
-    inviter,
-    email: inviteeEmail,
-    name: "E2E Team Invitee",
-    team,
-    teamRole: "member",
-  });
-
-  await page.goto(`/accept-invite/${inviteToken}`);
-  await expect(page.getByRole("heading", { name: /welcome e2e team invitee/i })).toBeVisible({
-    timeout: ACTION_TIMEOUT,
-  });
-
-  await fillAndSubmit(page.getByRole("button", { name: /^login$/i }), async () => {
-    await page.getByLabel("Password", { exact: true }).fill(SEED_PASSWORD);
-    await page.getByLabel("Confirm Password", { exact: true }).fill(SEED_PASSWORD);
-  });
-  // Accepting signs them in and lands them in their role's area, which is
-  // the durable signal that the account was created - the toast races the
-  // redirect it fires alongside.
-  await expect(page).toHaveURL(/\/portal\/?$/, { timeout: ACTION_TIMEOUT });
-
-  const inviteeId = await getUserIdByEmail(inviteeEmail);
-  expect(inviteeId, "expected the invitee account to exist").toBeTruthy();
-
-  // In the team, and in it as an ordinary member - not as a manager of it.
-  expect(await getTeamRoleForUser(team.id, inviteeId as string)).toBe("member");
-
-  // Team membership is a grant inside one team. It does not widen the platform
-  // role, which the invitation set to 'member'.
-  expect(await getUserRoleByEmail(inviteeEmail)).toBe("member");
 });
 
 // No seeder here: a token that was never issued has no rows behind it, so

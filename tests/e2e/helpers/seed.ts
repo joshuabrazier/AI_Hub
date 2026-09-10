@@ -34,11 +34,6 @@ export type SeededUser = {
   totpSecret: string | null;
 };
 
-export type SeededTeam = {
-  id: string;
-  name: string;
-};
-
 // -------------------------------------------------------------------
 // Seeder
 //
@@ -64,8 +59,6 @@ export class Seeder {
   // order they are created in.
   private readonly notificationIds: string[] = [];
   private readonly invitationIds: string[] = [];
-  private readonly teamMemberIds: string[] = [];
-  private readonly teamIds: string[] = [];
   private readonly userIds: string[] = [];
   // Every address this seeder is responsible for, whether or not it still has
   // an account. Some of the trail an account leaves is keyed by ADDRESS rather
@@ -78,7 +71,7 @@ export class Seeder {
   private readonly claimedEmails: string[] = [];
 
   // A short unique tag so parallel workers never collide on an email or on a
-  // team name a spec asserts against.
+  // name a spec asserts against.
   private readonly stamp = `${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
 
   /** A label unique to this seeder, for names a spec needs to assert on. */
@@ -166,50 +159,6 @@ export class Seeder {
   }
 
   // -----------------------------------------------------------------
-  // A team. Teams are explicit in this model - nothing creates one implicitly -
-  // so a test that needs one says so.
-  // -----------------------------------------------------------------
-  async team(options?: { name?: string; description?: string; isActive?: boolean }): Promise<SeededTeam> {
-    const id = newId();
-    const name = options?.name ?? this.label(`E2E Team ${this.teamIds.length + 1}`);
-
-    await withClient((client) =>
-      client.query("INSERT INTO teams (id, name, description, is_active) VALUES ($1, $2, $3, $4)", [
-        id,
-        name,
-        options?.description ?? "Seeded by the end-to-end suite",
-        options?.isActive ?? true,
-      ]),
-    );
-    this.teamIds.push(id);
-
-    return { id, name };
-  }
-
-  // -----------------------------------------------------------------
-  // Put a user in a team. team_role is the role INSIDE the team: 'manager' is
-  // how an admin assigns a manager to a team, and it is what the manager area's
-  // scope is resolved from.
-  // -----------------------------------------------------------------
-  async addToTeam(
-    team: SeededTeam,
-    user: SeededUser,
-    teamRole: "manager" | "member" = "member",
-  ): Promise<string> {
-    const id = newId();
-
-    await withClient((client) =>
-      client.query(
-        "INSERT INTO team_members (id, team_id, user_id, team_role) VALUES ($1, $2, $3, $4::team_role)",
-        [id, team.id, user.id, teamRole],
-      ),
-    );
-    this.teamMemberIds.push(id);
-
-    return id;
-  }
-
-  // -----------------------------------------------------------------
   // A notification in one person's inbox. read_at NULL is what "unread" means,
   // and it is what drives the unread count.
   // -----------------------------------------------------------------
@@ -242,16 +191,14 @@ export class Seeder {
   // A pending invitation. The token IS the row id, and inviter_id is a NOT NULL
   // foreign key, so the caller supplies a seeded inviter.
   //
-  // A team placement on the invitation is what puts the new account into a team
-  // on acceptance - and it is read from this row, never from the request.
+  // An invitation is a ROLE pre-assignment and nothing else. It used to carry a
+  // team placement too, and that half went with teams in migration 024.
   // -----------------------------------------------------------------
   async invitation(options: {
     inviter: SeededUser;
     email: string;
     name?: string;
     role?: SeededUser["role"];
-    team?: SeededTeam;
-    teamRole?: "manager" | "member";
     expiresAt?: Date;
     status?: "pending" | "completed" | "expired" | "revoked";
   }): Promise<string> {
@@ -259,8 +206,8 @@ export class Seeder {
 
     await withClient((client) =>
       client.query(
-        `INSERT INTO user_invitations (id, name, email, role, status, expires_at, inviter_id, team_id, team_role)
-         VALUES ($1, $2, $3, $4::user_role, $5::invitation_status, $6, $7, $8, $9::team_role)`,
+        `INSERT INTO user_invitations (id, name, email, role, status, expires_at, inviter_id)
+         VALUES ($1, $2, $3, $4::user_role, $5::invitation_status, $6, $7)`,
         [
           id,
           options.name ?? "E2E Invitee",
@@ -269,8 +216,6 @@ export class Seeder {
           options.status ?? "pending",
           options.expiresAt ?? new Date(Date.now() + 24 * 60 * 60 * 1000),
           options.inviter.id,
-          options.team?.id ?? null,
-          options.team ? (options.teamRole ?? "member") : null,
         ],
       ),
     );
@@ -309,8 +254,6 @@ export class Seeder {
       await remove("notifications", "id", this.notificationIds);
       // Invitations reference the inviter, so they go before the users do.
       await remove("user_invitations", "id", this.invitationIds);
-      await remove("team_members", "id", this.teamMemberIds);
-      await remove("teams", "id", this.teamIds);
 
       // Signing in and failing to sign in both write an audit entry, and a
       // two-factor sign-in leaves verification rows behind. None of it blocks
