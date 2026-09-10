@@ -577,7 +577,7 @@ export function TranscriptionRecorder({
       {isActive && !canHoldScreenAwake ? (
         <p
           role="status"
-          className="mt-3 max-w-sm rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+          className="mt-3 max-w-sm rounded-lg border border-data-caution/40 bg-data-caution-surface p-2.5 text-xs text-data-caution-text"
         >
           This browser cannot keep the screen on by itself. Set your screen timeout to never, or check the
           phone every few minutes - if it sleeps, recording stops.

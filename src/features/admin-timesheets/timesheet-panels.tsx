@@ -63,20 +63,20 @@ export function BillableStateBanner({ report }: { report: TimesheetReport }) {
         "flex items-start gap-3 rounded-xl border p-4",
         blocked
           ? "border-destructive/30 bg-destructive/10"
-          : "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950",
+          : "border-data-ok/30 bg-data-ok-surface",
       )}
     >
       {blocked ? (
         <ShieldAlert className="mt-0.5 size-5 shrink-0 text-destructive" aria-hidden />
       ) : (
-        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+        <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-data-ok" aria-hidden />
       )}
 
       <div className="min-w-0">
-        <p className={cn("font-semibold", blocked ? "text-destructive" : "text-emerald-900 dark:text-emerald-100")}>
+        <p className={cn("font-semibold", blocked ? "text-destructive" : "text-data-ok-text")}>
           {blocked ? "This period is not billable yet" : "This period is ready to bill"}
         </p>
-        <p className={cn("mt-1 text-sm", blocked ? "text-destructive/90" : "text-emerald-800 dark:text-emerald-200")}>
+        <p className={cn("mt-1 text-sm", blocked ? "text-destructive/90" : "text-data-ok-text")}>
           {blocked
             ? `${report.blockingCount} ${report.blockingCount === 1 ? "finding blocks" : "findings block"} it. ` +
               `Fix them in Jira and re-sync - nothing is edited here.`
@@ -395,7 +395,7 @@ export function AuditCard({ findings, index }: { findings: Finding[]; index: num
         <CardContent>
           {findings.length === 0 ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+              <CheckCircle2 className="size-4 text-data-ok" aria-hidden />
               Nothing to report for this period.
             </p>
           ) : (

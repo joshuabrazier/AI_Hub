@@ -148,7 +148,7 @@ function ProjectPanel({ project }: { project: ProjectOutstanding }) {
             ) : (
               // Never "0 h left". Nothing here is estimated, so the honest
               // statement is that the figure is unknown, not that it is zero.
-              <span className="text-amber-700 dark:text-amber-500">
+              <span className="text-data-caution-text">
                 {project.openCount} open {project.openCount === 1 ? "item" : "items"}, none estimated
               </span>
             )}
@@ -362,12 +362,12 @@ function ClientSummaryCard({ clients }: { clients: ClientOutstanding[] }) {
                     ) : (
                       // The same rule as everywhere else on this page: nothing
                       // estimated means unknown, never zero.
-                      <span className="text-amber-700 dark:text-amber-500">Unknown</span>
+                      <span className="text-data-caution-text">Unknown</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right font-medium figure">
                     {client.committedSeconds === 0 ? (
-                      <span className="text-amber-700 dark:text-amber-500">Unknown</span>
+                      <span className="text-data-caution-text">Unknown</span>
                     ) : client.overBudgetSeconds > 0 ? (
                       <span className="text-destructive">{hours(client.overBudgetSeconds)} over</span>
                     ) : (
@@ -522,8 +522,8 @@ export default async function OutstandingView({ client, project }: OutstandingSe
           // above the figures it qualifies rather than under them. Somebody
           // who scrolls past the tiles to quote the headline should have had
           // to scroll past this first.
-          <div className="flex gap-3 rounded-xl border border-amber-500/40 bg-amber-50/60 p-4 text-sm dark:bg-amber-950/20">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+          <div className="flex gap-3 rounded-xl border border-data-caution/40 bg-data-caution-surface p-4 text-sm">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-data-caution" aria-hidden />
             <div className="space-y-1">
               <p className="font-medium">
                 Only {coveragePercent}% of the open work here is sized, so the figure above is a floor, not a

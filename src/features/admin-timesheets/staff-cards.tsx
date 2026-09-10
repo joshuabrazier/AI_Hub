@@ -127,7 +127,7 @@ export function StaffList({ people, filters }: { people: StaffSummaryDTO[]; filt
                                   <span
                                     className={cn(
                                       person.billableVariance >= 0
-                                        ? "text-emerald-600 dark:text-emerald-400"
+                                        ? "text-data-ok"
                                         : "text-destructive",
                                     )}
                                   >

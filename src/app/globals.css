@@ -13,6 +13,9 @@
   --color-data-caution: var(--data-caution);
   --color-data-caution-surface: var(--data-caution-surface);
   --color-data-caution-text: var(--data-caution-text);
+  --color-data-ok: var(--data-ok);
+  --color-data-ok-surface: var(--data-ok-surface);
+  --color-data-ok-text: var(--data-ok-text);
   /* Inter carries running text. IBM Plex Sans sets headings - drawn for IBM,
      so its engineering heritage suits a data product. Plex Mono is the utility
      face for eyebrows, labels and every figure that lines up in a column. */
@@ -202,6 +205,34 @@
   --data-caution-text: #8f1f3c;
 
   /* -----------------------------------------------------------------
+     OK - the state that is fine, and the token this palette was missing.
+
+     There was no positive colour in the system, so ten feature files and the
+     Badge primitive reached straight for Tailwind's `emerald-50/200/700` and
+     the `dark:emerald-900/950/300` to go with it - about 100 hardcoded
+     palette classes in a repo whose own rule is that every component styles
+     through these tokens and rebranding is one file. They also do not belong
+     to this palette: Tailwind's emerald is a neutral-green, where these
+     neutrals carry a teal bias, so a "ready to bill" panel sat at a
+     different colour temperature to the card it was inside.
+
+     A TRUE GREEN RATHER THAN A GREEN-TEAL, deliberately. The brand is teal
+     (#1b7789), and a success colour adjacent to it would read as "brand"
+     rather than as "good" - which is the same mistake the amber-as-cost
+     token above was removed for, in the other direction.
+
+     Three values, matching the caution triplet's structure exactly, so the
+     two states are interchangeable in markup: a MARK (safe as a fill or an
+     icon at 3:1+), a very light SURFACE, and a TEXT dark enough to read on
+     that surface at 4.5:1+.
+
+     Measured: #1a7f43 on white 4.83:1, #14602f on #edf8f0 7.94:1.
+     ----------------------------------------------------------------- */
+  --data-ok: #1a7f43;
+  --data-ok-surface: #edf8f0;
+  --data-ok-text: #14602f;
+
+  /* -----------------------------------------------------------------
      CORNER RADIUS, AND WHY IT CAME DOWN.
 
      This was 0.875rem, and the derived scale in @theme multiplies it: a
@@ -289,6 +320,14 @@
   --data-caution: #f4849e;
   --data-caution-surface: #3a1520;
   --data-caution-text: #f9c3ce;
+
+  /* Chosen for the dark card, not flipped from light - both move UP in
+     lightness, same as every other pair in this block. The surface is a very
+     dark green so it still reads as tinted rather than as a lighter card.
+     #52c98a on the card 8.1:1; the surface/text pair clears 10:1. */
+  --data-ok: #52c98a;
+  --data-ok-surface: #10291d;
+  --data-ok-text: #a7e8c2;
 
   --sidebar: #0f1a1c;
   --sidebar-foreground: #e6eff0;

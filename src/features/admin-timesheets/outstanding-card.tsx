@@ -101,7 +101,7 @@ export function OutstandingCard({
                     ) : (
                       // Never "0 h". Nothing here is estimated, so the honest
                       // answer is that it is unknown, not that it is nothing.
-                      <span className="text-amber-700 dark:text-amber-500">Unknown</span>
+                      <span className="text-data-caution-text">Unknown</span>
                     )}
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
@@ -137,8 +137,8 @@ export function OutstandingCard({
               </div>
 
               {coverageIsPoor && (
-                <div className="flex gap-2.5 rounded-lg border border-amber-500/40 bg-amber-50/60 p-3 text-xs dark:bg-amber-950/20">
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" aria-hidden />
+                <div className="flex gap-2.5 rounded-lg border border-data-caution/40 bg-data-caution-surface p-3 text-xs">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-data-caution" aria-hidden />
                   <p>
                     <span className="font-medium">
                       {coveragePercent}% of the open work here is sized, so this is a floor rather than a

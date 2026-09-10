@@ -50,12 +50,12 @@ export function MeetingPromptPanel({
   const subject = data.meeting?.subject ?? null;
 
   return (
-    <div className="flex flex-col gap-4 rounded-2xl border-2 border-amber-500/70 bg-background p-5 shadow-2xl">
+    <div className="flex flex-col gap-4 rounded-2xl border-2 border-data-caution/70 bg-background p-5 shadow-2xl">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2.5">
           {/* A dot rather than a microphone. Nothing here is recording, and an
               icon implying otherwise is the one thing this must never say. */}
-          <CircleDot className="size-5 shrink-0 animate-pulse text-amber-600" aria-hidden />
+          <CircleDot className="size-5 shrink-0 animate-pulse text-data-caution" aria-hidden />
           <p className="text-lg font-semibold leading-tight">Start recording this meeting</p>
         </div>
 
@@ -83,7 +83,7 @@ export function MeetingPromptPanel({
         </p>
       )}
 
-      <div className="rounded-xl bg-amber-50 p-4 dark:bg-amber-950/30">
+      <div className="rounded-xl bg-data-caution-surface p-4">
         <p className="text-base font-semibold">In Teams: More actions, then Record and transcribe.</p>
         <p className="mt-1.5 text-sm text-muted-foreground">
           Teams announces it to everyone in the meeting, which is what makes it lawful to keep, and it labels each
@@ -124,8 +124,8 @@ export function MeetingPromptPanel({
           half that used to be a button.
           --------------------------------------------------------------- */}
       {collecting ? (
-        <div className="flex items-start gap-2.5 rounded-lg border border-emerald-500/40 bg-emerald-50/60 p-3 dark:bg-emerald-950/20">
-          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" aria-hidden />
+        <div className="flex items-start gap-2.5 rounded-lg border border-data-ok/40 bg-data-ok-surface p-3">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-data-ok" aria-hidden />
           <div className="space-y-1 text-sm">
             <p className="font-medium">Nothing else to do.</p>
             <p className="text-muted-foreground">
