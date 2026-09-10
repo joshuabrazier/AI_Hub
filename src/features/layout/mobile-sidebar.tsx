@@ -34,7 +34,11 @@ function MobileLink({
         )}
       >
         <Icon size={indented ? 18 : 20} className="shrink-0" aria-hidden="true" />
-        {entry.label}
+        {/* min-w-0 is what lets it shrink - a flex child will not go narrower
+            than its text without it, so `truncate` alone does nothing. */}
+        <span className="min-w-0 flex-1 truncate" title={entry.tooltip}>
+          {entry.label}
+        </span>
         <NavigationPendingReporter />
       </Link>
     </SheetClose>
@@ -44,8 +48,10 @@ function MobileLink({
 function MobileCollapsible({ entry, pathname }: { entry: NavCollapsible; pathname: string }) {
   const Icon = entry.icon;
   const childActive = entry.children.some((child) => child.href === pathname);
-  // Open by default when one of its children is the current page.
-  const [open, setOpen] = useState(childActive);
+  // Open by default when one of its children is the current page, unless the
+  // group says otherwise - see NavCollapsible.defaultOpen. The rail and the
+  // sheet read the same field, so the two cannot disagree about what is shut.
+  const [open, setOpen] = useState(entry.defaultOpen ?? childActive);
 
   return (
     <div>
@@ -59,7 +65,7 @@ function MobileCollapsible({ entry, pathname }: { entry: NavCollapsible; pathnam
         )}
       >
         <Icon size={20} className="shrink-0" aria-hidden="true" />
-        {entry.label}
+        <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
         <ChevronDown
           size={16}
           aria-hidden="true"

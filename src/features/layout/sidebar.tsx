@@ -40,7 +40,12 @@ function NavLinkRow({
       <div className="relative flex size-10 shrink-0 items-center justify-center">
         <Icon size={20} aria-hidden="true" />
       </div>
-      {!collapsed && <span className="ml-2 text-sm font-medium whitespace-nowrap">{entry.label}</span>}
+      {/* min-w-0 is what lets it shrink: a flex child defaults to
+          min-width:auto and will not go narrower than its text, so `truncate`
+          alone does nothing here and the label runs under the rail's edge. */}
+      {!collapsed && (
+        <span className="ml-2 min-w-0 flex-1 truncate text-sm font-medium">{entry.label}</span>
+      )}
       <NavigationPendingReporter />
     </Link>
   );
@@ -71,8 +76,11 @@ function NavCollapsibleRow({
 }) {
   const Icon = entry.icon;
   const childActive = entry.children.some((child) => child.href === pathname);
-  // Open by default when one of its children is the current page.
-  const [open, setOpen] = useState(childActive);
+  // Open by default when one of its children is the current page, unless the
+  // group says otherwise - see NavCollapsible.defaultOpen. State lives here
+  // rather than in a store, so it survives navigation (the sidebar is mounted
+  // once, in the root layout) and resets on a reload.
+  const [open, setOpen] = useState(entry.defaultOpen ?? childActive);
 
   const groupButton = (
     <button
@@ -93,7 +101,7 @@ function NavCollapsibleRow({
       </div>
       {!collapsed && (
         <>
-          <span className="ml-2 text-sm font-medium whitespace-nowrap">{entry.label}</span>
+          <span className="ml-2 min-w-0 flex-1 truncate text-left text-sm font-medium">{entry.label}</span>
           <ChevronDown
             size={16}
             aria-hidden="true"
@@ -125,6 +133,10 @@ function NavCollapsibleRow({
                 href={child.href}
                 aria-current={active ? "page" : undefined}
                 aria-label={child.label}
+                // The full name on hover. The Tooltip below only renders when
+                // the rail is COLLAPSED, and a truncated label is exactly the
+                // case where somebody needs to read the rest of it.
+                title={child.tooltip}
                 className={cn(
                   "flex h-9 items-center rounded-md transition-all duration-200",
                   collapsed ? "mx-1 w-[calc(100%-0.5rem)] justify-center" : "mx-2 gap-2 pr-3 pl-6",
@@ -134,7 +146,9 @@ function NavCollapsibleRow({
                 <div className={cn("flex shrink-0 items-center justify-center", collapsed ? "size-9" : "size-6")}>
                   <ChildIcon size={collapsed ? 18 : 16} aria-hidden="true" />
                 </div>
-                {!collapsed && <span className="text-sm font-medium whitespace-nowrap">{child.label}</span>}
+                {!collapsed && (
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{child.label}</span>
+                )}
                 <NavigationPendingReporter />
               </Link>
             );

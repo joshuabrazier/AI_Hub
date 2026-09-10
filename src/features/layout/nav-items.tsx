@@ -58,6 +58,16 @@ export type NavCollapsible = {
   icon: LucideIcon;
   tooltip: string;
   children: NavLink[];
+  /**
+   * Whether it starts open. Unset means "open when the current page is one of
+   * its children", which is right for a group of OTHER screens - somewhere you
+   * go occasionally, and which should not take up room until you do.
+   *
+   * It is wrong for a group that is the point of the sidebar. Projects start
+   * open, because a list that is shut on every page except the ones already
+   * inside it is a list nobody can navigate WITH.
+   */
+  defaultOpen?: boolean;
 };
 
 export type NavEntry = NavLink | NavCollapsible;
@@ -426,14 +436,28 @@ export function projectsNavGroup(role: UserRole, projects: readonly NavProject[]
 
   return {
     label: "Projects",
-    items: projects.map((project) => ({
-      label: project.title,
-      href: projectBoardForRole(role, project.id),
-      icon: FolderKanban,
-      // The client, because two projects called "Website" for two clients is
-      // the ordinary case and the label alone cannot tell them apart.
-      tooltip: `${project.title} - ${project.clientName}`,
-    })),
+    items: [
+      {
+        label: "Projects",
+        icon: FolderKanban,
+        tooltip: "The projects you are on",
+        // OPEN UNLESS SHUT BY HAND. The sidebar's own default is to open a
+        // group only when you are already inside it, which for these would
+        // mean the projects were hidden on every screen where seeing them is
+        // worth anything.
+        defaultOpen: true,
+        children: projects.map((project) => ({
+          label: project.title,
+          href: projectBoardForRole(role, project.id),
+          icon: FolderKanban,
+          // The client, because two projects called "Website" for two clients
+          // is the ordinary case and the label alone cannot tell them apart.
+          // It is also what the row shows on hover, since a long title is
+          // truncated to the width of the rail.
+          tooltip: `${project.title} - ${project.clientName}`,
+        })),
+      },
+    ],
   };
 }
 
