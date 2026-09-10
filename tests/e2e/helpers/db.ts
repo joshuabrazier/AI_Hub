@@ -113,21 +113,6 @@ export async function getUserProfileById(
 }
 
 // -------------------------------------------------------------------
-// A user's team role within one team, or null when they are not in it. The
-// answer to "did accepting the invitation actually place them in the team".
-// -------------------------------------------------------------------
-export async function getTeamRoleForUser(teamId: string, userId: string): Promise<string | null> {
-  return withClient(async (client) => {
-    const result = await client.query(
-      "SELECT team_role FROM team_members WHERE team_id = $1 AND user_id = $2",
-      [teamId, userId],
-    );
-
-    return result.rows[0]?.team_role ?? null;
-  });
-}
-
-// -------------------------------------------------------------------
 // When a notification was read, or null while it is still unread. read_at
 // being NULL is the whole definition of unread.
 // -------------------------------------------------------------------

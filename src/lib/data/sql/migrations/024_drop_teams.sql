@@ -47,7 +47,12 @@ BEGIN;
 -- Invitations first: they reference nothing, but the CHECK constraint has to
 -- go with the columns it constrains.
 ALTER TABLE user_invitations
-    DROP CONSTRAINT IF EXISTS user_invitations_team_role_requires_team,
+    -- The name as database-schema.sql actually declares it. This was written
+    -- as _requires_team, which matches nothing, so the IF EXISTS made it a
+    -- silent no-op - the migration only ever succeeded because DROP COLUMN
+    -- takes the constraints on a column with it. Belt and braces, correctly
+    -- named, rather than braces alone.
+    DROP CONSTRAINT IF EXISTS user_invitations_team_role_needs_team,
     DROP COLUMN IF EXISTS team_role,
     DROP COLUMN IF EXISTS team_id;
 
