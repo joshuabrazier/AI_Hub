@@ -1523,6 +1523,15 @@ export interface Clients {
   id: string;
   name: string;
   notes: string | null;
+  /**
+   * Our own work or somebody else's, and the level every project and every
+   * logged hour beneath it inherits it from.
+   *
+   * Not the same question as `projects.isBillable`: an external client's
+   * project can be non-billable - an absorbed overrun, goodwill work, a
+   * pitch - while internal work never is.
+   */
+  category: Generated<ProjectCategory>;
   isActive: Generated<boolean>;
   createdBy: string | null;
   createdAt: Generated<Date>;
@@ -1540,9 +1549,12 @@ export interface Projects {
   description: string | null;
   isBillable: Generated<boolean>;
   status: Generated<ProjectStatus>;
-  /** A client's work or our own. Not the same question as `isBillable`. */
-  category: Generated<ProjectCategory>;
-  /** NULL is ordinary delivery. Frozen onto each time entry as it is logged. */
+  /**
+   * NULL is ordinary delivery. Frozen onto each time entry as it is logged.
+   *
+   * There is no `category` here on purpose - internal or external is a fact
+   * about the CLIENT and lives on `clients.category`. See migration 029.
+   */
   rndClass: RndClassValue | null;
   /** Whether charged hours are recorded here or on each phase. */
   budgetScope: Generated<BudgetScope>;

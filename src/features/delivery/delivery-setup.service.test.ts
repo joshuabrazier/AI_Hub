@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PROJECT_STATUSES,
   RATE_BANDS,
+  PROJECT_CATEGORIES,
   USER_ROLES,
   type Client,
   type UserRole,
@@ -280,6 +281,10 @@ function client(overrides: Partial<Client> = {}): Client {
     id: CLIENT_ID,
     name: "Perks",
     notes: null,
+    // A real client rather than our own work, which is the default and what
+    // every fixture here means. See migration 029 for why it is on the
+    // client and not the project.
+    category: PROJECT_CATEGORIES.EXTERNAL,
     isActive: true,
     createdBy: ADMIN_ID,
     createdAt: new Date("2026-01-01T00:00:00Z"),
