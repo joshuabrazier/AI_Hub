@@ -25,6 +25,7 @@ import {
   UserRound,
   Users,
   Wallet,
+  WandSparkles,
 } from "lucide-react";
 
 import { chatFeatureLabel, chatFeatureTooltip } from "@/lib/ai/assistant-identity";
@@ -82,13 +83,36 @@ export type NavGroup = {
 };
 
 // -------------------------------------------------------------------
-// Admin - the whole product.
+// THE AI TOOLS, AS ONE GROUP.
+//
+// Chat, transcription and summaries were three sibling rows at the top of
+// every tree, which is three of the first four things anybody saw and made
+// the tools look like the app. They are a category, so they get a category's
+// row and a disclosure triangle.
+//
+// WRITTEN ONCE RATHER THAN THREE TIMES, which is a departure from the rest of
+// this file and is justified by these three being the ONE part of the nav
+// that is genuinely identical in all three areas: same feature, same page,
+// same words, only the area prefix differs. Everything else is repeated on
+// purpose, because the three audiences see different products and a shared
+// definition would invite a change meant for one of them to land in all
+// three.
+//
+// IT IS NOT `defaultOpen`. Unset means it opens when you are already inside
+// it, which is right for a group of tools somebody reaches for now and then -
+// unlike Projects, which is the day job and starts open.
+//
+// The `label` is a plain "AI" rather than the assistant's name: the name
+// belongs to the chat feature, and a deployment that names its assistant
+// should not have that name label transcription and summaries too. The chat
+// row underneath still carries it.
 // -------------------------------------------------------------------
-const ADMIN_NAV: NavGroup[] = [
-  {
-    label: "Overview",
-    items: [
-      { label: "Home", href: ROUTES.ADMIN_DASHBOARD, icon: House, tooltip: "Home" },
+function aiTools(routes: { chat: string; transcription: string; summaries: string }): NavCollapsible {
+  return {
+    label: "AI",
+    icon: WandSparkles,
+    tooltip: "Chat, meeting transcription and text summaries",
+    children: [
       // DERIVED, NOT LITERAL. A deployment may name its assistant
       // (NEXT_PUBLIC_AI_ASSISTANT_NAME), and this is a base repo - so the
       // name must not be written down here. Named, this reads "Saga AI" and
@@ -97,19 +121,36 @@ const ADMIN_NAV: NavGroup[] = [
       // appKnowledgePrompt hands the assistant about its own app, so a
       // literal string here would have it telling people to open a menu
       // entry that no longer exists under that name.
-      { label: chatFeatureLabel(), href: ROUTES.ADMIN_AI_CHAT, icon: Sparkles, tooltip: chatFeatureTooltip() },
+      { label: chatFeatureLabel(), href: routes.chat, icon: Sparkles, tooltip: chatFeatureTooltip() },
       {
         label: "Transcription",
-        href: ROUTES.ADMIN_TRANSCRIPTION,
+        href: routes.transcription,
         icon: AudioLines,
         tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
       },
       {
         label: "Summaries",
-        href: ROUTES.ADMIN_SUMMARIES,
+        href: routes.summaries,
         icon: ScrollText,
         tooltip: "Summarise pasted text",
       },
+    ],
+  };
+}
+
+// -------------------------------------------------------------------
+// Admin - the whole product.
+// -------------------------------------------------------------------
+const ADMIN_NAV: NavGroup[] = [
+  {
+    label: "Overview",
+    items: [
+      { label: "Home", href: ROUTES.ADMIN_DASHBOARD, icon: House, tooltip: "Home" },
+      aiTools({
+        chat: ROUTES.ADMIN_AI_CHAT,
+        transcription: ROUTES.ADMIN_TRANSCRIPTION,
+        summaries: ROUTES.ADMIN_SUMMARIES,
+      }),
     ],
   },
   {
@@ -138,9 +179,9 @@ const ADMIN_NAV: NavGroup[] = [
   // the first person to reconcile a figure between them would be comparing
   // the wrong two screens.
   //
-  // It is not "Overview" either. Overview is Home plus the three AI
-  // features, each of which is a tool somebody opens now and then. This is
-  // the day job, and a group of its own is what says so.
+  // It is not "Overview" either. Overview is Home plus the AI group, which
+  // holds three tools somebody opens now and then. This is the day job, and
+  // a group of its own is what says so.
   //
   // THE SPLIT INSIDE IT IS THE ACCESS MODEL SHOWING THROUGH. Projects and
   // the timesheet are top-level because MEMBERSHIP decides what they show,
@@ -301,19 +342,11 @@ const MANAGER_NAV: NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { label: chatFeatureLabel(), href: ROUTES.MANAGE_AI_CHAT, icon: Sparkles, tooltip: chatFeatureTooltip() },
-      {
-        label: "Transcription",
-        href: ROUTES.MANAGE_TRANSCRIPTION,
-        icon: AudioLines,
-        tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
-      },
-      {
-        label: "Summaries",
-        href: ROUTES.MANAGE_SUMMARIES,
-        icon: ScrollText,
-        tooltip: "Summarise pasted text",
-      },
+      aiTools({
+        chat: ROUTES.MANAGE_AI_CHAT,
+        transcription: ROUTES.MANAGE_TRANSCRIPTION,
+        summaries: ROUTES.MANAGE_SUMMARIES,
+      }),
     ],
   },
   // The same two entries as the admin tree, in a group with the same name,
@@ -339,11 +372,6 @@ const MANAGER_NAV: NavGroup[] = [
       },
     ],
   },
-  {
-    label: "Your work",
-    items: [
-    ],
-  },
 ];
 
 // -------------------------------------------------------------------
@@ -354,19 +382,11 @@ const MEMBER_NAV: NavGroup[] = [
     label: "Your portal",
     items: [
       { label: "Home", href: ROUTES.PORTAL, icon: House, tooltip: "Home" },
-      { label: chatFeatureLabel(), href: ROUTES.PORTAL_AI_CHAT, icon: Sparkles, tooltip: chatFeatureTooltip() },
-      {
-        label: "Transcription",
-        href: ROUTES.PORTAL_TRANSCRIPTION,
-        icon: AudioLines,
-        tooltip: "Transcribe and summarise a meeting, and file the notes in SharePoint",
-      },
-      {
-        label: "Summaries",
-        href: ROUTES.PORTAL_SUMMARIES,
-        icon: ScrollText,
-        tooltip: "Summarise pasted text",
-      },
+      aiTools({
+        chat: ROUTES.PORTAL_AI_CHAT,
+        transcription: ROUTES.PORTAL_TRANSCRIPTION,
+        summaries: ROUTES.PORTAL_SUMMARIES,
+      }),
       { label: "Account", href: ROUTES.PORTAL_ACCOUNT, icon: UserCircle, tooltip: "Your details" },
     ],
   },

@@ -102,6 +102,62 @@ describe("projectsNavGroup", () => {
 });
 
 // -------------------------------------------------------------------
+// The AI group, which is the one part of the nav defined once and used by all
+// three trees. That is what makes it worth asserting per role: a shared
+// definition is exactly the thing that can be right in one area and wrong in
+// another, because a route prefix is passed in rather than written down.
+// -------------------------------------------------------------------
+describe("the AI group", () => {
+  const aiGroupFor = (role: (typeof USER_ROLES)[keyof typeof USER_ROLES]) => {
+    const entry = navGroupsForRole(role)
+      .flatMap((group) => group.items)
+      .find((item) => item.label === "AI");
+
+    expect(entry, `expected an AI group in the ${role} tree`).toBeDefined();
+    expect(isCollapsible(entry!), "the AI group must be a collapsible").toBe(true);
+
+    if (!entry || !isCollapsible(entry)) throw new Error("unreachable - asserted above");
+
+    return entry;
+  };
+
+  it.each([USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.MEMBER])(
+    "holds all three AI tools for %s",
+    (role) => {
+      // The chat's label is DERIVED from the assistant's name, so it is not
+      // asserted as a literal - only that there are three, and which two of
+      // them are fixed.
+      const labels = aiGroupFor(role).children.map((child) => child.label);
+
+      expect(labels).toHaveLength(3);
+      expect(labels).toContain("Transcription");
+      expect(labels).toContain("Summaries");
+    },
+  );
+
+  it.each([
+    [USER_ROLES.ADMIN, "/admin/"],
+    [USER_ROLES.MANAGER, "/manage/"],
+    [USER_ROLES.MEMBER, "/portal/"],
+  ])("routes %s's AI tools into their own area", (role, prefix) => {
+    // The builder takes its routes as an argument, so passing the wrong
+    // area's is a mistake nothing else would catch - the proxy REDIRECTS a
+    // role in the wrong area rather than refusing it, so it would look like
+    // a link that quietly goes somewhere else.
+    for (const child of aiGroupFor(role).children) {
+      expect(child.href.startsWith(prefix), `${child.label} -> ${child.href}`).toBe(true);
+    }
+  });
+
+  it("does NOT start open, unlike Projects", () => {
+    // These are tools somebody reaches for now and then, so the sidebar's
+    // ordinary rule applies: open when you are already inside it. Projects
+    // are the day job and are the deliberate exception.
+    expect(aiGroupFor(USER_ROLES.ADMIN).defaultOpen).toBeUndefined();
+  });
+});
+
+// -------------------------------------------------------------------
 // The static trees, asserted only where the projects group depends on them.
 // -------------------------------------------------------------------
 describe("the nav trees the projects group is spliced into", () => {
