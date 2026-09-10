@@ -5,7 +5,8 @@ import { useMemo } from "react";
 import { authClient } from "@/lib/auth/auth-client";
 import { type UserRole } from "@/lib/data/kysely-database-types";
 
-import { navGroupsForRole, type NavGroup } from "./nav-items";
+import { navGroupsForRole, projectsNavGroup, type NavGroup } from "./nav-items";
+import { useMyProjects } from "./my-projects-context";
 
 // -------------------------------------------------------------------
 // The nav for the signed-in user.
@@ -23,6 +24,7 @@ import { navGroupsForRole, type NavGroup } from "./nav-items";
 // -------------------------------------------------------------------
 export function useNavGroups(): NavGroup[] {
   const { data: session, isPending } = authClient.useSession();
+  const projects = useMyProjects();
 
   const role = session?.user.role;
 
@@ -33,6 +35,40 @@ export function useNavGroups(): NavGroup[] {
 
     // An unrecognised role is handled by navGroupsForRole, which returns the
     // least privileged nav rather than guessing.
-    return navGroupsForRole(role as UserRole);
-  }, [isPending, role]);
+    const groups = navGroupsForRole(role as UserRole);
+
+    // -----------------------------------------------------------------
+    // THE PERSON'S OWN PROJECTS, SPLICED IN AFTER DELIVERY.
+    //
+    // Placed there rather than appended, because it belongs beside the
+    // "All projects" link it overflows into - a group of boards at the very
+    // bottom, under the account and settings entries, would read as an
+    // afterthought.
+    //
+    // ARRIVES LATE AND THAT IS FINE. The projects are fetched by
+    // MyProjectsProvider after the session resolves, so the sidebar renders
+    // its static entries first and this group appears underneath a moment
+    // later. Nothing moves that somebody was about to click: it is added
+    // below the existing items, never inserted above them.
+    // -----------------------------------------------------------------
+    const projectGroup = projectsNavGroup(
+      role as UserRole,
+      projects.map((project) => ({
+        id: project.id,
+        title: project.title,
+        clientName: project.clientName,
+      })),
+    );
+
+    if (!projectGroup) return groups;
+
+    const deliveryAt = groups.findIndex((group) => group.label === "Delivery");
+
+    // Appended when there is no Delivery group to sit under, rather than
+    // dropped - a nav tree that gains one later should not silently lose the
+    // projects.
+    if (deliveryAt === -1) return [...groups, projectGroup];
+
+    return [...groups.slice(0, deliveryAt + 1), projectGroup, ...groups.slice(deliveryAt + 1)];
+  }, [isPending, role, projects]);
 }
