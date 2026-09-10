@@ -280,9 +280,11 @@ export function TimesheetWorkspace({
         </CardContent>
       </Card>
 
-      {/* Mounted only while a cell is open, and keyed on the cell, so the
-          hours and the note start empty every time rather than inheriting
-          what was typed into a different day. */}
+      {/* Mounted only while a cell is open, and KEYED ON THE CELL. The key is
+          load-bearing rather than tidiness: the dialog fills its form in from
+          the entry behind the cell, so without a remount, clicking from a day
+          holding 1.5 to an empty one would leave 1.5 in the box - offering to
+          log an hour and a half nobody worked. */}
       {openRow && openDay && openCell && (
         <TimesheetCellDialog
           key={`${openRow.taskId}|${openDay.date}`}

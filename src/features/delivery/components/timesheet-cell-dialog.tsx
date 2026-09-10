@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import { Scale, Trash2 } from "lucide-react";
+import { Plus, Scale, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { AppDialog } from "@/components/app-dialog";
@@ -14,14 +14,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { MESSAGES } from "@/lib/constants";
 import { formatIsoDate } from "@/lib/format";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
+import { cn } from "@/lib/utils";
 
-import { deleteTimeEntryAction, logTimeAction } from "../delivery-time.actions";
+import { deleteTimeEntryAction, logTimeAction, updateTimeEntryAction } from "../delivery-time.actions";
 import {
   MAX_ENTRY_HOURS,
   NOTE_MAX_CHARS,
   formatMinutesAsClock,
   formatMinutesAsHours,
   type TimesheetCellDTO,
+  type TimesheetCellEntryDTO,
   type TimesheetRowDTO,
 } from "../delivery.types";
 import type { TimesheetTaskOption } from "./timesheet-catalogue";
@@ -33,30 +35,40 @@ import type { TimesheetTaskOption } from "./timesheet-catalogue";
 //
 // Hours and a note, typed the way people say them - 0.5, 1.5 - and NOT
 // converted here. `hours` reaches the action as the number somebody typed
-// and LogTimeSchema turns it into minutes at the boundary, which is the one
+// and the schema turns it into minutes at the boundary, which is the one
 // place that conversion happens in the whole module. A component doing its
 // own multiplication would be a second answer to it, and the two would
-// disagree about rounding the first time either changed. (The request type
-// names the field `hours` and types it as a number for exactly that reason -
-// see the note at the top of delivery-time.actions.ts.)
+// disagree about rounding the first time either changed.
 //
-// IT ADDS AN ENTRY, AND IT DOES NOT EDIT ONE. That is a deliberate answer to
-// something the DTOs cannot supply rather than a feature left out:
+// IT EDITS WHAT IS THERE, AND IT USED TO ONLY ADD. The old behaviour opened
+// an empty box on a day that already had time on it, so correcting 1.5 to 2
+// meant clearing the day and typing it again - and the note went with it.
+// The argument for that was real at the time and is worth recording, because
+// it is what dictates the shape below: an edit form is only safe if it can
+// show the note it is about to overwrite. `UpdateTimeEntrySchema` treats an
+// absent note as NULL, so a form that opened blank would silently delete
+// whatever was on the entry the moment somebody fixed an hour - and that
+// note is what a client's invoice narrative is written from.
 //
-//   A cell carries `minutes` and the entries behind that total. A day can
-//   legitimately hold several entries, so clearing it must remove each one.
+// It can show it. `TimesheetCellEntryDTO` carries `notes` alongside `id` and
+// `minutes`, so the entry arrives complete and the form opens with the real
+// note in the box. Overwriting it is then something somebody did, not
+// something that happened to them.
 //
-//   `UpdateTimeEntrySchema` requires `notes`, and an absent one means NULL.
-//   There is no way to say "leave the note alone". So an edit form here
-//   would open with an empty note box and SILENTLY DELETE whatever was on
-//   the entry the moment somebody corrected an hour - and that note is what
-//   a client's invoice narrative is written from.
+// WHICH LEAVES THE HONEST DIFFICULTY: A DAY CAN HOLD SEVERAL ENTRIES, and a
+// cell shows their TOTAL. "Edit 3h" is not a question with one answer when
+// it is 1h and 2h logged separately, each with its own note. So:
 //
-// So a cell ADDS, which is honest: a day legitimately holds several entries.
-// Correcting a wrong figure is
-// clear-the-day and type it again, confirmed and named, so nothing is lost
-// without somebody being told what they are removing. Editing one entry in
-// place belongs on the task panel, where its note is on screen.
+//   no entries      the form adds one. Nothing else to show.
+//   one entry       the form opens on it, filled in. The ordinary case, and
+//                   the one this change is for.
+//   several         they are listed, each with its hours and its note, and
+//                   picking one opens the form on it. Nothing is collapsed
+//                   into a single figure that could not be typed back.
+//
+// Adding a further entry stays available in every case, because a day
+// legitimately holds several - two sittings on one task with different notes
+// is a real thing and not a mistake to be tidied away.
 //
 // ADJUSTING THE ESTIMATE IS REACHED FROM HERE and is the parent's to open,
 // because it is a different act with different consequences: this dialog
@@ -89,11 +101,47 @@ export function TimesheetCellDialog({
   onSaved: () => void;
   onAdjustEstimate: () => void;
 }) {
-  const [hours, setHours] = useState("");
-  const [notes, setNotes] = useState("");
+  // -----------------------------------------------------------------
+  // WHICH ENTRY THE FORM IS ON, or null when it is adding a new one.
+  //
+  // A day with exactly one entry opens ON it, because that is what somebody
+  // clicking a cell showing "1.5" is asking to change. More than one and
+  // there is no single thing they meant, so the form starts blank and the
+  // list below is the way in.
+  //
+  // The parent KEYS this component on the cell, so opening a different day
+  // mounts a fresh dialog rather than carrying this state across - without
+  // that, clicking from a filled cell to an empty one would leave the
+  // previous day's hours in the box.
+  // -----------------------------------------------------------------
+  const soleEntry = cell.entries.length === 1 ? cell.entries[0] : null;
+
+  const [editingId, setEditingId] = useState<string | null>(soleEntry?.id ?? null);
+  const [hours, setHours] = useState(soleEntry ? formatMinutesAsHours(soleEntry.minutes) : "");
+  const [notes, setNotes] = useState(soleEntry?.notes ?? "");
   const [hoursError, setHoursError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [isClearing, setIsClearing] = useState(false);
+  const [confirming, setConfirming] = useState<"entry" | "day" | null>(null);
+
+  // Re-read from the cell rather than held in state, so a re-render after a
+  // save shows what the server returned rather than what was typed.
+  const editing = editingId ? (cell.entries.find((entry) => entry.id === editingId) ?? null) : null;
+
+  // The three move together or not at all - a half-switched form would show
+  // one entry's hours against another's note.
+  const openEntry = (entry: TimesheetCellEntryDTO) => {
+    setEditingId(entry.id);
+    setHours(formatMinutesAsHours(entry.minutes));
+    setNotes(entry.notes ?? "");
+    setHoursError(null);
+  };
+
+  const openNewEntry = () => {
+    setEditingId(null);
+    setHours("");
+    setNotes("");
+    setHoursError(null);
+  };
 
   const typedHours = Number(hours);
   const canSubmit = hours.trim().length > 0 && Number.isFinite(typedHours) && typedHours > 0;
@@ -103,13 +151,27 @@ export function TimesheetCellDialog({
       setHoursError(null);
 
       try {
-        const response = await logTimeAction({
-          taskId: row.taskId,
-          workDate: cell.date,
-          // The number as typed. The schema converts it to minutes.
-          hours: typedHours,
-          notes,
-        });
+        // ONE BRANCH, TWO ACTIONS. An edit names an ENTRY and the service
+        // re-resolves who owns it; an add names a task and a day. Neither
+        // trusts anything decided here - this only chooses which question is
+        // being asked.
+        //
+        // `notes` is sent on the edit whatever it holds, including empty:
+        // the box was filled in from the stored note, so an empty one is
+        // somebody clearing it rather than a field that was never populated.
+        const response = editing
+          ? await updateTimeEntryAction({
+              timeEntryId: editing.id,
+              hours: typedHours,
+              notes,
+            })
+          : await logTimeAction({
+              taskId: row.taskId,
+              workDate: cell.date,
+              // The number as typed. The schema converts it to minutes.
+              hours: typedHours,
+              notes,
+            });
 
         if (!response.success) {
           // A field error belongs against the field. Anything else is the
@@ -125,7 +187,7 @@ export function TimesheetCellDialog({
           return;
         }
 
-        toast.success("Time logged");
+        toast.success(editing ? "Time updated" : "Time logged");
         onSaved();
       } catch (error) {
         handleFrontendErrorWithToast(error);
@@ -133,7 +195,7 @@ export function TimesheetCellDialog({
     });
 
   // -------------------------------------------------------------------
-  // Remove every entry behind this cell.
+  // Remove the entry being edited, or every entry behind this cell.
   //
   // ONE AT A TIME, AND IT STOPS AT THE FIRST REFUSAL. Server actions run in
   // sequence anyway, and carrying on past a refusal would leave somebody
@@ -141,23 +203,23 @@ export function TimesheetCellDialog({
   // The week is re-read either way, so what is on screen afterwards is what
   // the database holds.
   // -------------------------------------------------------------------
-  const clearDay = () =>
+  const removeEntries = (targets: readonly TimesheetCellEntryDTO[], successMessage: string) =>
     startTransition(async () => {
       try {
-        for (const { id: timeEntryId } of cell.entries) {
+        for (const { id: timeEntryId } of targets) {
           const response = await deleteTimeEntryAction({ timeEntryId });
 
           if (!response.success) {
             toast.error(response.formError ?? MESSAGES.SOMETHING_WENT_WRONG);
-            setIsClearing(false);
+            setConfirming(null);
             onSaved();
 
             return;
           }
         }
 
-        setIsClearing(false);
-        toast.success(cell.entries.length === 1 ? "Time entry removed" : "Time entries removed");
+        setConfirming(null);
+        toast.success(successMessage);
         onSaved();
       } catch (error) {
         handleFrontendErrorWithToast(error);
@@ -168,7 +230,12 @@ export function TimesheetCellDialog({
 
   return (
     <>
-      <AppDialog open onOpenChange={onOpenChange} title="Log time" description={dayLabel}>
+      <AppDialog
+        open
+        onOpenChange={onOpenChange}
+        title={editing ? "Edit time" : "Log time"}
+        description={dayLabel}
+      >
         {/* The task, the project and the client, all typed by people and all
             rendered as text nodes. Which cell this is never depends on
             remembering which one was clicked. */}
@@ -178,14 +245,54 @@ export function TimesheetCellDialog({
             {row.clientName} - {row.projectTitle} - {row.phaseName}
           </p>
 
-          {cell.minutes > 0 && (
+          {/* Only when there is more than one, because with exactly one the
+              form IS that entry and saying "1h 30m already logged" above a
+              box reading 1.5 invites somebody to add it a second time. */}
+          {cell.entries.length > 1 && (
             <p className="mt-2 text-sm text-muted-foreground">
-              {formatMinutesAsClock(cell.minutes)} already logged on this day
-              {cell.entries.length > 1 ? `, across ${cell.entries.length} entries` : ""}. Anything you add here
-              is a further entry.
+              {formatMinutesAsClock(cell.minutes)} logged on this day, across {cell.entries.length}{" "}
+              entries. Pick one to change it, or add another.
             </p>
           )}
         </div>
+
+        {/* ------------------------------------------------------------
+            SEVERAL ENTRIES, LISTED RATHER THAN SUMMED.
+            A cell shows a total, and a total cannot be typed back into a
+            form that means to replace one of the figures behind it.
+            ------------------------------------------------------------ */}
+        {cell.entries.length > 1 && (
+          <ul className="space-y-1">
+            {cell.entries.map((entry) => {
+              const isOpen = entry.id === editingId;
+
+              return (
+                <li key={entry.id}>
+                  <button
+                    type="button"
+                    onClick={() => openEntry(entry)}
+                    aria-current={isOpen ? "true" : undefined}
+                    className={cn(
+                      "flex w-full items-start gap-3 rounded-lg border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                      isOpen
+                        ? "border-primary/40 bg-primary/10"
+                        : "border-border hover:bg-muted",
+                    )}
+                  >
+                    <span className="shrink-0 text-sm font-medium tabular-nums text-foreground">
+                      {formatMinutesAsHours(entry.minutes)}h
+                    </span>
+                    {/* The note as typed. A text node, and truncated rather
+                        than wrapped so the list stays scannable. */}
+                    <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                      {entry.notes ?? "No note"}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
 
         <form
           onSubmit={(event) => {
@@ -217,7 +324,9 @@ export function TimesheetCellDialog({
               </p>
             ) : (
               <p id="timesheet-cell-hours-hint" className="text-sm text-muted-foreground">
-                As you would say it: 0.5 is half an hour, 1.5 is an hour and a half.
+                {editing
+                  ? "Change it to what it should be - this replaces the figure, it does not add to it."
+                  : "As you would say it: 0.5 is half an hour, 1.5 is an hour and a half."}
               </p>
             )}
           </div>
@@ -235,16 +344,40 @@ export function TimesheetCellDialog({
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
-            {cell.minutes > 0 && (
+            {/* Deleting what is open, or clearing the whole day when the
+                form is adding. Named for whichever it is - "Clear this day"
+                over a form showing one of three entries is a promise about
+                the wrong number of rows. */}
+            {editing ? (
               <Button
                 type="button"
                 variant="destructive"
                 className="mr-auto"
                 disabled={isPending}
-                onClick={() => setIsClearing(true)}
+                onClick={() => setConfirming("entry")}
+              >
+                <Trash2 size={16} aria-hidden="true" />
+                Delete this entry
+              </Button>
+            ) : cell.minutes > 0 ? (
+              <Button
+                type="button"
+                variant="destructive"
+                className="mr-auto"
+                disabled={isPending}
+                onClick={() => setConfirming("day")}
               >
                 <Trash2 size={16} aria-hidden="true" />
                 Clear this day
+              </Button>
+            ) : null}
+
+            {/* A day legitimately holds several entries - two sittings with
+                different notes - so this stays available while one is open. */}
+            {editing && (
+              <Button type="button" variant="outline" disabled={isPending} onClick={openNewEntry}>
+                <Plus size={16} aria-hidden="true" />
+                Add another
               </Button>
             )}
 
@@ -252,7 +385,7 @@ export function TimesheetCellDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || !canSubmit} loading={isPending}>
-              {isPending ? "Saving..." : "Log time"}
+              {isPending ? "Saving..." : editing ? "Save changes" : "Log time"}
             </Button>
           </div>
         </form>
@@ -278,14 +411,40 @@ export function TimesheetCellDialog({
       </AppDialog>
 
       <ConfirmDialog
-        open={isClearing}
-        onOpenChange={setIsClearing}
+        open={confirming === "entry"}
+        onOpenChange={(open) => {
+          if (!open) setConfirming(null);
+        }}
+        title="Delete this entry?"
+        description={
+          editing
+            ? `${formatMinutesAsHours(editing.minutes)} hours on "${row.taskTitle}" for ${dayLabel} will be permanently deleted, along with the note on it. This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete entry"
+        pendingLabel="Deleting..."
+        isPending={isPending}
+        onConfirm={() => {
+          if (editing) removeEntries([editing], "Time entry removed");
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirming === "day"}
+        onOpenChange={(open) => {
+          if (!open) setConfirming(null);
+        }}
         title="Clear this day?"
         description={`${formatMinutesAsClock(cell.minutes)} on "${row.taskTitle}" for ${dayLabel} will be permanently deleted, along with any note on it. This cannot be undone.`}
         confirmLabel="Clear the day"
         pendingLabel="Clearing..."
         isPending={isPending}
-        onConfirm={clearDay}
+        onConfirm={() =>
+          removeEntries(
+            cell.entries,
+            cell.entries.length === 1 ? "Time entry removed" : "Time entries removed",
+          )
+        }
       />
     </>
   );

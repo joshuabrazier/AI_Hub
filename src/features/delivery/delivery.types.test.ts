@@ -49,6 +49,56 @@ import {
 // division with no guard - and named it where the case exists to catch one.
 // -------------------------------------------------------------------
 
+// -------------------------------------------------------------------
+// THE EDIT ROUND TRIP.
+//
+// The timesheet cell dialog fills its Hours box from a stored entry with
+// formatMinutesAsHours, and saving sends that string back through
+// hoursToMinutes. So the pair has to be LOSSLESS across every value an entry
+// can hold, and it is not obvious that it is - the formatter rounds to two
+// decimals, and 50 minutes is 0.8333... hours.
+//
+// If it were lossy the symptom would be silent and awful: opening a 50 minute
+// entry to correct its NOTE, changing nothing about the hours, and saving a
+// different number of minutes than the one that was there. Nobody would
+// attribute that to the form.
+//
+// The guard is really on formatMinutesAsHours - two decimals is enough to
+// recover the minute, one is not. Anybody trimming it to `.toFixed(1)` for a
+// tidier column breaks this and nothing else would say so.
+// -------------------------------------------------------------------
+describe("formatMinutesAsHours and hoursToMinutes, as a pair", () => {
+  it("round-trips EVERY minute in a day without drifting", () => {
+    const drifted: number[] = [];
+
+    for (let minutes = 1; minutes <= 24 * 60; minutes += 1) {
+      if (hoursToMinutes(Number(formatMinutesAsHours(minutes))) !== minutes) drifted.push(minutes);
+    }
+
+    expect(drifted, "these minute values do not survive being shown and typed back").toEqual([]);
+  });
+
+  it("survives the thirds, which are what two decimals is there for", () => {
+    // 50 minutes is 0.8333... hours. At two decimals that is "0.83", and
+    // 0.83 * 60 is 49.8, which rounds back to 50. At ONE decimal it is
+    // "0.8", and 0.8 * 60 is 48 - a two minute loss on an entry nobody
+    // edited.
+    expect(formatMinutesAsHours(50)).toBe("0.83");
+    expect(hoursToMinutes(0.83)).toBe(50);
+
+    expect(formatMinutesAsHours(20)).toBe("0.33");
+    expect(hoursToMinutes(0.33)).toBe(20);
+  });
+
+  it("shows a whole number of hours without a trailing zero", () => {
+    // The box is pre-filled with this, so "1" is what somebody expects to
+    // see on an hour rather than "1.00".
+    expect(formatMinutesAsHours(60)).toBe("1");
+    expect(formatMinutesAsHours(90)).toBe("1.5");
+    expect(formatMinutesAsHours(15)).toBe("0.25");
+  });
+});
+
 describe("hoursToMinutes", () => {
   it("converts the fractions people actually type", () => {
     expect(hoursToMinutes(0.25)).toBe(15);
