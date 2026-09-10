@@ -80,6 +80,18 @@ export function isCollapsible(entry: NavEntry): entry is NavCollapsible {
 export type NavGroup = {
   label: string;
   items: NavEntry[];
+  /**
+   * Pinned to the BOTTOM of the rail, below the scrolling list and outside
+   * it. For the entries somebody looks for by POSITION rather than by
+   * reading - an account row is the standard example, and it is where every
+   * other product puts one.
+   *
+   * Outside the scroll is the point. Last-in-the-list and pinned-to-the-
+   * bottom are the same thing only while the nav is short enough to fit; add
+   * a dozen projects and a list-ordered account row is somewhere below the
+   * fold, which is exactly when somebody is hunting for it.
+   */
+  footer?: boolean;
 };
 
 // -------------------------------------------------------------------
@@ -387,7 +399,6 @@ const MEMBER_NAV: NavGroup[] = [
         transcription: ROUTES.PORTAL_TRANSCRIPTION,
         summaries: ROUTES.PORTAL_SUMMARIES,
       }),
-      { label: "Account", href: ROUTES.PORTAL_ACCOUNT, icon: UserCircle, tooltip: "Your details" },
     ],
   },
   // Its own group here too, rather than two more rows under "Your portal".
@@ -411,6 +422,22 @@ const MEMBER_NAV: NavGroup[] = [
         icon: CalendarClock,
         tooltip: "Log your own week across every project you are on",
       },
+    ],
+  },
+  // -------------------------------------------------------------------
+  // PINNED TO THE BOTTOM, and last in the array so it is also last in the
+  // reading order for anything that flattens this tree - the mobile sheet
+  // and appKnowledgePrompt both do.
+  //
+  // It sat between the AI tools and Delivery, which put a page somebody
+  // opens twice a year in the middle of the two they open daily. The bottom
+  // of a sidebar is where an account row is looked for.
+  // -------------------------------------------------------------------
+  {
+    label: "Account",
+    footer: true,
+    items: [
+      { label: "Account", href: ROUTES.PORTAL_ACCOUNT, icon: UserCircle, tooltip: "Your details" },
     ],
   },
 ];

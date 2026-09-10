@@ -180,7 +180,26 @@ export default function Sidebar() {
   const { collapsed, toggle } = useSidebar();
 
   const navGroups = useNavGroups();
-  const entries = navGroups.flatMap((group) => group.items);
+
+  // -----------------------------------------------------------------
+  // TWO LISTS, NOT ONE. Everything scrolls except the groups marked
+  // `footer`, which sit below the scroll and are always on screen.
+  //
+  // Ordering alone would not do it. A footer group is last in the array too,
+  // so with a short nav the two are indistinguishable - but the rail holds a
+  // row per project, and once the list is taller than the window an
+  // order-only account row is below the fold, which is exactly the moment
+  // somebody is looking for it.
+  // -----------------------------------------------------------------
+  const entries = navGroups.filter((group) => !group.footer).flatMap((group) => group.items);
+  const footerEntries = navGroups.filter((group) => group.footer).flatMap((group) => group.items);
+
+  const renderEntry = (entry: (typeof entries)[number]) =>
+    isCollapsible(entry) ? (
+      <NavCollapsibleRow key={entry.label} entry={entry} collapsed={collapsed} pathname={pathname} />
+    ) : (
+      <NavLinkRow key={entry.href} entry={entry} collapsed={collapsed} active={pathname === entry.href} />
+    );
 
   return (
     <aside
@@ -230,14 +249,18 @@ export default function Sidebar() {
         aria-label="Main"
         className="relative z-40 flex-1 space-y-1 overflow-x-hidden overflow-y-auto py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        {entries.map((entry) =>
-          isCollapsible(entry) ? (
-            <NavCollapsibleRow key={entry.label} entry={entry} collapsed={collapsed} pathname={pathname} />
-          ) : (
-            <NavLinkRow key={entry.href} entry={entry} collapsed={collapsed} active={pathname === entry.href} />
-          ),
-        )}
+        {entries.map(renderEntry)}
       </nav>
+
+      {/* Below the scroll, so it stays put however long the list above it
+          gets. `shrink-0` is what stops flex compressing it when the nav is
+          taller than the rail - without it the row would be squashed to
+          nothing rather than the list scrolling. */}
+      {footerEntries.length > 0 && (
+        <div className="relative z-40 shrink-0 space-y-1 border-t border-white/15 py-2">
+          {footerEntries.map(renderEntry)}
+        </div>
+      )}
     </aside>
   );
 }
