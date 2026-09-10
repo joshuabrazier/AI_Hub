@@ -1379,6 +1379,82 @@ export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
 };
 
 // -------------------------------------------------------------------
+// Whose work it is: a client's, or our own.
+//
+// It is NOT the same question as `isBillable`, which is why both exist. An
+// external project can be non-billable - a fixed-price overrun being
+// absorbed, goodwill work, a pitch - while internal work never is. So
+// billable implies external and external implies nothing about billable.
+//
+// These two values are what the Jira read model this replaced carried, so
+// the reports' category breakdown means the same thing before and after.
+// -------------------------------------------------------------------
+export const PROJECT_CATEGORIES = {
+  INTERNAL: "internal",
+  EXTERNAL: "external",
+} as const;
+
+export type ProjectCategory = (typeof PROJECT_CATEGORIES)[keyof typeof PROJECT_CATEGORIES];
+
+export const PROJECT_CATEGORY_LABELS: Record<ProjectCategory, string> = {
+  [PROJECT_CATEGORIES.INTERNAL]: "Internal",
+  [PROJECT_CATEGORIES.EXTERNAL]: "External",
+};
+
+// -------------------------------------------------------------------
+// The two R&D Tax Incentive categories, and NULL for everything else.
+//
+// There is deliberately no "none" member. Most work is not claimable, and an
+// enum value for it would invite a third bar on every breakdown where the
+// question is "the claimable work, and everything else".
+//
+// A project declares one; a time entry carries the value FROZEN as at the
+// moment it was logged. Never read the project's current class to describe
+// past hours - see migration 028, and the same note on the engine's
+// `WorklogFactRow.rndClass`. A claim is a statement about work done at a
+// point in time, and reclassifying a project must not rewrite it.
+// -------------------------------------------------------------------
+export const RND_CLASSES = {
+  CORE: "core",
+  SUPPORTING: "supporting",
+} as const;
+
+export type RndClassValue = (typeof RND_CLASSES)[keyof typeof RND_CLASSES];
+
+export const RND_CLASS_LABELS: Record<RndClassValue, string> = {
+  [RND_CLASSES.CORE]: "Core R&D",
+  [RND_CLASSES.SUPPORTING]: "Supporting R&D",
+};
+
+// -------------------------------------------------------------------
+// Where a project's CHARGED hours are recorded: once for the whole thing,
+// or phase by phase.
+//
+// Both are real ways to sell work and neither can be inferred from the data
+// - a project with per-phase hours filled in halfway through looks identical
+// to one sold whole and being annotated - so the intent is stored and the
+// report reads it. See migration 023.
+//
+// THESE ARRIVED IN THE DATABASE WITHOUT ARRIVING HERE. Migration 023 added
+// `budget_scope` and `charged_minutes` to `projects` and `charged_minutes`
+// to `phases`, and the type layer was never updated - so for several
+// releases the columns existed and nothing in the app could read them
+// through Kysely. They are the "what the client agreed to pay for" figure,
+// which is exactly the baseline the timesheet reports measure against.
+// -------------------------------------------------------------------
+export const BUDGET_SCOPES = {
+  PROJECT: "project",
+  PHASE: "phase",
+} as const;
+
+export type BudgetScope = (typeof BUDGET_SCOPES)[keyof typeof BUDGET_SCOPES];
+
+export const BUDGET_SCOPE_LABELS: Record<BudgetScope, string> = {
+  [BUDGET_SCOPES.PROJECT]: "For the whole project",
+  [BUDGET_SCOPES.PHASE]: "Phase by phase",
+};
+
+// -------------------------------------------------------------------
 // The three rates a person can be charged at.
 //
 // Which one applies is decided PER PROJECT MEMBER, not per person: the
@@ -1464,6 +1540,19 @@ export interface Projects {
   description: string | null;
   isBillable: Generated<boolean>;
   status: Generated<ProjectStatus>;
+  /** A client's work or our own. Not the same question as `isBillable`. */
+  category: Generated<ProjectCategory>;
+  /** NULL is ordinary delivery. Frozen onto each time entry as it is logged. */
+  rndClass: RndClassValue | null;
+  /** Whether charged hours are recorded here or on each phase. */
+  budgetScope: Generated<BudgetScope>;
+  /**
+   * What the client agreed to pay for, in minutes. NULL means "not filled in
+   * yet", which is the ordinary state of a new project - never nought, which
+   * would mean "sold for no hours". Read `phases.chargedMinutes` instead when
+   * `budgetScope` is 'phase'.
+   */
+  chargedMinutes: number | null;
   // Set the first time the project's budget has been allocated to tasks,
   // and never cleared. It is what stops the setup progress bar coming back
   // if an estimate is later reduced - a one-time nudge, not a rule.
@@ -1541,6 +1630,8 @@ export interface Phases {
   projectId: string;
   name: string;
   position: Generated<number>;
+  /** Charged hours for this stage, when the project is sold phase by phase. */
+  chargedMinutes: number | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }
@@ -1640,6 +1731,15 @@ export interface TimeEntries {
   taskId: string;
   projectId: string;
   userId: string;
+  /**
+   * The project's R&D classification AS AT the moment this hour was logged.
+   *
+   * Frozen, not joined. Reclassifying a project must not rewrite what past
+   * hours were claimed as - see migration 028. Also a grain rule: the
+   * project has one class and hours are per entry, so joining it in at
+   * report time would count it once per entry.
+   */
+  rndClass: RndClassValue | null;
   // A DATE column: 'YYYY-MM-DD'.
   workDate: string;
   minutes: number;

@@ -51,7 +51,13 @@ import {
 // the point: the single-entry read an edit works from, and the writes that
 // return the row they wrote.
 // -------------------------------------------------------------------
-export type TimeEntryWithoutRates = Omit<TimeEntry, "chargeRateCents" | "costRateCents">;
+// `rndClass` is omitted for a different reason from the rates, and it is
+// worth separating: a rate is WITHHELD from these reads because putting a
+// client's rate card in front of every project member would be a disclosure.
+// The R&D class is simply not asked for - the timesheet grid shows minutes
+// and the task panel shows who logged what, and neither says anything about
+// a tax claim. It is on the row and available to any read that wants it.
+export type TimeEntryWithoutRates = Omit<TimeEntry, "chargeRateCents" | "costRateCents" | "rndClass">;
 
 // Listed once so the two rate-free reads cannot drift apart, and so a new
 // column on the table is a compile error here rather than a silently
