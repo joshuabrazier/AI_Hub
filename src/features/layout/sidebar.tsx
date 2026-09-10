@@ -33,11 +33,12 @@ import { cn } from "@/lib/utils";
 // than either - the frame shouting over the thing it frames, and a second
 // teal column beside it on the chat screen.
 //
-// THE COLOUR BELONGS IN THE CONTENT. The stat chips, the header metric, the
-// table bands and the active row below carry it; the rail's whole job is to
-// stay out of the way of the screen it borders. So it is near-white,
-// separated by its border rather than by a fill, which is what the note on
-// --sidebar said from the start.
+// SO THE SURFACE STAYS QUIET AND THE MARKS CARRY THE COLOUR. The rail is
+// near-white, separated by its border rather than by a fill - which is what
+// the note on --sidebar said from the start - and the teal is on the things
+// inside it: the icons, the section names, the current row. A large area of
+// one hue and a small area of it are completely different decisions, and
+// conflating them is what produced the slab.
 //
 // What survives from the detour is the token SHAPE: this component knows
 // `--sidebar`, `--sidebar-foreground`, `--sidebar-muted-foreground`,
@@ -79,21 +80,46 @@ import { cn } from "@/lib/utils";
 const ROW =
   "group relative flex items-center rounded-md text-sm transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring/60 focus-visible:outline-none";
 
-// ON THE RAIL'S OWN TOKENS, NOT THE PAGE'S. The values happen to match
-// --muted-foreground and --accent in the light theme, and that is the point
-// of keeping them separate anyway: the rail sits on #fcfdfd rather than
-// #ffffff, so a tint tuned against white is a step too weak here, and
+// ON THE RAIL'S OWN TOKENS, NOT THE PAGE'S. The rail sits on #fcfdfd rather
+// than #ffffff, so a tint tuned against white is a step too weak here, and
 // whoever changes the rail's surface next needs one place to change its ink
 // with it. That was the actual defect in the original `text-white/85` rail -
 // not the colour, but that the ink was stated in the component.
-const ROW_IDLE =
-  "text-sidebar-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
+//
+// THE LABELS ARE NEARLY FULL-STRENGTH, not muted. These are the primary
+// navigation of the whole app; they were --muted-foreground, which is the
+// colour for a description or a hint, and it made every destination in the
+// product read as secondary text.
+const ROW_IDLE = "text-foreground/85 hover:bg-sidebar-accent hover:text-foreground";
 
-// THE CURRENT PAGE IS THE ONE COLOURED THING IN THE RAIL. `text-primary`
-// rather than the accent foreground, because on a quiet near-white rail the
-// fill alone is a very small difference to spot, and this is the row people
-// look for first. Paired with the bar in the margin below.
+// THE CURRENT PAGE. `text-primary` rather than the accent foreground, because
+// on a quiet light rail the fill alone is a very small difference to spot,
+// and this is the row people look for first. Fill, weight, colour and the bar
+// in the margin, which is four signals for one fact - deliberately, because
+// getting it wrong means somebody cannot tell where they are.
 const ROW_ACTIVE = "bg-sidebar-accent font-semibold text-primary";
+
+// -------------------------------------------------------------------
+// THE ICONS CARRY THE COLOUR.
+//
+// The rail is a light surface and should stay one - a coloured slab was tried
+// and it shouted over the page it frames. But every row of it was a grey
+// glyph beside grey text, which is a lot of screen doing nothing: the icons
+// are the one element in the nav that is decoration rather than information
+// (the label already says where the row goes), so they are exactly what can
+// afford to be brand-coloured without competing with anything.
+//
+// SET ON THE GLYPH RATHER THAN INHERITED, so the icon and the label can be
+// two different colours - a teal glyph next to a near-black label, which is
+// what keeps the labels readable while the rail still has colour in it. They
+// brighten together on hover through the `group` on ROW.
+//
+// At 3:1 for a graphical element --primary at 70% clears the floor
+// comfortably; these never carry meaning on their own, so they are not held
+// to text contrast.
+// -------------------------------------------------------------------
+const ICON_IDLE = "shrink-0 text-primary/70 transition-colors group-hover:text-primary";
+const ICON_ACTIVE = "shrink-0 text-primary";
 
 /**
  * The "you are here" bar: 3px in the rail's own margin.
@@ -132,7 +158,7 @@ function NavLinkRow({
         active && (collapsed ? "before:-left-1.5" : "before:-left-2"),
       )}
     >
-      <Icon size={18} aria-hidden="true" className="shrink-0" />
+      <Icon size={18} aria-hidden="true" className={active ? ICON_ACTIVE : ICON_IDLE} />
       {/* min-w-0 AND flex-1 are both load-bearing: a flex child defaults to
           min-width:auto and will not go narrower than its own text, so
           `truncate` alone does nothing and a long project name runs under the
@@ -222,7 +248,7 @@ function NavCollapsibleRow({
         childActive ? "font-semibold text-sidebar-foreground" : ROW_IDLE,
       )}
     >
-      <Icon size={18} aria-hidden="true" className="shrink-0" />
+      <Icon size={18} aria-hidden="true" className={childActive ? ICON_ACTIVE : ICON_IDLE} />
       {!collapsed && (
         <>
           <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
@@ -285,7 +311,11 @@ function NavCollapsibleRow({
                   active && collapsed && cn(MARK, "before:-left-1.5"),
                 )}
               >
-                <ChildIcon size={collapsed ? 18 : 15} aria-hidden="true" className="shrink-0" />
+                <ChildIcon
+                  size={collapsed ? 18 : 15}
+                  aria-hidden="true"
+                  className={active ? ICON_ACTIVE : ICON_IDLE}
+                />
                 {!collapsed && <span className="min-w-0 flex-1 truncate">{child.label}</span>}
                 <NavigationPendingReporter />
               </Link>
@@ -358,7 +388,11 @@ function NavGroupBlock({
         className={cn(
           collapsed
             ? "sr-only"
-            : cn("px-2.5 pb-1 text-xs font-semibold text-foreground/70", isFirst ? "pt-1" : "pt-5"),
+            // In the brand colour, so a section name is distinguishable from
+            // the rows under it by hue rather than only by weight - which at
+            // this size, on rows that are themselves near-black and semibold
+            // when active, was too fine a difference to do the job.
+            : cn("px-2.5 pb-1 text-xs font-semibold text-primary/85", isFirst ? "pt-1" : "pt-5"),
         )}
       >
         {group.label}
