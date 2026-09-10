@@ -27,7 +27,7 @@ import {
   Wallet,
 } from "lucide-react";
 
-import { ROUTES } from "@/lib/routes";
+import { ROUTES, projectBoardForRole } from "@/lib/routes";
 import { USER_ROLES, type UserRole } from "@/lib/data/kysely-database-types";
 
 // -------------------------------------------------------------------
@@ -146,10 +146,13 @@ const ADMIN_NAV: NavGroup[] = [
     label: "Delivery",
     items: [
       {
-        label: "Projects",
+        // "All" because the projects themselves are now listed in their
+        // own group below - this is the overview and the way to the ones that
+        // group does not carry.
+        label: "All projects",
         href: ROUTES.ADMIN_PROJECTS,
         icon: FolderKanban,
-        tooltip: "The projects you are on, and their boards",
+        tooltip: "Every project you are on, with what is waiting for you",
       },
       {
         label: "Your timesheet",
@@ -301,10 +304,13 @@ const MANAGER_NAV: NavGroup[] = [
     label: "Delivery",
     items: [
       {
-        label: "Projects",
+        // "All" because the projects themselves are now listed in their
+        // own group below - this is the overview and the way to the ones that
+        // group does not carry.
+        label: "All projects",
         href: ROUTES.MANAGE_PROJECTS,
         icon: FolderKanban,
-        tooltip: "The projects you are on, and their boards",
+        tooltip: "Every project you are on, with what is waiting for you",
       },
       {
         label: "Your timesheet",
@@ -352,10 +358,13 @@ const MEMBER_NAV: NavGroup[] = [
     label: "Delivery",
     items: [
       {
-        label: "Projects",
+        // "All" because the projects themselves are now listed in their
+        // own group below - this is the overview and the way to the ones that
+        // group does not carry.
+        label: "All projects",
         href: ROUTES.PORTAL_PROJECTS,
         icon: FolderKanban,
-        tooltip: "The projects you are on, and their boards",
+        tooltip: "Every project you are on, with what is waiting for you",
       },
       {
         label: "Your timesheet",
@@ -366,6 +375,58 @@ const MEMBER_NAV: NavGroup[] = [
     ],
   },
 ];
+
+// -------------------------------------------------------------------
+// THE PERSON'S OWN PROJECTS, AS A GROUP OF THEIR OWN.
+//
+// The sidebar carried a "Projects" LINK and nothing else, so the projects
+// somebody actually works on were two clicks away on every screen: open the
+// list, then pick one. They are the thing this app is used for, and they were
+// the only part of it the nav did not name.
+//
+// A GROUP, NOT A COLLAPSIBLE, and that is the whole reason this is not one
+// line. A collapsible in this sidebar opens only when the active route is
+// already inside it (`useState(childActive)` in sidebar.tsx), so a "Projects"
+// disclosure would sit shut on every other page - which is exactly the
+// screens where seeing them is worth anything. A group renders its items
+// under a heading, always.
+//
+// ABSENT WHEN THERE ARE NONE. An empty heading is worse than no heading: it
+// is a promise of something that is not there, and somebody on no projects
+// already has the "Projects" link telling them so in words.
+//
+// EVERY ROUTE IS BUILT BY projectBoardForRole, never assembled here. The
+// proxy REDIRECTS a role that lands in the wrong area rather than refusing
+// it, so a hand-built /admin/projects/<id> followed by a member is not an
+// error they can see - it is a link that quietly goes somewhere else.
+//
+// NOT CAPPED. The list is `getMyProjectsService` - memberships only, archived
+// excluded - so it is the working set rather than everything, and a person's
+// working set is a handful. Truncating it would hide a project with nothing
+// on screen saying so, and the "All projects" link above covers the case
+// where somebody wants the full list anyway.
+// -------------------------------------------------------------------
+export type NavProject = {
+  id: string;
+  title: string;
+  clientName: string;
+};
+
+export function projectsNavGroup(role: UserRole, projects: readonly NavProject[]): NavGroup | null {
+  if (projects.length === 0) return null;
+
+  return {
+    label: "Projects",
+    items: projects.map((project) => ({
+      label: project.title,
+      href: projectBoardForRole(role, project.id),
+      icon: FolderKanban,
+      // The client, because two projects called "Website" for two clients is
+      // the ordinary case and the label alone cannot tell them apart.
+      tooltip: `${project.title} - ${project.clientName}`,
+    })),
+  };
+}
 
 // -------------------------------------------------------------------
 // The nav for a role. An unrecognised role gets the member nav, matching

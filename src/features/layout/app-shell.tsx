@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import Navbar from "@/features/layout/navbar";
 import Sidebar from "@/features/layout/sidebar";
+import { MyProjectsProvider } from "@/features/layout/my-projects-context";
 import { SidebarProvider, useSidebar } from "@/features/layout/sidebar-context";
 import { NavigationPendingOverlay, NavigationPendingProvider } from "@/features/layout/navigation-pending";
 import { isChromelessRoute } from "@/lib/routes";
@@ -24,14 +25,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
+  // MyProjectsProvider is INSIDE the chromeless guard above, deliberately: it
+  // fetches the caller's projects for the sidebar, and the landing page and
+  // the sign-in screen have no sidebar and no session to fetch for.
   return (
     <SidebarProvider>
-      <NavigationPendingProvider>
-        <Navbar />
-        <Sidebar />
-        <AppMain>{children}</AppMain>
-        <NavigationPendingOverlay />
-      </NavigationPendingProvider>
+      <MyProjectsProvider>
+        <NavigationPendingProvider>
+          <Navbar />
+          <Sidebar />
+          <AppMain>{children}</AppMain>
+          <NavigationPendingOverlay />
+        </NavigationPendingProvider>
+      </MyProjectsProvider>
     </SidebarProvider>
   );
 }

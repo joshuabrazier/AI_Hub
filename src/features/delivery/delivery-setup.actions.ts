@@ -12,6 +12,7 @@ import {
   createClientService,
   createPhaseService,
   createProjectService,
+  getMyProjectsService,
   deactivateClientService,
   deleteBudgetGroupService,
   deletePhaseService,
@@ -65,6 +66,7 @@ import {
   UpdateProjectMemberSchema,
   UpdateProjectRequestDTO,
   UpdateProjectSchema,
+  type ProjectSummaryDTO,
 } from "./delivery.types";
 
 // -------------------------------------------------------------------
@@ -644,5 +646,36 @@ export async function deletePhaseAction(requestDTO: DeletePhaseRequestDTO): Prom
     return { success: true, data: null } satisfies ServerApiResponse<null>;
   } catch (error) {
     return handleServerApiError("deletePhaseAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The signed-in person's own projects, FOR THE SIDEBAR.
+//
+// A READ WITH AN ACTION, which this module otherwise refuses - so it needs
+// its reason. Every other read here belongs to a page, and a page calls its
+// service directly. The nav does not: it is rendered by AppShell in the ROOT
+// layout, above all three areas, as a client component that knows only the
+// session role. There is no server component in its tree to read for it.
+//
+// SAFE TO EXPOSE, because it is the caller's own memberships and nothing
+// else - getMyProjectsService resolves the user from the session and takes no
+// argument, so there is no id here to tamper with and no scope to widen. It
+// is the same list the projects page already renders to the same person.
+//
+// It answers a ServerApiResponse like every other action, and the nav treats
+// a failure as "no projects" rather than an error: a sidebar that renders an
+// error where a list of links should be is worse than one that renders the
+// static entries and nothing more.
+// -------------------------------------------------------------------
+export async function getMyProjectsAction(): Promise<ServerApiResponse<ProjectSummaryDTO[]>> {
+  try {
+    await requireUser();
+
+    const projects = await getMyProjectsService();
+
+    return { success: true, data: projects } satisfies ServerApiResponse<ProjectSummaryDTO[]>;
+  } catch (error) {
+    return handleServerApiError("getMyProjectsAction", error);
   }
 }
