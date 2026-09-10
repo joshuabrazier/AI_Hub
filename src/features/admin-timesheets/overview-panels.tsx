@@ -55,7 +55,7 @@ export function CategorySplitCard({ categories, index }: { categories: SplitSlic
             <div key={slice.key}>
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-sm font-medium text-foreground">{slice.label}</span>
-                <span className="text-sm tabular-nums text-muted-foreground">
+                <span className="text-sm figure text-muted-foreground">
                   {hours(slice.hours)} · {Math.round(slice.share * 100)}%
                 </span>
               </div>
@@ -138,7 +138,7 @@ export function TopJobsCard({ jobs, index }: { jobs: JobSlice[]; index: number }
             <div key={job.key}>
               <div className="flex items-baseline justify-between gap-3">
                 <span className="min-w-0 truncate text-sm text-foreground">{job.label}</span>
-                <span className="shrink-0 text-sm tabular-nums text-muted-foreground">{hours(job.hours)}</span>
+                <span className="shrink-0 text-sm figure text-muted-foreground">{hours(job.hours)}</span>
               </div>
 
               <div className="mt-1 flex h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -235,13 +235,13 @@ export function ReadinessCard({ readiness, index }: { readiness: InvoiceReadines
           <dl className="space-y-2 text-sm">
             <div className="flex items-center justify-between gap-2">
               <dt className="text-muted-foreground">Billable, no description</dt>
-              <dd className={cn("tabular-nums", readiness.undescribedBillableHours > 0 && "font-medium text-destructive")}>
+              <dd className={cn("figure", readiness.undescribedBillableHours > 0 && "font-medium text-destructive")}>
                 {hours(readiness.undescribedBillableHours)}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2">
               <dt className="text-muted-foreground">Billable status unset</dt>
-              <dd className={cn("tabular-nums", readiness.unsetHours > 0 && "font-medium text-destructive")}>
+              <dd className={cn("figure", readiness.unsetHours > 0 && "font-medium text-destructive")}>
                 {hours(readiness.unsetHours)}
               </dd>
             </div>

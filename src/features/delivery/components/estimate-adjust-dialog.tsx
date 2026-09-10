@@ -184,9 +184,9 @@ export function EstimateAdjustDialog({
         </p>
         <p className="mt-2 text-sm text-muted-foreground">
           Estimated at{" "}
-          <span className="font-medium tabular-nums text-foreground">{formatMinutesAsClock(task.estimateMinutes)}</span>
+          <span className="font-medium figure text-foreground">{formatMinutesAsClock(task.estimateMinutes)}</span>
           , with{" "}
-          <span className="font-medium tabular-nums text-foreground">{formatMinutesAsClock(task.loggedMinutes)}</span>{" "}
+          <span className="font-medium figure text-foreground">{formatMinutesAsClock(task.loggedMinutes)}</span>{" "}
           logged against it.
         </p>
       </div>
@@ -301,7 +301,7 @@ export function EstimateAdjustDialog({
             onChange={(event) => setHours(event.target.value)}
             aria-invalid={hoursError !== null}
             aria-describedby={hoursError ? "timesheet-estimate-hours-error" : undefined}
-            className="tabular-nums"
+            className="figure"
           />
           {hoursError && (
             <p id="timesheet-estimate-hours-error" className="text-sm text-destructive">

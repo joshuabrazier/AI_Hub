@@ -35,7 +35,7 @@ export function getSetupClientsColumns({ onRename, onRetire, onRestore }: Props)
       meta: { label: "Projects" },
       header: columnHeader("Projects", "center"),
       cell: ({ row }) => (
-        <div className="text-center font-mono tabular-nums text-foreground">{row.original.projectCount}</div>
+        <div className="text-center figure text-foreground">{row.original.projectCount}</div>
       ),
     },
     statusColumn((client) => client.isActive),

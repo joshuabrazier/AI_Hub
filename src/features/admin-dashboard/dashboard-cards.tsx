@@ -72,7 +72,7 @@ export function StatTile({
     <CardContent className="flex items-center gap-4">
       <BrandChip icon={icon} size="lg" />
       <div className="min-w-0">
-        <p className="font-heading text-4xl font-bold leading-none tracking-tight tabular-nums text-foreground">
+        <p className="text-4xl font-bold leading-none tracking-tight figure text-foreground">
           {value}
         </p>
         <p className="mt-1.5 text-sm font-medium text-muted-foreground">{label}</p>

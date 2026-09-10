@@ -44,7 +44,7 @@ import { OPEN_DAY_KEY_HINT, TimesheetDayCell, type DayCellCommit } from "./times
 // DECIMAL HOURS RATHER THAN "1h 30m", THROUGHOUT THE TABLE. It is the form
 // somebody types into a cell, so a cell showing "1h 30m" cannot be corrected
 // by typing over it - and one column of digits in two different notations
-// cannot be scanned. `tabular-nums` is what makes them line up; the clock
+// cannot be scanned. `figure` is what makes them line up; the clock
 // form is used in the heading above the grid, where it is read once.
 //
 // AND A CELL IS NOW LITERALLY TYPED OVER, which is what that reasoning was
@@ -167,7 +167,7 @@ export function TimesheetGrid({
                 </TableCell>
               ))}
 
-              <TableCell className="pr-3 text-right font-mono font-medium tabular-nums">
+              <TableCell className="pr-3 text-right font-medium figure">
                 {formatMinutesAsHours(row.totalMinutes)}
               </TableCell>
             </TableRow>
@@ -180,7 +180,7 @@ export function TimesheetGrid({
           <TableCell>Day total</TableCell>
 
           {week.dayTotalMinutes.map((minutes, dayIndex) => (
-            <TableCell key={week.dates[dayIndex]} className="pr-3 text-right font-mono tabular-nums">
+            <TableCell key={week.dates[dayIndex]} className="pr-3 text-right figure">
               {minutes === 0 ? (
                 <span className="font-normal text-muted-foreground">-</span>
               ) : (
@@ -189,7 +189,7 @@ export function TimesheetGrid({
             </TableCell>
           ))}
 
-          <TableCell className="pr-3 text-right font-mono font-medium tabular-nums">{formatMinutesAsHours(week.totalMinutes)}</TableCell>
+          <TableCell className="pr-3 text-right font-medium figure">{formatMinutesAsHours(week.totalMinutes)}</TableCell>
         </TableRow>
       </TableFooter>
     </Table>

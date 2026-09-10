@@ -39,7 +39,7 @@ export function EntriesDataTable({ facts }: { facts: WorklogFactRow[] }) {
       pageSize={20}
       toolbar={
         <p className="text-sm text-muted-foreground">
-          <span className="font-medium tabular-nums text-foreground">{totalHours.toFixed(2)} h</span> across{" "}
+          <span className="font-medium figure text-foreground">{totalHours.toFixed(2)} h</span> across{" "}
           {facts.length} {facts.length === 1 ? "entry" : "entries"}
         </p>
       }

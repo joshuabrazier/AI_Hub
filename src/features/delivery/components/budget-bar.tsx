@@ -31,7 +31,7 @@ export function BudgetBar({ rollup, className }: { rollup: BudgetRollupDTO; clas
   return (
     <div className={cn("space-y-1.5", className)}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-        <span className="tabular-nums text-foreground">
+        <span className="figure text-foreground">
           {formatMinutesAsClock(rollup.loggedMinutes)} logged
           {hasBudget ? (
             <span className="text-muted-foreground"> of {formatMinutesAsClock(rollup.budgetMinutes)}</span>
@@ -41,7 +41,7 @@ export function BudgetBar({ rollup, className }: { rollup: BudgetRollupDTO; clas
         {hasBudget && rollup.percentUsed !== null ? (
           <span
             className={cn(
-              "shrink-0 tabular-nums",
+              "shrink-0 figure",
               rollup.isOverBudget ? "font-semibold text-data-caution" : "text-muted-foreground",
             )}
           >

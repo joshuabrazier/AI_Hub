@@ -69,7 +69,7 @@ export function SetupStep({
         <div className="flex shrink-0 flex-col items-center" aria-hidden="true">
           <span
             className={cn(
-              "flex size-7 items-center justify-center rounded-full border text-xs font-medium tabular-nums transition-colors",
+              "flex size-7 items-center justify-center rounded-full border text-xs font-medium figure transition-colors",
               isComplete
                 ? "border-transparent bg-primary/10 text-primary"
                 : isOpen

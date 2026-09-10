@@ -272,7 +272,7 @@ function PlanReview({
                       <span>
                         {task.assigneeId ? task.assigneeName : "Unassigned"}
                       </span>
-                      <span className="tabular-nums">{formatHours(task.estimateHours)}</span>
+                      <span className="figure">{formatHours(task.estimateHours)}</span>
                     </span>
                   </li>
                 ))}

@@ -38,7 +38,7 @@ export function getEntriesColumns(): ColumnDef<WorklogFactRow>[] {
       meta: { label: "Date" },
       header: columnHeader("Date"),
       cell: ({ row }) => (
-        <div className="whitespace-nowrap font-medium tabular-nums text-foreground">
+        <div className="whitespace-nowrap font-medium figure text-foreground">
           {formatIsoDate(row.original.workDate)}
         </div>
       ),
@@ -49,7 +49,7 @@ export function getEntriesColumns(): ColumnDef<WorklogFactRow>[] {
       meta: { label: "Start" },
       header: columnHeader("Start"),
       cell: ({ row }) => (
-        <div className="tabular-nums text-muted-foreground">{formatStartSecond(row.original.startSecond)}</div>
+        <div className="figure text-muted-foreground">{formatStartSecond(row.original.startSecond)}</div>
       ),
     },
     {
@@ -98,7 +98,7 @@ export function getEntriesColumns(): ColumnDef<WorklogFactRow>[] {
       meta: { label: "Hours" },
       header: columnHeader("Hours", "right"),
       cell: ({ row }) => (
-        <div className="text-right font-medium tabular-nums text-foreground">
+        <div className="text-right font-medium figure text-foreground">
           {(row.original.timeSpentSeconds / 3600).toFixed(2)}
         </div>
       ),

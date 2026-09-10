@@ -156,7 +156,7 @@ export function ProductivityChart({
                 </Link>
               </Button>
 
-              <span className="min-w-[124px] px-1 text-center text-sm font-medium tabular-nums">{period.label}</span>
+              <span className="min-w-[124px] px-1 text-center text-sm font-medium figure">{period.label}</span>
 
               {period.hasNext ? (
                 <Button asChild variant="ghost" size="icon" className="size-8">
@@ -218,15 +218,15 @@ export function ProductivityChart({
                     <TableCell className="whitespace-nowrap">
                       {point.weekdayLabel} {point.dayOfMonth}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{formatHours(point.billableHours)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatHours(point.nonBillableHours)}</TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right figure">{formatHours(point.billableHours)}</TableCell>
+                    <TableCell className="text-right figure">{formatHours(point.nonBillableHours)}</TableCell>
+                    <TableCell className="text-right figure">
                       {point.unsetHours > 0 ? formatHours(point.unsetHours) : "-"}
                     </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">
+                    <TableCell className="text-right font-medium figure">
                       {formatHours(point.loggedHours)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right figure">
                       {point.capacityHours > 0 ? formatHours(point.capacityHours) : "-"}
                     </TableCell>
                   </TableRow>
@@ -242,7 +242,7 @@ export function ProductivityChart({
               {ticks.map((tick) => (
                 <span
                   key={tick}
-                  className="absolute right-0 -translate-y-1/2 text-[11px] tabular-nums text-muted-foreground"
+                  className="absolute right-0 -translate-y-1/2 text-[11px] figure text-muted-foreground"
                   style={{ top: `${(1 - tick / top) * 100}%` }}
                 >
                   {tick}h
@@ -399,7 +399,7 @@ export function ProductivityChart({
                           {/* Every day keeps its number. */}
                           <p
                             className={cn(
-                              "text-[11px] tabular-nums leading-tight",
+                              "text-[11px] figure leading-tight",
                               point.isWorkingDay ? "text-muted-foreground" : "text-muted-foreground/60",
                             )}
                           >

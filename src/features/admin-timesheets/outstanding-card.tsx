@@ -95,7 +95,7 @@ export function OutstandingCard({
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Estimated work left
                   </p>
-                  <p className="mt-1 text-2xl font-semibold tabular-nums">
+                  <p className="mt-1 text-2xl font-semibold figure">
                     {summary.estimatedCount > 0 ? (
                       hours(summary.remainingSeconds)
                     ) : (
@@ -115,7 +115,7 @@ export function OutstandingCard({
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Not estimated
                   </p>
-                  <p className="mt-1 text-2xl font-semibold tabular-nums">{summary.unestimatedCount}</p>
+                  <p className="mt-1 text-2xl font-semibold figure">{summary.unestimatedCount}</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {summary.unestimatedLoggedSeconds > 0
                       ? `${hours(summary.unestimatedLoggedSeconds)} logged against them already`
@@ -127,7 +127,7 @@ export function OutstandingCard({
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Work sized
                   </p>
-                  <p className="mt-1 text-2xl font-semibold tabular-nums">
+                  <p className="mt-1 text-2xl font-semibold figure">
                     {coveragePercent == null ? "-" : `${coveragePercent}%`}
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">

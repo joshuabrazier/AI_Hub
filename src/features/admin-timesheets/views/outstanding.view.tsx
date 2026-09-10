@@ -86,7 +86,7 @@ function ItemsTable({
             <TableRow key={item.issueKey}>
               <IssueCell issueKey={item.issueKey} summary={item.summary} />
               <TableCell className="text-muted-foreground">{item.status ?? "-"}</TableCell>
-              <TableCell className="text-right tabular-nums">
+              <TableCell className="text-right figure">
                 {item.loggedSeconds > 0 ? hours(item.loggedSeconds) : "-"}
               </TableCell>
             </TableRow>
@@ -186,13 +186,13 @@ function ProjectPanel({ project }: { project: ProjectOutstanding }) {
                       )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{item.status ?? "-"}</TableCell>
-                    <TableCell className="text-right tabular-nums">{hours(item.estimateSeconds)}</TableCell>
+                    <TableCell className="text-right figure">{hours(item.estimateSeconds)}</TableCell>
                     <TableCell
-                      className={cn("text-right tabular-nums", item.isOverrun && "font-medium text-destructive")}
+                      className={cn("text-right figure", item.isOverrun && "font-medium text-destructive")}
                     >
                       {hours(item.loggedSeconds)}
                     </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">
+                    <TableCell className="text-right font-medium figure">
                       {item.isOverrun ? (
                         // "0 h left" on an item already over its estimate is
                         // true and misleading at once. Naming the overrun costs
@@ -250,16 +250,16 @@ function ProjectPanel({ project }: { project: ProjectOutstanding }) {
                   {project.completed.map((item) => (
                     <TableRow key={item.issueKey}>
                       <IssueCell issueKey={item.issueKey} summary={item.summary} />
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                      <TableCell className="text-right figure text-muted-foreground">
                         {/* Never 0 h. An item finished without an estimate has
                             nothing to compare against, and a zero would read as
                             "we thought it was free". */}
                         {item.estimateSeconds == null ? "not estimated" : hours(item.estimateSeconds)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{hours(item.loggedSeconds)}</TableCell>
+                      <TableCell className="text-right figure">{hours(item.loggedSeconds)}</TableCell>
                       <TableCell
                         className={cn(
-                          "text-right tabular-nums",
+                          "text-right figure",
                           item.varianceSeconds != null && item.varianceSeconds > 0 && "text-destructive",
                         )}
                       >
@@ -344,19 +344,19 @@ function ClientSummaryCard({ clients }: { clients: ClientOutstanding[] }) {
                     {client.clientName}
                     <span className="ml-2 text-xs text-muted-foreground">{client.clientKey}</span>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{client.projects.length}</TableCell>
-                  <TableCell className="text-right tabular-nums">{client.openCount}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
+                  <TableCell className="text-right figure">{client.projects.length}</TableCell>
+                  <TableCell className="text-right figure">{client.openCount}</TableCell>
+                  <TableCell className="text-right figure text-muted-foreground">
                     {/* Sized, not estimated. An item covered by a parent's
                         estimate has a size - it just does not have one of its
                         own - and calling that unsized understates how much of
                         the work is actually known. */}
                     {client.estimatedCount + client.coveredCount} of {client.openCount}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
+                  <TableCell className="text-right figure text-muted-foreground">
                     {client.completedCount > 0 ? hours(client.completedLoggedSeconds) : "-"}
                   </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">
+                  <TableCell className="text-right font-medium figure">
                     {client.estimatedCount > 0 ? (
                       hours(client.remainingSeconds)
                     ) : (
@@ -365,7 +365,7 @@ function ClientSummaryCard({ clients }: { clients: ClientOutstanding[] }) {
                       <span className="text-amber-700 dark:text-amber-500">Unknown</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">
+                  <TableCell className="text-right font-medium figure">
                     {client.committedSeconds === 0 ? (
                       <span className="text-amber-700 dark:text-amber-500">Unknown</span>
                     ) : client.overBudgetSeconds > 0 ? (

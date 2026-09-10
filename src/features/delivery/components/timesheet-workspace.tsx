@@ -340,7 +340,7 @@ export function TimesheetWorkspace({
               ----------------------------------------------------------- */}
           <CardAction>
             <p className="text-right">
-              <span className="block font-mono text-xl leading-none font-semibold tabular-nums text-foreground">
+              <span className="block text-xl leading-none font-semibold figure text-foreground">
                 {formatMinutesAsClock(week.totalMinutes)}
               </span>
               <span className="mt-1 block font-mono text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">

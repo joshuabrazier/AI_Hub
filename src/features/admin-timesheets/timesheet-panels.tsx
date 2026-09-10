@@ -154,11 +154,11 @@ export function StatTile({
 function SplitCells({ split }: { split: BillableSplit }) {
   return (
     <>
-      <TableCell className="text-right tabular-nums">{formatHours(split.billableHours)}</TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">
+      <TableCell className="text-right figure">{formatHours(split.billableHours)}</TableCell>
+      <TableCell className="text-right figure text-muted-foreground">
         {formatHours(split.nonBillableHours)}
       </TableCell>
-      <TableCell className="text-right tabular-nums">
+      <TableCell className="text-right figure">
         {split.unsetSeconds > 0 ? (
           <span className="font-medium text-destructive">{formatHours(split.unsetHours)}</span>
         ) : (
@@ -244,10 +244,10 @@ export function PeopleCard({
             return (
               <TableRow key={person.personId} className="transition-colors hover:bg-muted/50">
                 <TableCell className="font-medium">{person.personName ?? person.personId}</TableCell>
-                <TableCell className="text-right font-medium tabular-nums">{formatHours(person.hours)}</TableCell>
+                <TableCell className="text-right font-medium figure">{formatHours(person.hours)}</TableCell>
                 <SplitCells split={person.split} />
-                <TableCell className="text-right tabular-nums">{person.daysWorked}</TableCell>
-                <TableCell className="text-right tabular-nums">{formatPercent(utilisation)}</TableCell>
+                <TableCell className="text-right figure">{person.daysWorked}</TableCell>
+                <TableCell className="text-right figure">{formatPercent(utilisation)}</TableCell>
               </TableRow>
             );
           })}
@@ -309,7 +309,7 @@ export function ProjectsCard({
                   <span className="text-muted-foreground">-</span>
                 )}
               </TableCell>
-              <TableCell className="text-right font-medium tabular-nums">{formatHours(project.hours)}</TableCell>
+              <TableCell className="text-right font-medium figure">{formatHours(project.hours)}</TableCell>
               <SplitCells split={project.split} />
             </TableRow>
           ))}
@@ -317,7 +317,7 @@ export function ProjectsCard({
         <TableFooter>
           <TableRow>
             <TableCell colSpan={2}>Total</TableCell>
-            <TableCell className="text-right font-semibold tabular-nums">{formatHours(totalHours)}</TableCell>
+            <TableCell className="text-right font-semibold figure">{formatHours(totalHours)}</TableCell>
             <TableCell colSpan={3} />
           </TableRow>
         </TableFooter>

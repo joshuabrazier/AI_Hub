@@ -82,7 +82,7 @@ export function AnimatedNumber({
 
   return (
     <span className={className}>
-      <span aria-hidden="true" className="tabular-nums">
+      <span aria-hidden="true" className="figure">
         {prefix}
         {render(display)}
         {suffix}

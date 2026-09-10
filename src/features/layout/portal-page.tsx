@@ -165,7 +165,7 @@ export default function PortalPage({
                     <div className="text-right">
                       <p
                         className={cn(
-                          "font-mono text-xl leading-none font-semibold tabular-nums",
+                          "text-xl leading-none font-semibold figure",
                           metric.tone === "caution" ? "text-data-caution" : "text-foreground",
                         )}
                       >

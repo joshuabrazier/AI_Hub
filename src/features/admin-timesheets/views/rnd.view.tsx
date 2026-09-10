@@ -247,16 +247,16 @@ function RndTable({
                       row.label
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-foreground">
+                  <td className="px-4 py-2.5 text-right figure text-foreground">
                     {row.coreHours.toFixed(2)}
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-foreground">
+                  <td className="px-4 py-2.5 text-right figure text-foreground">
                     {row.supportingHours.toFixed(2)}
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                  <td className="px-4 py-2.5 text-right figure text-muted-foreground">
                     {row.nonRndHours.toFixed(2)}
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums font-medium text-foreground">
+                  <td className="px-4 py-2.5 text-right figure font-medium text-foreground">
                     {row.totalHours.toFixed(2)}
                   </td>
                 </tr>

@@ -555,7 +555,7 @@ export function TranscriptionRecorder({
           carries an implicit aria-live of "off" - stated explicitly here
           because announcing it once a second is exactly what a screen
           reader must not do during an hour-long meeting. */}
-      <p role="timer" aria-live="off" className="mt-4 font-mono text-2xl tabular-nums text-foreground">
+      <p role="timer" aria-live="off" className="mt-4 text-2xl figure text-foreground">
         {formatDuration(elapsedSeconds)}
       </p>
 

@@ -249,7 +249,7 @@ function Count({ label, value, emphasis = false }: { label: string; value: numbe
   return (
     <div className="flex items-baseline gap-1.5">
       <dd
-        className={`font-mono text-lg tabular-nums ${emphasis ? "text-destructive" : "text-foreground"}`}
+        className={`text-lg figure ${emphasis ? "text-destructive" : "text-foreground"}`}
       >
         {value.toLocaleString()}
       </dd>

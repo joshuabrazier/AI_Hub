@@ -215,7 +215,7 @@ export function TimesheetDayCell({
           // No drawn border until it is touched: seven boxed fields per row
           // across five rows is a grid of controls rather than a column of
           // figures, and the figures are what this screen is for.
-          "h-9 w-full rounded-md border border-transparent bg-transparent py-1 pr-6 pl-1.5 font-mono text-right text-sm tabular-nums outline-none transition-colors",
+          "h-9 w-full rounded-md border border-transparent bg-transparent py-1 pr-6 pl-1.5 text-right text-sm figure outline-none transition-colors",
           "hover:border-border focus:border-primary focus:bg-background focus-visible:ring-3 focus-visible:ring-ring/50",
           "placeholder:text-muted-foreground",
           cell.minutes === 0 && "text-muted-foreground",

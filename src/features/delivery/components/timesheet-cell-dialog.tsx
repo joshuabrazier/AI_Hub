@@ -213,7 +213,7 @@ export function TimesheetCellDialog({
               onChange={(event) => setHours(event.target.value)}
               aria-invalid={hoursError !== null}
               aria-describedby={hoursError ? "timesheet-cell-hours-error" : "timesheet-cell-hours-hint"}
-              className="tabular-nums"
+              className="figure"
             />
             {hoursError ? (
               <p id="timesheet-cell-hours-error" className="text-sm text-destructive">
@@ -267,7 +267,7 @@ export function TimesheetCellDialog({
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3">
             <p className="text-sm text-muted-foreground">
               Estimated at{" "}
-              <span className="font-medium tabular-nums text-foreground">
+              <span className="font-medium figure text-foreground">
                 {formatMinutesAsClock(task.estimateMinutes)}
               </span>
               , with {formatMinutesAsHours(task.loggedMinutes)} hours logged against it so far.

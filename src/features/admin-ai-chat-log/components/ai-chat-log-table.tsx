@@ -155,16 +155,16 @@ export function AiChatLogTable({ page }: { page: AiChatLogPageDTO }) {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground">
+                  <td className="px-4 py-3 figure text-muted-foreground">
                     {row.messageCount}
                   </td>
-                  <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground">
+                  <td className="px-4 py-3 figure text-muted-foreground">
                     {row.totalInputTokens ?? "-"} / {row.outputTokens ?? "-"}
                   </td>
-                  <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground">
+                  <td className="px-4 py-3 figure text-muted-foreground">
                     {row.cacheReadTokens ? row.cacheReadTokens : "-"}
                   </td>
-                  <td className="px-4 py-3 font-mono tabular-nums text-muted-foreground">
+                  <td className="px-4 py-3 figure text-muted-foreground">
                     {row.durationMs === null ? "-" : `${row.durationMs}ms`}
                   </td>
                   <td className="px-4 py-3">
@@ -197,7 +197,7 @@ export function AiChatLogTable({ page }: { page: AiChatLogPageDTO }) {
           >
             <ChevronLeft size={16} aria-hidden="true" />
           </Button>
-          <span className="tabular-nums text-foreground">
+          <span className="figure text-foreground">
             Page {page.page} of {page.pageCount}
           </span>
           <Button
@@ -364,7 +364,7 @@ function Fact({ label, value, mono = false }: { label: string; value: string; mo
   return (
     <div>
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={cn("text-foreground", mono && "font-mono text-xs tabular-nums")}>{value}</dd>
+      <dd className={cn("text-foreground", mono && "text-xs figure")}>{value}</dd>
     </div>
   );
 }
@@ -451,7 +451,7 @@ function PhaseTimeline({
               />
             </span>
 
-            <span className="font-mono text-xs tabular-nums text-foreground">
+            <span className="text-xs figure text-foreground">
               {formatMs(phase.ms)}
               <span className="text-muted-foreground">
                 {" / "}

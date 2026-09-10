@@ -201,7 +201,25 @@
   --data-caution-surface: #fdf2f5;
   --data-caution-text: #8f1f3c;
 
-  --radius: 0.875rem;
+  /* -----------------------------------------------------------------
+     CORNER RADIUS, AND WHY IT CAME DOWN.
+
+     This was 0.875rem, and the derived scale in @theme multiplies it: a
+     `rounded-xl` card came out at 1.225rem - nearly 20px - and a
+     `rounded-lg` button at 14px on a height of 32, which is most of the way
+     to a pill. That is the soft, friendly, consumer-SaaS default, and it is
+     the single strongest thing on screen telling somebody what kind of
+     product they are looking at.
+
+     This one is not. It is a ledger of sold hours being eaten into, read all
+     day by people who need to find a figure. Tighter corners read as
+     precision; they are also what makes a hairline border look drawn rather
+     than smudged around a curve. At 0.5rem the scale lands at roughly
+     5 / 6 / 8 / 11 / 14px, which is crisp without being brutalist - and
+     nothing had to change to get it, because every surface in the app
+     already derives from this one number.
+     ----------------------------------------------------------------- */
+  --radius: 0.5rem;
 
   /* The chrome's geometry. Not themed - these are the same in light and
      dark, and live here because :root is where the tokens are. */
@@ -280,6 +298,32 @@
   --sidebar-accent-foreground: #e6eff0;
   --sidebar-border: #243437;
   --sidebar-ring: var(--primary);
+}
+
+/* -------------------------------------------------------------------
+   `figure` - this text is a quantity.
+
+   THE PALETTE SAID THIS AND THE APP DID NOT DO IT. The note in @theme
+   reserves Plex Mono as "the utility face for eyebrows, labels and every
+   figure that lines up in a column", and there were 104 places carrying
+   `tabular-nums` of which 17 used the face. So the system had a face for
+   numbers and set nearly all of its numbers in the body face instead.
+
+   ONE CLASS RATHER THAN TWO, because they are not two decisions. Reaching
+   for `tabular-nums` already means "this is a figure"; which face a figure
+   takes is the type system's answer, not the component's, and leaving them
+   separate is how 87 of them ended up half-done. Anything that lines up in
+   a column, is compared against the value above it, or is read as a
+   quantity takes this. Prose that happens to contain a number does not.
+
+   IT IS WHY THIS APP LOOKS LIKE A LEDGER, which is what it is: hours sold
+   against hours spent, on every screen. The figures being visibly a
+   different kind of text from the words around them is the whole point -
+   it is also the thing that makes a wrong number easy to spot.
+   ------------------------------------------------------------------- */
+@utility figure {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 @layer base {

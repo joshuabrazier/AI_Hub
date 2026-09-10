@@ -405,7 +405,7 @@ function TranscriptBody({ detail }: { detail: TranscriptionDetailDTO }) {
           // reordered or spliced, which is what makes an index unsafe.
           <li key={index} className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)]">
             <p className="text-xs font-medium text-muted-foreground">
-              <span className="tabular-nums">{formatTimestamp(segment.startMs)}</span>{" "}
+              <span className="figure">{formatTimestamp(segment.startMs)}</span>{" "}
               {speakerLabel(segment)}
             </p>
             <p className="text-sm leading-relaxed text-foreground">{segment.text}</p>

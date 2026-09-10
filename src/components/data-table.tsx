@@ -337,7 +337,7 @@ export function DataTable<TData>({
             >
               <ChevronLeft size={16} />
             </Button>
-            <span className="tabular-nums text-foreground">
+            <span className="figure text-foreground">
               Page {pageIndex + 1} of {Math.max(1, pageCount)}
             </span>
             <Button
