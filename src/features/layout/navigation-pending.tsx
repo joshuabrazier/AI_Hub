@@ -112,7 +112,7 @@ export function NavigationPendingOverlay() {
       role="status"
       aria-live="polite"
       className={cn(
-        "fixed inset-x-0 bottom-0 top-20 z-40 flex items-center justify-center bg-background",
+        "fixed inset-x-0 bottom-0 top-nav z-40 flex items-center justify-center bg-background",
         collapsed ? "md:left-16" : "md:left-64",
       )}
     >

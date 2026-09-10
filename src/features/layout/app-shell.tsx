@@ -52,8 +52,8 @@ function AppMain({ children }: { children: React.ReactNode }) {
     <main
       id="main-content"
       className={cn(
-        "pt-20 transition-[padding] duration-300 ease-in-out motion-reduce:transition-none",
-        collapsed ? "md:pl-16" : "md:pl-64",
+        "pt-nav transition-[padding] duration-300 ease-in-out motion-reduce:transition-none",
+        collapsed ? "md:pl-rail-collapsed" : "md:pl-rail",
       )}
     >
       {children}

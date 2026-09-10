@@ -23,7 +23,7 @@ import { MeetingPrompt } from "@/features/transcription/components/meeting-promp
 export default function CenteredTopLayout({ children }: { children: React.ReactNode }) {
   return (
     <PushStatusProvider>
-      <section className="flex min-h-[calc(100vh-5rem)] flex-col text-foreground">
+      <section className="flex min-h-[calc(100dvh-var(--nav-h))] flex-col text-foreground">
         <div className="mx-auto w-full max-w-8xl flex-1">{children}</div>
       </section>
 

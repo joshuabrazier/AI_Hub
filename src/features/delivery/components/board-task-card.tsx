@@ -182,7 +182,7 @@ export function BoardTaskCard({
               assistive tech and the sentence beside it is what gets read. */}
           <span
             aria-hidden="true"
-            className={cn("shrink-0 tabular-nums", effort.isOverBudget && "font-medium text-destructive")}
+            className={cn("shrink-0 font-mono text-[0.6875rem] tabular-nums", effort.isOverBudget && "font-medium text-destructive")}
           >
             {effort.short}
           </span>

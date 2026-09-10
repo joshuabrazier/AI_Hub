@@ -119,7 +119,10 @@ export function TimesheetGrid({
               <span className={cn("block", isWeekend(date) && "text-muted-foreground")}>
                 {formatIsoDate(date, DAY_NAME_FORMAT)}
               </span>
-              <span className="block text-xs font-normal text-muted-foreground">
+              {/* The date is a figure and sits directly above a column of
+                  them, so it takes the same face. The day NAME stays in the
+                  sans, because it is a word. */}
+              <span className="block font-mono text-[0.6875rem] font-normal text-muted-foreground">
                 {formatIsoDate(date, DAY_DATE_FORMAT)}
               </span>
             </TableHead>
@@ -164,7 +167,7 @@ export function TimesheetGrid({
                 </TableCell>
               ))}
 
-              <TableCell className="pr-3 text-right font-medium tabular-nums">
+              <TableCell className="pr-3 text-right font-mono font-medium tabular-nums">
                 {formatMinutesAsHours(row.totalMinutes)}
               </TableCell>
             </TableRow>
@@ -177,7 +180,7 @@ export function TimesheetGrid({
           <TableCell>Day total</TableCell>
 
           {week.dayTotalMinutes.map((minutes, dayIndex) => (
-            <TableCell key={week.dates[dayIndex]} className="pr-3 text-right tabular-nums">
+            <TableCell key={week.dates[dayIndex]} className="pr-3 text-right font-mono tabular-nums">
               {minutes === 0 ? (
                 <span className="font-normal text-muted-foreground">-</span>
               ) : (
@@ -186,7 +189,7 @@ export function TimesheetGrid({
             </TableCell>
           ))}
 
-          <TableCell className="pr-3 text-right tabular-nums">{formatMinutesAsHours(week.totalMinutes)}</TableCell>
+          <TableCell className="pr-3 text-right font-mono font-medium tabular-nums">{formatMinutesAsHours(week.totalMinutes)}</TableCell>
         </TableRow>
       </TableFooter>
     </Table>

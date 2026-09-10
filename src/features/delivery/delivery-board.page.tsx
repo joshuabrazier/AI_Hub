@@ -12,6 +12,7 @@ import {
   getProjectBudgetGroupsService,
   getProjectDetailService,
 } from "./delivery-setup.service";
+import { describeTaskEffort } from "./delivery.types";
 import { BoardWorkspace, type BoardProjectLink } from "./components/board-workspace";
 import { SetupBudgetNudge } from "./components/setup-budget-nudge";
 
@@ -108,6 +109,19 @@ export default async function DeliveryBoardPage({
       // them as text, here and everywhere else in this feature.
       title={detail.project.title}
       description={`${detail.project.clientName}. Each phase has its own board, with the same four columns.`}
+      // THE SAME LEDGER FORM AS EVERY CARD ON THE BOARD BELOW, out of the
+      // same function - logged over estimated, one figure. It used to be a
+      // prose line inside the workspace, directly under a header that
+      // carried no information at all.
+      //
+      // SAFE TO RENDER ON THE SERVER because every write on this screen goes
+      // through `run`, which calls router.refresh() - so a logged hour
+      // re-renders this page and the figure with it.
+      metric={{
+        value: describeTaskEffort(detail.rollup.budgetMinutes, detail.rollup.loggedMinutes).short,
+        label: "logged / estimated",
+        tone: detail.rollup.isOverBudget ? "caution" : "default",
+      }}
       // NO BUDGET REPORT LINK HERE, and that is a removal rather than an
       // omission. It sat on this header and on the project setup header, so
       // between them it appeared on every project screen an admin opened -
@@ -160,7 +174,6 @@ export default async function DeliveryBoardPage({
         board={board}
         phaseStats={detail.phases}
         members={detail.members}
-        rollup={detail.rollup}
         // Named on the log-time dialog, because time here is always the
         // signed-in person's own and the screen should say whose it is.
         yourName={userDisplayName(user) ?? user.email}

@@ -6,7 +6,7 @@ type CenteredPageErrorProps = {
 
 export function CenteredPageError({ message }: CenteredPageErrorProps) {
   return (
-    <main className="flex min-h-[calc(100vh-5rem)] items-center justify-center">
+    <main className="flex min-h-[calc(100dvh-var(--nav-h))] items-center justify-center">
       <p className="text-destructive text-4xl font-bold">{message ?? MESSAGES.SOMETHING_WENT_WRONG}</p>
     </main>
   );

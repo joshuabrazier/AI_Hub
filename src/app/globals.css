@@ -71,6 +71,28 @@
   --color-signal: var(--signal);
   --color-signal-foreground: var(--signal-foreground);
   --color-signal-muted: var(--signal-muted);
+
+  /* -----------------------------------------------------------------
+     THE CHROME'S OWN MEASUREMENTS, AS TOKENS.
+
+     The navbar height and the rail widths were hardcoded in nine files -
+     `h-20` in the navbar, `pt-20` in the shell, `top-20` and
+     `h-[calc(100vh-5rem)]` in the sidebar, `min-h-[calc(100vh-5rem)]` in
+     four centred layouts, `top-20` in the pending overlay - which meant the
+     height of the bar could not be changed without finding all of them, and
+     any one missed showed up as a gap or an overlap on one route only.
+
+     They are in Tailwind's `--spacing-*` namespace, so they read as ordinary
+     utilities (`h-nav`, `top-nav`, `pt-nav`, `w-rail`) and are still
+     available to a calc as `calc(100dvh-var(--nav-h))`.
+
+     THE COLLAPSED RAIL IS EXACTLY THE NAVBAR HEIGHT, on purpose: it makes
+     the top-left corner of the chrome a square, so the rail reads as
+     hanging off the bar rather than as a second unrelated panel.
+     ----------------------------------------------------------------- */
+  --spacing-nav: var(--nav-h);
+  --spacing-rail: var(--rail-w);
+  --spacing-rail-collapsed: var(--rail-collapsed-w);
 }
 
 /* -------------------------------------------------------------------
@@ -180,8 +202,21 @@
   --data-caution-text: #8f1f3c;
 
   --radius: 0.875rem;
+
+  /* The chrome's geometry. Not themed - these are the same in light and
+     dark, and live here because :root is where the tokens are. */
+  --nav-h: 3.5rem;
+  --rail-w: 15rem;
+  --rail-collapsed-w: 3.5rem;
+
   /* Near-white, separated from the content by its border rather than by a
-     fill, so the app chrome does not darken the page. */
+     fill, so the app chrome does not darken the page.
+
+     THIS WAS WRITTEN AND NOT BUILT. For a long time sidebar.tsx rendered
+     `bg-primary` in light mode - a saturated teal slab down the left of
+     every screen, which is the one thing this palette's whole "predominantly
+     white" argument is against - and every --sidebar-* token below was dead
+     except in dark mode. It uses them now. */
   --sidebar: #fcfdfd;
   --sidebar-foreground: #0f1a1c;
   --sidebar-primary: var(--primary);

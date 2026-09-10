@@ -322,13 +322,29 @@ export function TimesheetWorkspace({
             {OPEN_DAY_KEY_HINT} on a day to add a note, split it or clear it.
           </CardDescription>
 
+          {/* -----------------------------------------------------------
+              THE WEEK'S TOTAL, AND WHY IT IS NOT IN THE PAGE HEADER.
+
+              Every other screen with one headline figure now carries it in
+              PortalPage's `metric` slot, and this one deliberately does not.
+              The page header is rendered on the SERVER, and a cell saved here
+              re-reads only the week - through getTimesheetWeekAction, into
+              state - because a router.refresh() would rebuild the picker
+              catalogue, which is a board read per project, for a change to
+              one cell. So a total up there would be right when the week
+              loaded and stale from the first hour typed.
+
+              It is set in the same mono face and the same value-over-label
+              shape as that slot, so the app has one way of showing a
+              headline figure even where it comes from two places.
+              ----------------------------------------------------------- */}
           <CardAction>
             <p className="text-right">
-              <span className="block text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Week total
-              </span>
-              <span className="block text-2xl font-semibold tabular-nums text-foreground">
+              <span className="block font-mono text-xl leading-none font-semibold tabular-nums text-foreground">
                 {formatMinutesAsClock(week.totalMinutes)}
+              </span>
+              <span className="mt-1 block font-mono text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">
+                Week total
               </span>
             </p>
           </CardAction>

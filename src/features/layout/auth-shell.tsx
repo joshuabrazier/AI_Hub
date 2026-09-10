@@ -19,7 +19,7 @@ import { ROUTES } from "@/lib/routes";
 export default function AuthShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="h-20 shrink-0 border-b border-border bg-background">
+      <header className="h-nav shrink-0 border-b border-border bg-background">
         <div className="flex h-full items-center justify-between px-4 sm:px-6 lg:px-8">
           <Logo size="sm" />
           <Link

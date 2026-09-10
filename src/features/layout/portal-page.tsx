@@ -63,12 +63,25 @@ export default function PortalPage({
   // visually is a layout decision; removing it is not.
   // -----------------------------------------------------------------
   headerHidden = false,
+  // -----------------------------------------------------------------
+  // THE ONE FIGURE THIS SCREEN IS ABOUT.
+  //
+  // Optional, and worth passing only when the screen genuinely has a single
+  // headline quantity - hours logged against hours sold, the week's total.
+  // A count of rows in a table is not one: the table says that, and putting
+  // it up here would be the header decorating itself.
+  //
+  // `value` is pre-formatted. Nothing here divides by sixty or picks a
+  // decimal - the callers already own one answer to that each.
+  // -----------------------------------------------------------------
+  metric,
   children,
 }: {
   eyebrow?: string;
   title: string;
   description?: string;
   actions?: React.ReactNode;
+  metric?: { value: string; label: string; tone?: "default" | "caution" };
   size?: "default" | "narrow" | "full";
   fill?: boolean;
   headerHidden?: boolean;
@@ -79,8 +92,8 @@ export default function PortalPage({
       className={cn(
         // Gutters, unless the page is edge to edge - see the note at the top.
         size !== "full" && "px-4 sm:px-6 lg:px-10",
-        // 5rem is the fixed navbar, the same offset CenteredTopLayout uses.
-        fill ? "flex h-[calc(100dvh-5rem)] flex-col overflow-hidden" : "py-8",
+        // --nav-h is the fixed navbar, the same token CenteredTopLayout uses.
+        fill ? "flex h-[calc(100dvh-var(--nav-h))] flex-col overflow-hidden" : "py-8",
         // With no header there is nothing to sit under, so the content starts
         // near the top rather than a header's distance down. An edge-to-edge
         // page starts at the top itself, and its own bottom edge is a control
@@ -106,17 +119,67 @@ export default function PortalPage({
             {actions && <div className="mb-3 flex shrink-0 justify-end">{actions}</div>}
           </>
         ) : (
-          <header className={cn("border-b border-border", fill ? "mb-4 shrink-0 pb-4" : "mb-8 pb-6")}>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          // -----------------------------------------------------------
+          // THE HEADER, AND WHAT CAME OUT OF IT.
+          //
+          // It was an uppercase eyebrow, a 3xl bold title, a full-size
+          // description and a 6-unit gap above a border - about 150px on
+          // every screen, on top of the chrome above it. Combined with an
+          // 80px navbar and the rail's own 56px header, a third of a laptop
+          // window went by before the first row of data.
+          //
+          // THE EYEBROW ONLY SHOWS WHERE IT SAYS ANYTHING. It reads "Admin"
+          // or "Client" - which the rail already says, permanently, two
+          // inches to the left. Below `md` the rail is a sheet and there is
+          // nothing on screen naming the area, so that is exactly where it
+          // earns its line and the only place it renders.
+          //
+          // THE TITLE IS 2XL SEMIBOLD, NOT 3XL BOLD. A 3xl bold heading over
+          // a muted paragraph is the stock dashboard header, and it competes
+          // with the content for the eye on a screen whose content is the
+          // point. Tighter type plus a figure that means something is what
+          // makes a working instrument look considered.
+          //
+          // THE METRIC IS THE HEADER'S REASON TO BE THAT TALL. Every screen
+          // here is a quantity against an allowance - hours logged of hours
+          // sold, time in a week - and each of them used to render that as a
+          // separate widget below the header, so the header itself carried no
+          // information at all. Set in the mono face, which this palette's
+          // own note reserves for "every figure that lines up in a column".
+          // -----------------------------------------------------------
+          <header className={cn("border-b border-border", fill ? "mb-4 shrink-0 pb-3" : "mb-6 pb-4")}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+              <div className="min-w-0">
+                <p className="font-mono text-[0.625rem] font-medium tracking-[0.18em] text-muted-foreground uppercase md:hidden">
                   {eyebrow}
                 </p>
-                <h1 className="mt-1.5 font-heading text-3xl font-bold text-foreground">{title}</h1>
-                {description && <p className="mt-2 max-w-2xl text-muted-foreground">{description}</p>}
+                <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+                {description && (
+                  <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
+                )}
               </div>
 
-              {actions && <div className="shrink-0">{actions}</div>}
+              {(metric || actions) && (
+                <div className="flex shrink-0 items-center gap-5">
+                  {metric && (
+                    <div className="text-right">
+                      <p
+                        className={cn(
+                          "font-mono text-xl leading-none font-semibold tabular-nums",
+                          metric.tone === "caution" ? "text-data-caution" : "text-foreground",
+                        )}
+                      >
+                        {metric.value}
+                      </p>
+                      <p className="mt-1 font-mono text-[0.625rem] tracking-[0.14em] text-muted-foreground uppercase">
+                        {metric.label}
+                      </p>
+                    </div>
+                  )}
+
+                  {actions && <div className="shrink-0">{actions}</div>}
+                </div>
+              )}
             </div>
           </header>
         )}

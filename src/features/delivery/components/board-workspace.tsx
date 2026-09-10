@@ -26,10 +26,8 @@ import { cn } from "@/lib/utils";
 import { deleteTaskAction, moveTaskAction } from "../delivery-board.actions";
 import { deletePhaseAction, reorderPhasesAction } from "../delivery-setup.actions";
 import {
-  formatMinutesAsClock,
   type BoardDTO,
   type BoardPhaseDTO,
-  type BudgetRollupDTO,
   type PhaseDTO,
   type ProjectMemberDTO,
   type ProjectSummaryDTO,
@@ -100,7 +98,6 @@ export function BoardWorkspace({
   board,
   phaseStats,
   members,
-  rollup,
   yourName,
   yourUserId,
 }: {
@@ -113,7 +110,6 @@ export function BoardWorkspace({
   /** Per-phase totals from the project read, keyed up by phase id below. */
   phaseStats: readonly PhaseDTO[];
   members: readonly ProjectMemberDTO[];
-  rollup: BudgetRollupDTO;
   /** The signed-in person, named on the log-time dialog. Time is always theirs. */
   yourName: string;
   /**
@@ -352,13 +348,12 @@ export function BoardWorkspace({
 
         {/* The open project's board */}
         <section className="min-w-0 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              {formatMinutesAsClock(rollup.loggedMinutes)} logged of {formatMinutesAsClock(rollup.budgetMinutes)}{" "}
-              estimated
-              {rollup.isOverBudget ? ` - ${formatMinutesAsClock(rollup.overMinutes)} over` : ""}
-            </p>
-
+          {/* THE ROLLUP LINE HAS GONE FROM HERE. It said "6h logged of 240h
+              estimated" directly beneath a page header that said nothing at
+              all, so the figure is in the header now - see the `metric` prop
+              on this page - and this row is left with just the controls it
+              always had. One fewer line, and the header earns its height. */}
+          <div className="flex flex-wrap items-center justify-end gap-3">
             <div className="flex flex-wrap items-center gap-2">
               {projectStatus === PROJECT_STATUSES.ACTIVE ? null : (
                 <Badge variant={isArchived ? "destructive" : "warning"}>
