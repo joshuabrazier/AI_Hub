@@ -2,7 +2,7 @@
 
 import type { DragEvent } from "react";
 
-import { ArrowDown, ArrowUp, Clock, EllipsisVertical, Paperclip, Timer, Trash2, UserRound } from "lucide-react";
+import { ArrowDown, ArrowUp, EllipsisVertical, Paperclip, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -23,14 +23,14 @@ import {
 } from "@/lib/data/kysely-database-types";
 import { cn } from "@/lib/utils";
 
-import { formatMinutesAsClock, type TaskCardDTO } from "../delivery.types";
+import { describeTaskEffort, type TaskCardDTO } from "../delivery.types";
 
 // -------------------------------------------------------------------
 // BoardTaskCard
 //
-// One card. Title, the estimate it was given, the time logged against it,
-// who has it and how many files are on it - and nothing else, because that
-// is what fits on something people scan a hundred of.
+// One card. Its title, who has it, its effort as one figure, and a file
+// count when there are files - and nothing else, because that is what fits
+// on something people scan a hundred of, on one line, without wrapping.
 //
 // TWO WAYS TO MOVE IT, AND THE KEYBOARD ONE IS NOT THE FALLBACK. The menu
 // is the real interface: every destination this board has is in it, as
@@ -112,6 +112,8 @@ export function BoardTaskCard({
   onDragStart: (task: TaskCardDTO) => void;
   onDragEnd: () => void;
 }) {
+  const effort = describeTaskEffort(task.estimateMinutes, task.loggedMinutes);
+
   const otherColumns = TASK_COLUMN_ORDER.filter((column) => column !== boardColumn);
   const otherPhases = phases.filter((phase) => phase.phaseId !== task.phaseId);
 
@@ -146,25 +148,52 @@ export function BoardTaskCard({
         {/* Typed by a person, so it renders as a text node and nothing else. */}
         <span className="block text-sm font-medium text-foreground">{task.title}</span>
 
-        <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <Timer size={13} aria-hidden="true" />
-            {task.estimateMinutes > 0 ? `${formatMinutesAsClock(task.estimateMinutes)} estimated` : "No estimate"}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Clock size={13} aria-hidden="true" />
-            {formatMinutesAsClock(task.loggedMinutes)} logged
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <UserRound size={13} aria-hidden="true" />
+        {/* -----------------------------------------------------------
+            ONE LINE, THREE FACTS, AND NO ICONS EXCEPT THE ONE THAT IS
+            CONDITIONAL.
+
+            This was four icon-and-label pairs - estimate, logged, assignee,
+            files - which is a lot of furniture on something people scan a
+            hundred of, and it wrapped to two lines on any card whose title
+            was long. Three of those icons appeared on every card in the
+            same order, so they identified nothing; position does that job
+            for free.
+
+            THE TWO EFFORT FIGURES ARE NOW ONE. See describeTaskEffort: the
+            fact worth scanning for is the ratio, not either number, and a
+            board where four fifths of the cards say "0m logged" is a board
+            spending a third of every row on a constant.
+
+            WHO HAS IT COMES FIRST. It is the field people scan a board by,
+            and it was third of four.
+
+            THE PAPERCLIP STAYS AN ICON because it is the one thing here
+            that is present or absent rather than always present, so it is
+            carrying its own "there are files" meaning as well as a count.
+            ----------------------------------------------------------- */}
+        <span className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span className={cn("min-w-0 truncate", !task.assigneeName && "italic")}>
             {task.assigneeName ?? "Unassigned"}
           </span>
+
+          <span aria-hidden="true">&middot;</span>
+
+          {/* The compact form is not self-describing, so it is hidden from
+              assistive tech and the sentence beside it is what gets read. */}
+          <span
+            aria-hidden="true"
+            className={cn("shrink-0 tabular-nums", effort.isOverBudget && "font-medium text-destructive")}
+          >
+            {effort.short}
+          </span>
+          <span className="sr-only">{effort.full}</span>
+
           {task.attachmentCount > 0 ? (
-            <span className="inline-flex items-center gap-1">
+            <span className="ml-auto inline-flex shrink-0 items-center gap-1">
               <Paperclip size={13} aria-hidden="true" />
-              {task.attachmentCount}
+              <span aria-hidden="true">{task.attachmentCount}</span>
               <span className="sr-only">
-                {task.attachmentCount === 1 ? " attachment" : " attachments"}
+                {task.attachmentCount === 1 ? "1 file attached" : `${task.attachmentCount} files attached`}
               </span>
             </span>
           ) : null}

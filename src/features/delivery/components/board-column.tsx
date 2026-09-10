@@ -98,8 +98,16 @@ export function BoardColumn({
       onDragOver={allowDrop}
       onDragLeave={() => setIsOver(false)}
       onDrop={(event) => dropAt(event, tasks.length)}
+      // A TRANSPARENT BORDER RATHER THAN NO BORDER, so the drop highlight
+      // colours one in instead of adding one - a border appearing on
+      // dragover reflows the whole grid by two pixels under the cursor.
+      //
+      // It used to be a drawn border in every state, which put three nested
+      // outlines on the screen at once: the phase's card, the column, and
+      // the task inside it. The tint is enough to bound a column, and a
+      // board is easier to read with the one box that matters drawn.
       className={cn(
-        "flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-muted/30 p-2 transition-colors",
+        "flex min-w-0 flex-col gap-2 rounded-xl border border-transparent bg-muted/40 p-2 transition-colors",
         isOver && accepts && "border-primary bg-primary/5",
       )}
     >

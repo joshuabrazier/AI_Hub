@@ -551,6 +551,65 @@ export function budgetProgress(budgetMinutes: number, loggedMinutes: number): Bu
   };
 }
 
+/**
+ * One task's effort, in the two forms a card needs.
+ *
+ * A BOARD CARD IS SCANNED, NOT READ, and it used to carry the estimate and
+ * the logged time as two separate labelled figures - "8h estimated", "0m
+ * logged" - side by side on every card. Four fifths of a board is To do, so
+ * four fifths of those said "0m logged", which is a third of the row spent
+ * on a figure that is the same everywhere and therefore says nothing. Worse,
+ * the fact somebody is actually looking for is the RELATIONSHIP between the
+ * two, and finding it meant reading two strings and doing the comparison.
+ *
+ * `short` does the comparison: `logged / estimate`, one figure, with the
+ * over-budget case flagged so a card in trouble can be coloured. It is
+ * deliberately consistent - a fresh card reads "0m / 8h" rather than a bare
+ * "8h" - because a form that changes shape has to be re-parsed each time.
+ *
+ * `full` is the same thing as a sentence, and it is not decoration: `short`
+ * is not self-describing, so the card renders it aria-hidden and gives this
+ * to a screen reader. Never show only `short` without it.
+ */
+export type TaskEffortDescription = {
+  short: string;
+  full: string;
+  isOverBudget: boolean;
+};
+
+export function describeTaskEffort(
+  estimateMinutes: number,
+  loggedMinutes: number,
+): TaskEffortDescription {
+  const estimate = Math.max(0, Math.round(estimateMinutes));
+  const logged = Math.max(0, Math.round(loggedMinutes));
+
+  // NO ESTIMATE IS NOT A ZERO ESTIMATE, and the whole module holds that
+  // line - unestimated work is never folded into a total as nought. So
+  // there is no ratio to show and the card says which it is.
+  if (estimate === 0) {
+    if (logged === 0) {
+      return { short: "No estimate", full: "No estimate, and no time logged yet", isOverBudget: false };
+    }
+
+    const clock = formatMinutesAsClock(logged);
+
+    return { short: `${clock} logged`, full: `${clock} logged, against no estimate`, isOverBudget: false };
+  }
+
+  const loggedClock = formatMinutesAsClock(logged);
+  const estimateClock = formatMinutesAsClock(estimate);
+  const isOverBudget = logged > estimate;
+
+  return {
+    short: `${loggedClock} / ${estimateClock}`,
+    full: isOverBudget
+      ? `${loggedClock} logged of ${estimateClock} estimated, ${formatMinutesAsClock(logged - estimate)} over`
+      : `${loggedClock} logged of ${estimateClock} estimated`,
+    isOverBudget,
+  };
+}
+
 // -------------------------------------------------------------------
 // ===================================================================
 // CHARGED TIME, SPENT TIME, AND WHAT IT NOW LOOKS LIKE IT WILL TAKE

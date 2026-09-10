@@ -39,6 +39,7 @@ import { getTaskDetailAction } from "../delivery-board.actions";
 import { deleteTimeEntryAction } from "../delivery-time.actions";
 import {
   budgetProgress,
+  describeTaskEffort,
   formatMinutesAsClock,
   type ProjectMemberDTO,
   type TaskCardDTO,
@@ -433,13 +434,13 @@ export function BoardTaskPanel({
               Effort
             </h3>
 
-            {/* The figures are the accessible version; the bar is decoration
-                over them, which is why it is hidden from assistive tech. */}
+            {/* THE SAME SENTENCE THE CARD READS OUT, from the same function,
+                so the panel and the card it was opened from cannot word one
+                fact two ways. The figures are the accessible version; the
+                bar is decoration over them, which is why it is hidden from
+                assistive tech. */}
             <p className="mt-1 text-sm text-muted-foreground">
-              {card.estimateMinutes > 0
-                ? `${formatMinutesAsClock(card.loggedMinutes)} logged of ${formatMinutesAsClock(card.estimateMinutes)} estimated`
-                : `${formatMinutesAsClock(card.loggedMinutes)} logged, no estimate set`}
-              {rollup.isOverBudget ? ` - ${formatMinutesAsClock(rollup.overMinutes)} over` : ""}
+              {describeTaskEffort(card.estimateMinutes, card.loggedMinutes).full}
             </p>
 
             {rollup.percentUsed !== null ? (
