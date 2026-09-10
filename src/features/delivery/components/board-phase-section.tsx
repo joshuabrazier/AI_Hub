@@ -103,7 +103,7 @@ export function BoardPhaseSection({
               One form, read once, applies everywhere on the screen. */}
           <p className="mt-0.5 text-xs text-muted-foreground">
             {cardCount === 1 ? "1 task" : `${cardCount} tasks`}
-            <span aria-hidden="true" className="font-mono"> &middot; {effort.short}</span>
+            <span aria-hidden="true" className="figure"> &middot; {effort.short}</span>
             <span className="sr-only">, {effort.full}</span>
           </p>
         </div>

@@ -17,45 +17,58 @@ import { cn } from "@/lib/utils";
 // THE RAIL
 // ===================================================================
 //
-// IT USED TO BE A SATURATED TEAL SLAB, and that was the single most
-// templated thing about this app - a block of brand colour down the left of
-// every screen is the look every admin panel has had since about 2014. It was
-// also a direct contradiction of this palette's own note, which says the
-// sidebar is "near-white, separated from the content by its border rather than
-// by a fill, so the app chrome does not darken the page". That was written and
-// never built: sidebar.tsx said `bg-primary dark:bg-sidebar`, so every
-// --sidebar-* token was dead in light mode, and the rows styled themselves
-// with hardcoded `text-white/85`, `bg-white/20`, `border-white/15`.
+// THE RAIL IS COLOURED, AND IT TOOK TWO GOES TO GET HERE. Both are recorded
+// because the second one is only defensible against the first.
 //
-// That last part was a rebranding hazard as well as a look. This repo's rule
-// is that rebranding is one file - the tokens - and a rail painted in
-// `--primary` with white text on top of it breaks the moment somebody's brand
-// colour is a light one. The nav would go invisible and nothing in the token
-// file would explain why.
+// It was `bg-primary dark:bg-sidebar` hardcoded in this file, with rows in
+// `text-white/85`, `bg-white/20` and `border-white/15`. Two things were wrong
+// with that and only one of them was the colour: every --sidebar-* token was
+// dead in light mode, and a rail painted in `--primary` with literal white on
+// it breaks the moment somebody's brand colour is a light one - the nav goes
+// invisible and nothing in the token file explains why. This repo's rule is
+// that rebranding is one file.
 //
-// So the rail is the near-white surface it was specified as, and the brand
-// teal becomes rare rather than constant: it is on filled buttons, on figures
-// that must be read, and on the ONE mark below.
+// The fix for that was to make the rail the near-white surface the tokens
+// described. THAT WAS A WORSE SCREEN. A near-white rail beside a white canvas
+// took out the last large area of colour in the app, and what was left was
+// one value everywhere with grey labels on it. "Predominantly white" is a
+// good argument for a canvas and a bad one for the chrome around it: the rail
+// is what frames the page, and a frame needs to be a different thing from
+// what it frames.
+//
+// So: a deep teal rail, and the colours live in the tokens. The component
+// knows the names `--sidebar`, `--sidebar-foreground`,
+// `--sidebar-muted-foreground`, `--sidebar-accent` and `--sidebar-mark`, and
+// not one value. That keeps the real fix from the first attempt and drops the
+// part of it that was wrong.
 //
 // -------------------------------------------------------------------
-// THE MARK. `--signal` is documented as the brighter teal for "the active nav
-// item, the unread dot" and was used in exactly one place in the whole app -
-// an icon picker. The system had a mark colour and marked nothing. The current
-// page now gets a 3px signal bar flush to the rail's edge, in the margin, with
-// a soft accent fill behind the row. That bar is the only saturated colour in
-// the chrome, which is what makes it findable at a glance.
+// THE MARK is `--sidebar-mark`, not `--signal`. Signal is documented as the
+// brighter teal for "the active nav item" and was used in exactly one place
+// in the app - but it was chosen to read on WHITE, and on a deep teal rail it
+// sits near enough to the background to vanish. A mark you have to hunt for
+// is not a mark. The rail carries its own, bright enough to read as a light
+// on it, and the active row takes a lighter fill of the rail's own hue
+// underneath it.
 //
 // -------------------------------------------------------------------
 // IT IS SECTIONED NOW. `useNavGroups` has always returned groups with labels,
 // and this file threw them away with a comment saying "the group labels exist
 // so a later stage can section it". Admin sees six groups - Overview, People,
 // Delivery, Projects, Time and billing, Settings - flattened into one
-// fifteen-item list, which is a scan every single time rather than a look. The
-// labels are set in the mono face, which the token file describes as the
-// utility face for exactly this: "eyebrows, labels".
+// fifteen-item list, which is a scan every single time rather than a look.
 //
-// Collapsed, there is no room for a label, so a group becomes a hairline rule.
-// The grouping still reads; it just stops being named.
+// THE LABELS ARE SENTENCE CASE IN THE BODY FACE, and that is the second
+// reversal in this file. They were 10px Plex Mono, uppercase, letter-spaced
+// to 0.18em, on the grounds that the palette reserves the mono face for
+// "eyebrows, labels". On screen, tracked mono uppercase is the most
+// identifiable machine-generated label treatment there is, and it made the
+// section names harder to read than the links beneath them. Weight and
+// colour separate them instead.
+//
+// Collapsed, there is no room for a label, so a group becomes a hairline rule
+// and the name goes `sr-only` - the grouping still reads and is still
+// announced; it just stops being drawn.
 //
 // -------------------------------------------------------------------
 // THE ROWS HAVE HONEST GEOMETRY. A row was `h-10` containing a `size-10` icon
@@ -70,19 +83,30 @@ import { cn } from "@/lib/utils";
 
 /** The shared row shape, so a link, a group header and a child cannot drift. */
 const ROW =
-  "group relative flex items-center rounded-md text-sm transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none";
+  "group relative flex items-center rounded-md text-sm transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring/60 focus-visible:outline-none";
 
-const ROW_IDLE = "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
-const ROW_ACTIVE = "bg-sidebar-accent font-medium text-sidebar-accent-foreground";
+// ON THE RAIL'S OWN TOKENS, NOT THE PAGE'S. `text-muted-foreground` was
+// correct while the rail was near-white and is unreadable on a deep teal
+// one - which is exactly the trap the original `text-white/85` was in, just
+// pointing the other way. `--sidebar-muted-foreground` is the rail's idle
+// ink and is measured against the rail.
+const ROW_IDLE =
+  "text-sidebar-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground";
+const ROW_ACTIVE = "bg-sidebar-accent font-semibold text-sidebar-accent-foreground";
 
 /**
- * The "you are here" bar: 3px of signal in the rail's own margin.
+ * The "you are here" bar: 3px in the rail's own margin.
+ *
+ * `--sidebar-mark` rather than `--signal`. Signal is a mid teal chosen to
+ * read on WHITE, and on a deep teal rail it is close enough to the
+ * background to disappear - a mark that needs hunting for is not a mark. The
+ * rail carries its own, bright enough to read as a light on it.
  *
  * A pseudo-element rather than a real node so it cannot be tabbed to or read
  * out - the row already carries `aria-current`, which is what announces this.
  */
 const MARK =
-  "before:absolute before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r-full before:bg-signal before:content-['']";
+  "before:absolute before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r-full before:bg-sidebar-mark before:content-['']";
 
 // -------------------------------------------------------------------
 // A single top-level link row.
@@ -163,7 +187,7 @@ function NavCollapsibleRow({
         collapsed ? "mx-1.5 w-[calc(100%-0.75rem)] justify-center" : "mx-2 w-[calc(100%-1rem)] gap-2.5 px-2.5",
         // A group whose child is open is not itself the current page, so it
         // gets the weight without the mark - the mark is on the child.
-        childActive ? "font-medium text-sidebar-accent-foreground" : ROW_IDLE,
+        childActive ? "font-semibold text-sidebar-foreground" : ROW_IDLE,
       )}
     >
       <Icon size={18} aria-hidden="true" className="shrink-0" />
@@ -173,7 +197,7 @@ function NavCollapsibleRow({
           <ChevronRight
             size={14}
             aria-hidden="true"
-            className={cn("ml-auto shrink-0 text-muted-foreground/70 transition-transform", open && "rotate-90")}
+            className={cn("ml-auto shrink-0 text-sidebar-muted-foreground transition-transform", open && "rotate-90")}
           />
         </>
       )}
@@ -295,13 +319,24 @@ export default function Sidebar() {
             <div key={group.label} role="group" aria-labelledby={labelId}>
               {collapsed && groupIndex > 0 && <hr aria-hidden="true" className="mx-3 my-2 border-sidebar-border" />}
 
+              {/* SENTENCE CASE, IN THE BODY FACE. This was 10px Plex Mono,
+                  uppercase, letter-spaced to 0.18em - and tracked mono
+                  uppercase is the single most identifiable
+                  machine-generated label treatment there is. It also made
+                  the section names harder to read than the links under
+                  them, which is backwards for the thing that tells you
+                  where you are in a fifteen-item nav.
+
+                  Weight and colour do the separating instead: semibold, at
+                  the rail's brightest ink, against links that are dimmer
+                  and lighter. */}
               <p
                 id={labelId}
                 className={cn(
                   collapsed
                     ? "sr-only"
                     : cn(
-                        "px-4 pb-1.5 font-mono text-[0.625rem] font-medium tracking-[0.18em] text-muted-foreground/75 uppercase",
+                        "px-2.5 pb-1 text-xs font-semibold text-sidebar-foreground/70",
                         groupIndex === 0 ? "pt-1" : "pt-5",
                       ),
                 )}

@@ -37,7 +37,7 @@ export default function SiteFooter() {
           </nav>
         </div>
 
-        <p className="mt-10 font-mono text-xs text-muted-foreground">{copyrightLine()}</p>
+        <p className="mt-10 text-xs text-muted-foreground">{copyrightLine()}</p>
       </Container>
     </footer>
   );

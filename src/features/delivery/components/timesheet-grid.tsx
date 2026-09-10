@@ -122,7 +122,7 @@ export function TimesheetGrid({
               {/* The date is a figure and sits directly above a column of
                   them, so it takes the same face. The day NAME stays in the
                   sans, because it is a word. */}
-              <span className="block font-mono text-[0.6875rem] font-normal text-muted-foreground">
+              <span className="block text-[0.6875rem] font-normal text-muted-foreground">
                 {formatIsoDate(date, DAY_DATE_FORMAT)}
               </span>
             </TableHead>

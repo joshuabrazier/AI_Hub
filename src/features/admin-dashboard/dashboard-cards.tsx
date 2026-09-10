@@ -54,32 +54,52 @@ export function StatTile({
   href?: string;
 }) {
   const body = (
-    <CardContent className="p-4">
-      <p className="flex items-center gap-1.5 font-mono text-[0.625rem] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-        {/* Small and muted rather than a filled chip. It differentiates one
-            tile from the next in a grid where the figures are all just
-            numbers, and it is the only decoration on the tile. */}
-        <Icon size={12} aria-hidden="true" />
-        <span className="min-w-0 truncate">{label}</span>
+    <CardContent className="flex items-center gap-3.5 p-4">
+      {/* -----------------------------------------------------------
+          A TINTED CHIP, WHICH IS THE MIDDLE OF TWO EXTREMES.
 
-        {/* THE TILE IS A LINK AND SHOULD LOOK LIKE ONE. Nothing said so
-            before: the whole card was clickable with no affordance on it at
-            all, which is a hit area people find by accident. */}
-        {/* VISIBLE AT REST, not revealed on hover. A touch screen has no
-            hover, so a hover-only affordance is no affordance at all on the
-            devices least able to guess that a card is a link. It brightens
-            on hover instead, which is the state change doing its actual job:
-            confirming the target rather than announcing it. */}
-        {href && (
-          <ArrowUpRight
-            size={12}
-            aria-hidden="true"
-            className="ml-auto shrink-0 opacity-40 transition-opacity group-hover/tile:opacity-100"
-          />
-        )}
-      </p>
+          The dead `BrandChip` this replaces was a 48px SOLID brand fill with
+          a white glyph - three of those in a row was the loudest thing on
+          the page and the figures were competing with their own decoration.
+          The version after it dropped the chip entirely for a 12px muted
+          glyph inline with the label, and that went too far the other way:
+          the dashboard ended up with no colour on it at all.
 
-      <p className="mt-2 text-3xl leading-none font-semibold figure text-foreground">{value}</p>
+          A tint of the brand at 10% with the glyph in full brand carries the
+          colour without shouting, and it is the same device the rest of the
+          app uses for a quiet branded surface.
+          ----------------------------------------------------------- */}
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <Icon size={19} aria-hidden="true" />
+      </span>
+
+      <div className="min-w-0 flex-1">
+        {/* SENTENCE CASE, IN THE BODY FACE. This was 10px mono, uppercase,
+            letter-spaced to 0.16em. The labels are already written as
+            sentences ("Active members"), so the treatment was fighting the
+            copy as well as reading as generated. */}
+        <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+          <span className="min-w-0 truncate">{label}</span>
+
+          {/* THE TILE IS A LINK AND SHOULD LOOK LIKE ONE. Nothing said so
+              before: the whole card was clickable with no affordance at all,
+              which is a hit area people find by accident.
+
+              VISIBLE AT REST, not revealed on hover - a touch screen has no
+              hover, so a hover-only affordance is none at all on the devices
+              least able to guess a card is a link. It brightens on hover
+              instead, which is the state change doing its actual job. */}
+          {href && (
+            <ArrowUpRight
+              size={13}
+              aria-hidden="true"
+              className="ml-auto shrink-0 text-primary/50 transition-colors group-hover/tile:text-primary"
+            />
+          )}
+        </p>
+
+        <p className="mt-1 font-heading text-3xl leading-none font-bold figure text-foreground">{value}</p>
+      </div>
     </CardContent>
   );
 

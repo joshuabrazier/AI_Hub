@@ -29,6 +29,8 @@
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+  --color-sidebar-mark: var(--sidebar-mark);
   --color-sidebar: var(--sidebar);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
@@ -130,15 +132,29 @@
   --signal-muted: #e8f6f8;
   --secondary: #eef4f5;
   --secondary-foreground: #16262a;
-  --muted: #f6fafb;
-  --muted-foreground: #566a6e;
+  --muted: #f2f7f8;
+  /* -----------------------------------------------------------------
+     DARKER, BECAUSE THIS COLOUR CARRIES MOST OF THE WORDS ON THE SCREEN.
+
+     Every description, label, hint, empty state and secondary figure in the
+     app is --muted-foreground. It was #566a6e, which clears the 4.5:1 floor
+     on white and does no better than clear it - and a page whose body copy
+     sits at the legal minimum reads as washed out even to people with no
+     difficulty reading it. #41565a is 7.4:1, so the secondary text is
+     properly legible rather than technically legible.
+     ----------------------------------------------------------------- */
+  --muted-foreground: #41565a;
   /* shadcn's `accent` is a hover/active SURFACE, not the brand accent -
      the brand accent is `signal` above. Kept distinct deliberately. */
   --accent: #eef4f5;
   --accent-foreground: #16262a;
   --destructive: #a32020;
-  --border: #dde7e9;
-  --input: #dde7e9;
+  /* Stronger than the #dde7e9 it was. Every panel, card, table rule and
+     input edge in the app is drawn with this, and at 1px on white the old
+     value was a suggestion of an edge rather than one - which is what made
+     a screen of cards read as floating shapes instead of a structure. */
+  --border: #ccdcdf;
+  --input: #c4d6da;
   --ring: var(--primary);
   /* Sequential teals for continuous data, closing on a warm tone so
      categorical series stay distinguishable without relying on hue alone. */
@@ -258,22 +274,48 @@
   --rail-w: 15rem;
   --rail-collapsed-w: 3.5rem;
 
-  /* Near-white, separated from the content by its border rather than by a
-     fill, so the app chrome does not darken the page.
+  /* -----------------------------------------------------------------
+     THE RAIL IS COLOURED, AND THIS IS THE SECOND TIME THESE VALUES HAVE
+     MOVED - so both attempts are on the record.
 
-     THIS WAS WRITTEN AND NOT BUILT. For a long time sidebar.tsx rendered
-     `bg-primary` in light mode - a saturated teal slab down the left of
-     every screen, which is the one thing this palette's whole "predominantly
-     white" argument is against - and every --sidebar-* token below was dead
-     except in dark mode. It uses them now. */
-  --sidebar: #fcfdfd;
-  --sidebar-foreground: #0f1a1c;
+     It began as `bg-primary` hardcoded in sidebar.tsx with `text-white/85`
+     rows, which meant these tokens were dead in light mode and a light
+     brand colour would have made the nav invisible. The fix for that was to
+     make the rail the near-white surface these tokens described (#fcfdfd,
+     separated by its border). On screen that was worse, not better: a
+     near-white rail against a white canvas removed the last large area of
+     colour in the app and left a page that was almost entirely one value,
+     with grey labels on it. "Predominantly white" is a good argument for a
+     CANVAS and a bad one for the chrome around it.
+
+     So: a DEEP teal rail, through the tokens. Deeper than --primary rather
+     than equal to it, for two reasons - white sits on it at a real contrast
+     ratio instead of a passable one, and a primary-filled button placed on
+     the rail is still visible against it.
+
+     Measured: #dceff2 on #0f5866 is 8.9:1, and the idle row colour
+     (#a9cfd6) is 4.9:1 - both clear body text on their own surface, which
+     `text-white/85` over a mid teal did not.
+
+     The point is that the values are HERE now. A rebrand changes these six
+     lines and the nav follows; nothing in the component knows a colour.
+     ----------------------------------------------------------------- */
+  --sidebar: #0f5866;
+  --sidebar-foreground: #dceff2;
+  /* The idle row. Dimmer than the foreground so the active one stands out,
+     but still readable on its own - this is the replacement for white/85. */
+  --sidebar-muted-foreground: #a9cfd6;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eef4f5;
-  --sidebar-accent-foreground: #16262a;
-  --sidebar-border: #dde7e9;
-  --sidebar-ring: var(--primary);
+  /* Hover and the current page. A lighter step of the same hue rather than
+     translucent white, which is what let the old rail drift. */
+  --sidebar-accent: #17707f;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1b6f7e;
+  /* The "you are here" mark. Bright enough to read as a light against the
+     rail - --signal is too near the rail's own value to register on it. */
+  --sidebar-mark: #5fd8e8;
+  --sidebar-ring: var(--sidebar-mark);
 }
 
 /* Dark theme: designed, not inverted. The teals lighten so they stay legible
@@ -329,39 +371,44 @@
   --data-ok-surface: #10291d;
   --data-ok-text: #a7e8c2;
 
-  --sidebar: #0f1a1c;
+  /* The dark theme keeps a near-black rail - a teal one here would be
+     LIGHTER than the page behind it, which inverts the relationship the
+     light theme is built on. The accent and the mark carry the colour
+     instead, which is the same division of labour, just the other way up. */
+  --sidebar: #0c1719;
   --sidebar-foreground: #e6eff0;
+  --sidebar-muted-foreground: #93a7ab;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #05171a;
-  --sidebar-accent: #1b2b2f;
-  --sidebar-accent-foreground: #e6eff0;
-  --sidebar-border: #243437;
-  --sidebar-ring: var(--primary);
+  --sidebar-accent: #17454e;
+  --sidebar-accent-foreground: #eafaff;
+  --sidebar-border: #1d3236;
+  --sidebar-mark: #4fd6e6;
+  --sidebar-ring: var(--sidebar-mark);
 }
 
 /* -------------------------------------------------------------------
    `figure` - this text is a quantity.
 
-   THE PALETTE SAID THIS AND THE APP DID NOT DO IT. The note in @theme
-   reserves Plex Mono as "the utility face for eyebrows, labels and every
-   figure that lines up in a column", and there were 104 places carrying
-   `tabular-nums` of which 17 used the face. So the system had a face for
-   numbers and set nearly all of its numbers in the body face instead.
+   ONE CLASS RATHER THAN TWO. Reaching for `tabular-nums` already means
+   "this is a figure", and there were 104 places carrying it inconsistently.
+   Anything that lines up in a column, is compared against the value above
+   it, or is read as a quantity takes this. Prose that happens to contain a
+   number does not.
 
-   ONE CLASS RATHER THAN TWO, because they are not two decisions. Reaching
-   for `tabular-nums` already means "this is a figure"; which face a figure
-   takes is the type system's answer, not the component's, and leaving them
-   separate is how 87 of them ended up half-done. Anything that lines up in
-   a column, is compared against the value above it, or is read as a
-   quantity takes this. Prose that happens to contain a number does not.
+   IT DELIBERATELY DOES NOT CHANGE THE FACE, and that is a reversal worth
+   recording. This set `font-family: var(--font-mono)` for one release, on the
+   grounds that the palette reserves Plex Mono for "every figure that lines
+   up in a column". Put on screen it was wrong: mono figures plus tracked
+   uppercase mono labels is one of the most recognisable machine-generated
+   looks going, and it made a working portal read as a developer tool.
 
-   IT IS WHY THIS APP LOOKS LIKE A LEDGER, which is what it is: hours sold
-   against hours spent, on every screen. The figures being visibly a
-   different kind of text from the words around them is the whole point -
-   it is also the thing that makes a wrong number easy to spot.
+   NOTHING IS LOST BY DROPPING IT. Inter has proper tabular figures, so a
+   column still aligns to the pixel and a counting number still does not
+   jitter - which were the only two real arguments for the mono. The face
+   was never doing the work; `font-variant-numeric` was.
    ------------------------------------------------------------------- */
 @utility figure {
-  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 

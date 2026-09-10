@@ -53,7 +53,7 @@ export default function Logo({
       />
       <span className="flex flex-col gap-0.5 text-left leading-none">
         <span className={cn("font-heading font-bold tracking-tight text-foreground", sizes.primary)}>{BRAND.name}</span>
-        <span className={cn("font-mono uppercase tracking-[0.2em] text-muted-foreground", sizes.secondary)}>
+        <span className={cn("font-semibold uppercase tracking-[0.08em] text-primary", sizes.secondary)}>
           {BRAND.shortName}
         </span>
       </span>

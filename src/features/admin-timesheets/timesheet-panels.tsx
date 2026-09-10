@@ -122,33 +122,30 @@ export function StatTile({
       <LiftOnHover className="h-full">
         <Card className={cn("h-full", emphasis === "alert" && "border-destructive/40")}>
           <CardContent className="p-4">
-            {/* The same mono utility face as the rail's section labels, the
-                table column headings and the page header's metric label -
-                all four are naming something rather than being it. */}
-            <p className="font-mono text-[0.625rem] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-              {label}
-            </p>
+            {/* Sentence case, body face. This was briefly 10px tracked mono
+                uppercase, along with every other label in the app, and it
+                read as generated - see the note on the `figure` utility in
+                globals.css for the reversal. */}
+            <p className="text-xs font-semibold text-muted-foreground">{label}</p>
 
             {/* -----------------------------------------------------------
                 THE FIGURE, AND A REAL BUG THAT WENT WITH IT.
 
-                This was `font-heading text-3xl font-bold` with no tabular
-                numerals - so every headline figure across the timesheets was
-                set in IBM Plex Sans, proportionally spaced. The number
-                inside it COUNTS UP (see AnimatedNumber), and in a
-                proportional face the digits are different widths, so the
-                figure visibly jitters left and right the whole way there.
-                That is not a taste call: an animated number needs tabular
-                digits or it wobbles.
+                This had NO tabular numerals, and the number inside it COUNTS
+                UP (see AnimatedNumber). In a proportionally spaced face the
+                digits are different widths, so the figure visibly jittered
+                left and right the whole way there. That is not a taste call:
+                an animated number needs tabular digits or it wobbles.
 
-                `figure` carries the mono face and the tabular numerals
-                together, which is why it exists. Semibold rather than bold:
-                mono runs wider and heavier at the same nominal size, so bold
-                at 3xl was shouting.
+                `figure` supplies exactly that and nothing else. It briefly
+                also forced the mono face, which fixed the wobble and made
+                every headline number in the app look like console output;
+                Plex Sans has proper tabular figures, so the heading face
+                stays and the wobble is still gone.
                 ----------------------------------------------------------- */}
             <p
               className={cn(
-                "mt-2 text-3xl leading-none font-semibold figure",
+                "mt-2 font-heading text-3xl leading-none font-bold figure",
                 emphasis === "muted" && "text-muted-foreground",
                 emphasis === "alert" && "text-destructive",
                 emphasis === "normal" && "text-foreground",

@@ -150,9 +150,7 @@ export default function PortalPage({
           <header className={cn("border-b border-border", fill ? "mb-4 shrink-0 pb-3" : "mb-6 pb-4")}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
               <div className="min-w-0">
-                <p className="font-mono text-[0.625rem] font-medium tracking-[0.18em] text-muted-foreground uppercase md:hidden">
-                  {eyebrow}
-                </p>
+                <p className="text-xs font-semibold text-primary md:hidden">{eyebrow}</p>
                 <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance text-foreground">
                   {title}
                 </h1>
@@ -176,14 +174,20 @@ export default function PortalPage({
                       No interactive elements are involved, so there is no
                       focus order to disagree with. */}
                   {metric && (
-                    <dl className="flex flex-col-reverse text-right">
-                      <dt className="mt-1 font-mono text-[0.625rem] tracking-[0.14em] text-muted-foreground uppercase">
-                        {metric.label}
-                      </dt>
+                    <dl className="flex flex-col-reverse rounded-lg border border-border bg-secondary px-3.5 py-2 text-right">
+                      <dt className="mt-0.5 text-xs font-semibold text-muted-foreground">{metric.label}</dt>
                       <dd
                         className={cn(
-                          "text-xl leading-none font-semibold figure",
-                          metric.tone === "caution" ? "text-data-caution" : "text-foreground",
+                          // COLOURED, AND ON ITS OWN SURFACE. As plain dark
+                          // text floating beside the title it was just
+                          // another string in a header that already had
+                          // three; the point of putting a figure up here was
+                          // that it is the one thing on the screen worth
+                          // seeing first. A tinted plate and the brand
+                          // colour make it read as an instrument panel
+                          // rather than as a subtitle.
+                          "font-heading text-2xl leading-none font-bold figure",
+                          metric.tone === "caution" ? "text-data-caution" : "text-primary",
                         )}
                       >
                         {metric.value}

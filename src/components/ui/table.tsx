@@ -20,20 +20,22 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
 }
 
 // -------------------------------------------------------------------
-// NO TINTED BAND. This was `bg-primary/10`, so every table in the app wore a
-// teal stripe across the top - which alongside the teal rail was the second
-// large block of brand colour on screen, and it competed with the one mark
-// that is supposed to mean something.
+// THE BAND STAYS. It was briefly removed - the argument being that a header
+// is a set of labels rather than data, so the rule under it should do the
+// separating and the labels themselves should recede. Two of those things
+// are true and the conclusion was not: with no fill, a wide table's header
+// stops being a distinct object and the first data row reads as part of it.
 //
-// A HEADER IS A SET OF LABELS, NOT DATA, and it should read that way: the
-// rule under it is what separates it from the rows, and the labels themselves
-// recede. See TableHead for the type treatment that does the receding.
+// `bg-secondary` rather than the `bg-primary/10` it was. Both are tints of
+// the brand hue and this one is the token that exists for a quiet surface,
+// so the band no longer changes colour if `--primary` is re-tinted for a
+// different brand.
 // -------------------------------------------------------------------
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b [&_tr]:hover:bg-transparent", className)}
+      className={cn("bg-secondary [&_tr]:border-b [&_tr]:hover:bg-transparent", className)}
       {...props}
     />
   )
@@ -81,23 +83,26 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
 }
 
 // -------------------------------------------------------------------
-// A COLUMN HEADING IS AN EYEBROW. Set in the mono utility face, small,
-// tracked and muted - the same treatment the rail's section labels and the
-// page header's metric label get, because they are all doing the same job:
-// naming something rather than being the something.
+// A COLUMN HEADING IS A LABEL, and it is set one size down and one weight up
+// from the data - not in a different typeface.
 //
-// It used to be `text-foreground font-medium` at the body size, so a heading
-// carried the same weight and colour as the data underneath it and the eye
-// had to find the rule to tell them apart. Making the labels quieter is what
-// lets the figures be the loudest thing in a table, which is the entire
-// point of one.
+// It was briefly 11px Plex Mono, uppercase, letter-spaced and muted, on the
+// argument that a heading should recede so the figures lead. It receded too
+// far and it took the whole table's character with it: tracked mono
+// uppercase reads as generated, and at 11px muted on a tinted band a long
+// column name was genuinely harder to read than the numbers under it.
+//
+// `text-xs font-semibold text-foreground` on the tinted band does the same
+// job honestly - smaller than the rows, heavier than the rows, and the band
+// separates them. The DOM text keeps its own case either way, so nothing
+// here changes what a screen reader says.
 // -------------------------------------------------------------------
 function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   return (
     <th
       data-slot="table-head"
       className={cn(
-        "h-9 px-2 text-left align-middle font-mono text-[0.6875rem] font-medium tracking-[0.08em] whitespace-nowrap text-muted-foreground uppercase [&:has([role=checkbox])]:pr-0",
+        "h-9 px-2 text-left align-middle text-xs font-semibold whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
