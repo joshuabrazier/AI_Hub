@@ -37,12 +37,20 @@
 -- ADD VALUE inside a transaction is allowed from Postgres 12 on; the new
 -- member cannot be USED until this commits, which costs nothing - the first
 -- row using it is written at runtime.
+--
+-- NUMBERED 025 BECAUSE 023 AND 024 WERE TAKEN while this branch was being
+-- written - 023_project_charged_time and 024_drop_teams both landed on
+-- development and are already applied to the shared dev database. Renaming
+-- was free only because this one had not been applied anywhere yet; a
+-- migration that HAS been applied cannot be renamed without an accompanying
+-- UPDATE to schema_migrations, which is a different and worse afternoon.
+-- Run pnpm db:check before adding a migration, not after.
 ---------------------------------------------------------------------
 
 BEGIN;
 
 ALTER TYPE transcription_filing_status ADD VALUE IF NOT EXISTS 'awaiting_approval';
 
-INSERT INTO schema_migrations (filename) VALUES ('023_transcription_filing_approval.sql');
+INSERT INTO schema_migrations (filename) VALUES ('025_transcription_filing_approval.sql');
 
 COMMIT;
