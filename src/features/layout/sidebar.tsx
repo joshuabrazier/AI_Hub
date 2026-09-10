@@ -17,33 +17,42 @@ import { cn } from "@/lib/utils";
 // THE RAIL
 // ===================================================================
 //
-// THE RAIL IS QUIET, AND IT TOOK THREE GOES TO ACCEPT THAT.
+// THE RAIL IS A LIGHT TINTED PANEL. It took four goes, so the whole path is
+// here - if you are about to change it again, one of these is probably the
+// thing you are about to re-try.
 //
-// It was `bg-primary dark:bg-sidebar` hardcoded here, with rows in
-// `text-white/85`, `bg-white/20` and `border-white/15`. Two things were wrong
-// and only one of them was the colour: every --sidebar-* token was dead in
-// light mode, and a rail painted in `--primary` with literal white on it goes
-// unreadable the moment somebody's brand colour is a light one. This repo's
-// rule is that rebranding is one file.
+//   1. `bg-primary dark:bg-sidebar` HARDCODED HERE, rows in `text-white/85`,
+//      `bg-white/20`, `border-white/15`. A mid-teal slab. The colour was
+//      arguable; the hardcoding was not - every --sidebar-* token was dead in
+//      light mode, and a rail painted in --primary with literal white on it
+//      goes unreadable the moment somebody's brand colour is a light one.
+//      This repo's rule is that rebranding is one file.
 //
-// Replacing it with the near-white surface the tokens describe left the app
-// with no large area of colour anywhere, because the same pass had also taken
-// the tint off the tables and the fill off the dashboard chips. Reading that
-// as "the rail needs colour back" produced a deep teal slab that was worse
-// than either - the frame shouting over the thing it frames, and a second
-// teal column beside it on the chat screen.
+//   2. #fcfdfd, the near-white the tokens described. White in all but name.
+//      It read as no rail at all, and it landed in the same pass that took
+//      the tint off the tables and the fill off the dashboard chips, so the
+//      whole app went colourless at once.
 //
-// SO THE SURFACE STAYS QUIET AND THE MARKS CARRY THE COLOUR. The rail is
-// near-white, separated by its border rather than by a fill - which is what
-// the note on --sidebar said from the start - and the teal is on the things
-// inside it: the icons, the section names, the current row. A large area of
-// one hue and a small area of it are completely different decisions, and
-// conflating them is what produced the slab.
+//   3. #0f5866, a DEEP teal. Reading "the app has no colour" as "the rail
+//      needs colour" - and a large area of saturated hue is not the same
+//      decision as a small one. The frame shouted over the thing it frames,
+//      and on the chat screen it put a second teal column beside itself.
 //
-// What survives from the detour is the token SHAPE: this component knows
+//   4. Colour on the WRITING - teal icons, teal section names, light surface.
+//      Also wrong, and wrong in a way worth naming: it answered "add colour"
+//      with three small applications of one hue instead of the one large
+//      surface that was actually being asked for.
+//
+// So: #e9f2f4. Coloured and still light. The rail reads as chrome, the canvas
+// beside it reads as paper, and the tint is where that difference lives
+// rather than a hairline doing all the work. The marks inside it are neutral,
+// because the surface is the coloured thing now.
+//
+// What survives from all of it is the token SHAPE: this component knows
 // `--sidebar`, `--sidebar-foreground`, `--sidebar-muted-foreground`,
 // `--sidebar-accent` and `--sidebar-mark` by name and not one value. That was
-// the real fix, and it is independent of which way the colours go.
+// the real fix in step 1, and it is what made steps 2 to 4 one-line changes
+// rather than four rewrites.
 //
 // -------------------------------------------------------------------
 // THE MARK is `--sidebar-mark`, which resolves to `--signal`. The palette
@@ -100,25 +109,21 @@ const ROW_IDLE = "text-foreground/85 hover:bg-sidebar-accent hover:text-foregrou
 const ROW_ACTIVE = "bg-sidebar-accent font-semibold text-primary";
 
 // -------------------------------------------------------------------
-// THE ICONS CARRY THE COLOUR.
+// THE ICONS ARE NEUTRAL, AND THAT IS A REVERSAL OF THE PREVIOUS COMMIT.
 //
-// The rail is a light surface and should stay one - a coloured slab was tried
-// and it shouted over the page it frames. But every row of it was a grey
-// glyph beside grey text, which is a lot of screen doing nothing: the icons
-// are the one element in the nav that is decoration rather than information
-// (the label already says where the row goes), so they are exactly what can
-// afford to be brand-coloured without competing with anything.
+// They were brand-teal for one release, as an attempt at "colour in the nav"
+// that put it on the writing instead of the surface. It was the wrong reading
+// of the ask and it also stacked badly: with the rail itself a teal tint, a
+// teal glyph beside a teal section name on a teal panel is three
+// applications of one hue in a 15rem column, and none of them ends up
+// meaning anything.
 //
-// SET ON THE GLYPH RATHER THAN INHERITED, so the icon and the label can be
-// two different colours - a teal glyph next to a near-black label, which is
-// what keeps the labels readable while the rail still has colour in it. They
-// brighten together on hover through the `group` on ROW.
-//
-// At 3:1 for a graphical element --primary at 70% clears the floor
-// comfortably; these never carry meaning on their own, so they are not held
-// to text contrast.
+// So the SURFACE is the colour and the marks are quiet. The glyphs still take
+// their class here rather than inheriting from the row, because that is what
+// lets them sit a step lighter than the label - an icon at label strength
+// competes with the word next to it, and the word is the part being read.
 // -------------------------------------------------------------------
-const ICON_IDLE = "shrink-0 text-primary/70 transition-colors group-hover:text-primary";
+const ICON_IDLE = "shrink-0 text-muted-foreground transition-colors group-hover:text-foreground";
 const ICON_ACTIVE = "shrink-0 text-primary";
 
 /**
@@ -388,11 +393,12 @@ function NavGroupBlock({
         className={cn(
           collapsed
             ? "sr-only"
-            // In the brand colour, so a section name is distinguishable from
-            // the rows under it by hue rather than only by weight - which at
-            // this size, on rows that are themselves near-black and semibold
-            // when active, was too fine a difference to do the job.
-            : cn("px-2.5 pb-1 text-xs font-semibold text-primary/85", isFirst ? "pt-1" : "pt-5"),
+            // Muted rather than brand-coloured, which it was for one release.
+            // The rail's surface is the tinted thing now, and a teal section
+            // name on a teal panel above teal icons was one hue doing three
+            // jobs. A section name is a label: quieter than the rows it
+            // names, which is what weight and this colour together do.
+            : cn("px-2.5 pb-1 text-xs font-semibold text-muted-foreground", isFirst ? "pt-1" : "pt-5"),
         )}
       >
         {group.label}
