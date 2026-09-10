@@ -221,6 +221,124 @@ export function buildAppSnapshot(input: AppSnapshotInput): TimesheetSnapshot {
   };
 }
 
+// -------------------------------------------------------------------
+// ===================================================================
+// THE PRE-SNAPSHOT SHAPES THE REPORTS FILTER ON
+// ===================================================================
+//
+// `getAdminTimesheetsService` does not hand rows straight to the engine. It
+// FILTERS FIRST - by category, client, project, person and billable status -
+// and it builds its option lists from the unfiltered set, so that picking
+// "External" does not erase "Internal" from the selector. Only then does it
+// map what survived into a snapshot.
+//
+// So the switch needs a row shape that filtering step can work on, and the
+// cheapest correct answer is to produce the shape it already works on. That
+// keeps the diff in the service down to which function fetches the rows,
+// which for a screen full of money figures is the difference between a
+// mapping change and a rewrite of every roll-up.
+//
+// THE FIELD NAMES ARE THE ENGINE'S, NOT JIRA'S ANY MORE. `issueKey`,
+// `parentKey` and `projectKey` came from Jira and they are staying, because
+// the engine's own public types use them and it is not being rewritten. Read
+// them as the engine documents them:
+//
+//   issueKey    the deliverable   -> a task id
+//   parentKey   the project       -> a project id
+//   projectKey  the CLIENT        -> a client id
+//
+// That last one is the trap, and the service already carries a comment
+// warning about it. It is a naming convention now rather than a reference to
+// another system.
+// -------------------------------------------------------------------
+
+/**
+ * One logged hour, resolved against its task, project and client.
+ *
+ * Structurally what `worklog_fact` used to supply, minus the columns that
+ * only ever described the sync itself - `syncedAt`, `jiraUpdatedAt`,
+ * `labelsSnapshot`, `rndSource`, `classifiedAt` - and minus the two the
+ * engine computes rather than reads (`billableSource`, `hasNarrative`).
+ */
+export interface ReportingFactRow {
+  worklogId: string;
+  issueKey: string;
+  parentKey: string | null;
+  projectKey: string;
+  category: string | null;
+  personId: string;
+  personName: string | null;
+  workDate: string;
+  startSecond: number | null;
+  timeSpentSeconds: number;
+  billable: string | null;
+  narrative: string | null;
+  rndClass: string | null;
+  /** Snapshotted onto the entry when it was logged. Null when no rate was set. */
+  chargeRateCents: number | null;
+  costRateCents: number | null;
+}
+
+/**
+ * Resolve entries against their tasks.
+ *
+ * AN ENTRY WHOSE TASK IS MISSING KEEPS ITS HOURS and loses only what the task
+ * would have told it: no parent, no category, no billable status. The engine
+ * then marks it orphaned and raises ORPHAN_WORKLOG. Dropping it would take
+ * real hours out of a total that is supposed to reconcile - see the note in
+ * `buildAppSnapshot`.
+ *
+ * `projectKey` falls back to the empty string rather than being made
+ * nullable, because the engine types it as required and an orphan has no
+ * client to name. `cleanText` in the engine treats a blank as absent.
+ */
+export function toReportingFactRows(
+  entries: readonly AppSnapshotEntry[],
+  tasks: readonly AppSnapshotTask[],
+  rates: ReadonlyMap<string, { chargeRateCents: number | null; costRateCents: number | null }> = new Map(),
+): ReportingFactRow[] {
+  const taskById = new Map(tasks.map((task) => [task.taskId, task]));
+
+  return entries.map((entry) => {
+    const task = taskById.get(entry.taskId);
+    const rate = rates.get(entry.entryId);
+
+    return {
+      worklogId: entry.entryId,
+      issueKey: entry.taskId,
+      parentKey: task?.projectId ?? null,
+      projectKey: task?.clientId ?? "",
+      category: task ? PROJECT_CATEGORY_LABELS[task.category] : null,
+      personId: entry.personId,
+      personName: entry.personName,
+      workDate: entry.workDate,
+      // See buildAppSnapshot: the app records a day, never a clock time.
+      startSecond: null,
+      timeSpentSeconds: toSeconds(entry.minutes),
+      billable: task ? toBillableLabel(task.isBillable) : null,
+      narrative: entry.notes,
+      rndClass: entry.rndClass,
+      chargeRateCents: rate?.chargeRateCents ?? null,
+      costRateCents: rate?.costRateCents ?? null,
+    };
+  });
+}
+
+/**
+ * Every task and every project as engine issues, in one list.
+ *
+ * The same output `buildAppSnapshot` puts in `snapshot.issues`, exposed on its
+ * own because the service filters this list too - so the job list narrows with
+ * the rest of the screen instead of showing every job in the business under a
+ * heading that says "External".
+ */
+export function toReportingIssueRows(
+  tasks: readonly AppSnapshotTask[],
+  projects: readonly AppSnapshotProject[],
+): SnapshotIssue[] {
+  return buildAppSnapshot({ entries: [], tasks, projects, today: "" }).issues;
+}
+
 /**
  * How many entries in the range name a task that is not in the snapshot.
  *

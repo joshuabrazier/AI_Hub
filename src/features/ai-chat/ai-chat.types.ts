@@ -2,6 +2,7 @@ import z from "zod";
 
 import { TABLE_ID_LENGTH } from "@/lib/constants";
 import { type AiChatAttachmentKind, type AiChatRole } from "@/lib/data/kysely-database-types";
+import { PLATFORM_IDLE_CEILING_MS } from "@/lib/ai/platform-limits";
 
 // Ids are always re-checked server-side against the session user; the length
 // bound only keeps obvious rubbish out of the query.
@@ -286,7 +287,14 @@ export type RemoveAiChatAttachmentRequestDTO = z.infer<typeof RemoveAiChatAttach
 // platform wins, the connection is severed mid-stream and the app never
 // learns it happened - no log row, no error, nothing to investigate.
 // -------------------------------------------------------------------
-export const CHAT_PLATFORM_IDLE_CEILING_MS = 230_000;
+// DERIVED, NOT DECLARED. This number was written here first and every other
+// Bedrock call in the app knew nothing about it, because a lib cannot import
+// from a feature - so summaries, transcription, filing and project plans all
+// sized their ceilings with no idea the platform would cut them. It lives in
+// bedrock-client.ts now, beside the other timeout that describes the
+// transport, and this re-exports it so the chat's own budgets still read
+// against a name that says what it is.
+export const CHAT_PLATFORM_IDLE_CEILING_MS = PLATFORM_IDLE_CEILING_MS;
 
 // -------------------------------------------------------------------
 // The whole of a turn up to the moment the reader is sent something.
