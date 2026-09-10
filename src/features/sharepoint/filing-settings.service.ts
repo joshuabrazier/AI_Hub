@@ -9,6 +9,7 @@ import { countTranscriptionFilingsByStatusRepo } from "@/lib/data/repositories/t
 import { envServer } from "@/lib/env-server";
 import { handleError } from "@/lib/handle-errors";
 import { chooseFilingLibrary } from "@/lib/sharepoint/filing-library";
+import { resolveFilingSubfolder } from "@/lib/sharepoint/filing-subfolder";
 import { parseFolderPath } from "@/lib/sharepoint/folder-path";
 import { MAX_FOLDER_OPTIONS } from "@/lib/sharepoint/filing.prompt";
 
@@ -98,6 +99,11 @@ export async function getFilingSettingsService(): Promise<FilingSettingsDTO> {
     const fallbackRaw = envServer.SHAREPOINT_FILING_FALLBACK_PATH ?? null;
     const fallback = parseFolderPath(fallbackRaw);
 
+    // Resolved with the same function filing uses, so a name that filing
+    // would refuse is reported HERE rather than discovered as an untidily
+    // filed note weeks later.
+    const subfolder = resolveFilingSubfolder(envServer.SHAREPOINT_FILING_SUBFOLDER);
+
     return {
       // Filing is off, rather than broken, when no library is nominated at
       // all. Told apart because the remedies are "set this up" and "fix
@@ -113,6 +119,8 @@ export async function getFilingSettingsService(): Promise<FilingSettingsDTO> {
       folderCountExceedsPromptCap: folders.length > MAX_FOLDER_OPTIONS,
       maxDepth: envServer.SHAREPOINT_FILING_MAX_DEPTH,
       excludedContainerPaths: envServer.SHAREPOINT_FILING_CONTAINER_PATHS,
+      subfolderName: subfolder.ok ? subfolder.name : null,
+      subfolderProblem: subfolder.ok ? null : subfolder.reason,
       fallbackPath: fallbackRaw,
       fallbackProblem: fallbackRaw !== null && !fallback.ok ? fallback.reason : null,
       // The model is the middle tier of three. Without it a meeting whose
