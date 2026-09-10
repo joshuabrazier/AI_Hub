@@ -38,6 +38,8 @@
 // testable without a database, a model or a session.
 // ===================================================================
 
+import { z } from "zod";
+
 import { matchByName, type NameCandidate } from "@/lib/resolve-by-name";
 
 // A name and an id, which is all this needs of a client, a person or
@@ -469,3 +471,58 @@ function listNames(names: readonly string[]): string {
 
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
+
+// ===================================================================
+// THE WIRE SHAPE
+//
+// What an outside caller may send. Kept beside the draft type it validates,
+// because a schema in another file is a schema that drifts from the shape it
+// claims to check.
+//
+// NAMES ONLY, and every bound is here rather than trusted. This is reached
+// by a bearer token from outside the app, so the request is the boundary:
+// a thousand tasks, a title the length of a book, or an estimate of
+// Infinity all have to be refused by the parse rather than by whatever they
+// eventually hit.
+// ===================================================================
+
+// Generous for a real project and far short of anything that would matter.
+// A plan is typed or dictated by a person; the limits exist so a malformed
+// or runaway caller is refused at the door rather than deep inside a
+// transaction.
+const MAX_PHASES = 20;
+const MAX_TASKS_PER_PHASE = 200;
+const MAX_MEMBERS = 50;
+
+const planName = z.string().trim().min(1).max(200);
+
+export const ProjectPlanDraftSchema = z.object({
+  clientName: planName,
+  projectTitle: planName,
+  description: z.string().trim().max(5_000).nullish(),
+  isBillable: z.boolean().optional(),
+  // Finite and non-negative. NaN and Infinity both pass a bare number check
+  // and both would poison every total downstream.
+  budgetHours: z.number().finite().nonnegative().nullish(),
+  phases: z
+    .array(
+      z.object({
+        name: planName,
+        tasks: z
+          .array(
+            z.object({
+              title: planName,
+              description: z.string().trim().max(5_000).nullish(),
+              estimateHours: z.number().finite().nonnegative(),
+              assigneeName: z.string().trim().max(200).nullish(),
+            }),
+          )
+          .max(MAX_TASKS_PER_PHASE),
+      }),
+    )
+    .max(MAX_PHASES),
+  members: z
+    .array(z.object({ name: planName, isLead: z.boolean().optional() }))
+    .max(MAX_MEMBERS)
+    .optional(),
+});

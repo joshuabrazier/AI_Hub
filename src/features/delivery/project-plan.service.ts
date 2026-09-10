@@ -12,13 +12,21 @@ import {
   USER_ROLES,
   type UserRole,
 } from "@/lib/data/kysely-database-types";
-import { addClientRepo, getClientByNameRepo } from "@/lib/data/repositories/clients.repository";
+import {
+  addClientRepo,
+  getClientByNameRepo,
+  getClientsRepo,
+} from "@/lib/data/repositories/clients.repository";
 import { addPhaseRepo } from "@/lib/data/repositories/phases.repository";
 import { addProjectRepo, setProjectMembersRepo } from "@/lib/data/repositories/projects.repository";
 import { addTaskRepo } from "@/lib/data/repositories/tasks.repository";
 import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
-import { type ResolvedProjectPlan } from "@/lib/delivery/project-plan";
+import {
+  resolveProjectPlan,
+  type ProjectPlanDraft,
+  type ResolvedProjectPlan,
+} from "@/lib/delivery/project-plan";
 
 // ===================================================================
 // APPLY A RESOLVED PLAN: ONE TRANSACTION, OR NOTHING
@@ -247,4 +255,64 @@ export async function applyProjectPlanService(
   } catch (error) {
     throw handleError("applyProjectPlanService", error);
   }
+}
+
+// ===================================================================
+// READ THE CATALOGUES AND RESOLVE. WRITE NOTHING.
+//
+// The half an outside caller runs first: it turns a plan described in names
+// into one described in ids, against the clients and accounts this app
+// actually has, and hands back what it would do.
+//
+// THE CATALOGUES ARE READ HERE AND NOWHERE ELSE, which is what makes the
+// resolver's guarantee true. A caller cannot supply the list its own names
+// are checked against, so it cannot widen what a name is allowed to match.
+//
+// INACTIVE ROWS ARE LEFT OUT, both of them for the same reason: offering a
+// retired client or a deactivated account means a plan can name something
+// somebody deliberately took out of circulation, and the write would then
+// either fail or succeed and be wrong.
+// ===================================================================
+export async function planProjectService(
+  draft: ProjectPlanDraft,
+  actor: { id: string; role: UserRole },
+): Promise<ResolvedProjectPlan> {
+  try {
+    if (actor.role !== USER_ROLES.ADMIN) {
+      throw new DisplayErrorMessage("Only an administrator can create a project.");
+    }
+
+    const [clients, people] = await Promise.all([
+      getClientsRepo({ includeInactive: false }),
+      getActiveAssignableUsersRepo(),
+    ]);
+
+    return resolveProjectPlan(draft, {
+      clients: clients.map((client) => ({ id: client.id, name: client.name })),
+      people: people.map((person) => ({ id: person.id, name: person.name })),
+    });
+  } catch (error) {
+    throw handleError("planProjectService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Who a plan may name.
+//
+// ACTIVE ACCOUNTS ONLY, and accounts rather than invitations: a pending
+// invitation's id is an invitation, not a user, and assigning a task to one
+// would post an id that resolves to nobody. The same filter the setup screen
+// applies to its member picker, for the same reason.
+// -------------------------------------------------------------------
+async function getActiveAssignableUsersRepo(): Promise<{ id: string; name: string }[]> {
+  const rows = await database
+    .selectFrom("users")
+    .select(["id", "name"])
+    .where("isActive", "=", true)
+    .orderBy("name")
+    .execute();
+
+  // A de-identified account keeps its row and loses its name. It cannot be
+  // named in a plan, which is correct - there is nothing to name it by.
+  return rows.flatMap((row) => (row.name ? [{ id: row.id, name: row.name }] : []));
 }

@@ -1675,6 +1675,41 @@ export interface EstimateChanges {
 export type EstimateChange = Selectable<EstimateChanges>;
 export type NewEstimateChange = Insertable<EstimateChanges>;
 
+// -------------------------------------------------------------------
+// A credential for something that is not a browser.
+//
+// See migration 026 for the whole argument, and for the one property that
+// matters most: a token bypasses the second factor, because there is no
+// session for isTwoFactorSatisfied to check. It is narrow, expiring,
+// revocable and recorded for exactly that reason.
+//
+// Only the HASH is here. A token is 32 random bytes, so a single SHA-256 is
+// the right function - stretching defends against guessing, and there is
+// nothing to guess.
+// -------------------------------------------------------------------
+export interface PersonalAccessTokens {
+  id: string;
+  userId: string;
+  name: string;
+  tokenHash: string;
+  // The first few characters, in clear, so a person can tell their own
+  // tokens apart and match a leaked string to the row to revoke.
+  prefix: string;
+  // Which surface this token may reach. A route opts IN to a scope, so
+  // widening a service cannot quietly widen every token.
+  scope: string;
+  lastUsedAt: Date | null;
+  // NULL does not expire, which is allowed and is not the default.
+  expiresAt: Date | null;
+  // A timestamp rather than a delete, so "this was turned off on the 3rd"
+  // stays answerable.
+  revokedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
+export type PersonalAccessToken = Selectable<PersonalAccessTokens>;
+export type NewPersonalAccessToken = Insertable<PersonalAccessTokens>;
+
 export interface Database {
   users: Users;
   sessions: Sessions;
@@ -1693,6 +1728,7 @@ export interface Database {
   transcriptions: Transcriptions;
   transcriptionFiling: TranscriptionFilings;
   pushSubscriptions: PushSubscriptions;
+  personalAccessTokens: PersonalAccessTokens;
   sessionTwoFactor: SessionTwoFactors;
   auditLogs: AuditLogs;
   // Timesheet read model, derived from Jira and rebuildable from it.
