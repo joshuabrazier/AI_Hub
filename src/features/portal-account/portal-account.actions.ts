@@ -1,7 +1,6 @@
 "use server";
 
-import { requireUserRole } from "@/lib/auth/session-auth-server";
-import { USER_ROLES } from "@/lib/data/kysely-database-types";
+import { requireUser } from "@/lib/auth/session-auth-server";
 import { handleServerApiError } from "@/lib/handle-errors";
 import { validateRequest } from "@/lib/server-requests";
 import { ServerApiResponse } from "@/lib/types";
@@ -14,22 +13,27 @@ import {
 } from "./portal-account.types";
 
 // -------------------------------------------------------------------
-// Member portal account actions
+// Account actions, for whoever is signed in
 //
-// Each one validates its input and hands off to the service. The role check
-// here is the outer gate only - the service repeats it, because an action is
-// not the only thing that can call a service.
+// Each one validates its input and hands off to the service. The check here is
+// the outer gate only - the service repeats it, because an action is not the
+// only thing that can call a service.
+//
+// requireUser RATHER THAN A ROLE, matching the service. These were
+// requireUserRole([MEMBER]), which would have refused an administrator's own
+// save the moment the page was mounted in the admin area - a screen that reads
+// fine and then rejects the button.
 //
 // Neither action takes a user id. The account being read or written is always
 // the session's, resolved inside the service.
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
-// Get the signed-in member's own account details.
+// Get the signed-in person's own account details.
 // -------------------------------------------------------------------
 export async function getPortalAccountAction(): Promise<ServerApiResponse<PortalAccountResponseDTO>> {
   try {
-    await requireUserRole([USER_ROLES.MEMBER]);
+    await requireUser();
 
     const account = await getPortalAccountService();
 
@@ -43,13 +47,13 @@ export async function getPortalAccountAction(): Promise<ServerApiResponse<Portal
 }
 
 // -------------------------------------------------------------------
-// Update the signed-in member's own account details.
+// Update the signed-in person's own account details.
 // -------------------------------------------------------------------
 export async function updatePortalAccountAction(
   requestDTO: UpdatePortalAccountRequestDTO,
 ): Promise<ServerApiResponse<null>> {
   try {
-    await requireUserRole([USER_ROLES.MEMBER]);
+    await requireUser();
 
     const validatedRequest = await validateRequest(UpdatePortalAccountSchema, requestDTO);
     if (!validatedRequest.success) return validatedRequest.response;

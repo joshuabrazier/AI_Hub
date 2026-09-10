@@ -5,8 +5,8 @@ import { revalidatePath } from "next/cache";
 import { diffFields } from "@/lib/audit/audit-diff";
 import { recordAuditEvent } from "@/lib/audit/audit-log.service";
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from "@/lib/audit/audit-log.types";
-import { requireUserRole } from "@/lib/auth/session-auth-server";
-import { USER_ROLES, type UpdateUser } from "@/lib/data/kysely-database-types";
+import { requireUser } from "@/lib/auth/session-auth-server";
+import { type UpdateUser } from "@/lib/data/kysely-database-types";
 import { getUserByUserIdRepo, updateUserByIdRepo } from "@/lib/data/repositories/users.repository";
 import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
@@ -16,17 +16,29 @@ import { mapDBUserToPortalAccountResponseDTO } from "./portal-account.mappers";
 import { PortalAccountResponseDTO, UpdatePortalAccountRequestDTO } from "./portal-account.types";
 
 // -------------------------------------------------------------------
-// Member portal account service
+// The signed-in person's own account
 //
-// Both entry points open with requireUserRole([MEMBER]) and then read the
-// acting user's id from what that returned. The session id is the ONLY user id
-// that reaches a repository in this file: there is no argument carrying one and
-// no branch that could substitute one, which is what makes editing somebody
-// else's profile unrepresentable rather than merely rejected.
+// EVERY ROLE, and it used to be members only. requireUserRole([MEMBER]) meant
+// an administrator or a manager had no account page AT ALL - not a missing
+// link, a missing page: the one screen where somebody sets what they would
+// rather be called was reachable by exactly one of the three audiences, and
+// the other two had no route to it from anywhere in the app.
 //
-// The guard lives here rather than only in the actions. The portal layout and
-// the actions check the same thing, but a service that relies on its caller is
-// only as safe as the least careful caller it ever acquires.
+// requireUser is the RIGHT guard rather than a widened one. Nothing on this
+// screen is scoped by role: it reads and writes the caller's own row, resolved
+// from the session, and a role is not a scope. The MEMBER check was never
+// protecting the data - it was describing which area the page happened to be
+// mounted in, which is a routing fact and not an authorization one.
+//
+// The session id is the ONLY user id that reaches a repository in this file:
+// there is no argument carrying one and no branch that could substitute one,
+// which is what makes editing somebody else's profile unrepresentable rather
+// than merely rejected. That is what makes this safe for any role, and it was
+// already true before the guard changed.
+//
+// The guard lives here rather than only in the actions. Each area layout and
+// the actions check as well, but a service that relies on its caller is only
+// as safe as the least careful caller it ever acquires.
 // -------------------------------------------------------------------
 
 // An empty optional profile field is stored as NULL, not as "". Both mean
@@ -42,7 +54,7 @@ function emptyToNull(value: string): string | null {
 // -------------------------------------------------------------------
 export async function getPortalAccountService(): Promise<PortalAccountResponseDTO> {
   try {
-    const sessionUser = await requireUserRole([USER_ROLES.MEMBER]);
+    const sessionUser = await requireUser();
 
     const user = await getUserByUserIdRepo(sessionUser.id);
 
@@ -67,7 +79,7 @@ export async function getPortalAccountService(): Promise<PortalAccountResponseDT
 // -------------------------------------------------------------------
 export async function updatePortalAccountService(requestDTO: UpdatePortalAccountRequestDTO): Promise<void> {
   try {
-    const sessionUser = await requireUserRole([USER_ROLES.MEMBER]);
+    const sessionUser = await requireUser();
 
     const before = await getUserByUserIdRepo(sessionUser.id);
 
@@ -106,6 +118,12 @@ export async function updatePortalAccountService(requestDTO: UpdatePortalAccount
       });
     }
 
+    // ALL THREE MOUNTS. The page renders at /admin/account, /manage/account
+    // and /portal/account from one feature page, so revalidating only the
+    // portal path left an admin looking at their old preferred name until
+    // something else happened to invalidate the route.
+    revalidatePath(ROUTES.ADMIN_ACCOUNT);
+    revalidatePath(ROUTES.MANAGE_ACCOUNT);
     revalidatePath(ROUTES.PORTAL_ACCOUNT);
   } catch (error) {
     throw handleError("updatePortalAccountService", error);

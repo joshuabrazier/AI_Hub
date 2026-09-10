@@ -158,6 +158,102 @@ describe("the AI group", () => {
 });
 
 // -------------------------------------------------------------------
+// The account row.
+//
+// It is pinned to the bottom in every area, and the page behind it is one
+// feature page mounted three times. The failure worth guarding is an href
+// pointing into the WRONG area: the proxy redirects rather than refusing, so
+// an admin sent to /portal/account lands silently on /admin having asked for
+// their account - which is what used to happen, because there was no
+// /admin/account at all.
+// -------------------------------------------------------------------
+describe("the account group", () => {
+  const accountGroupFor = (role: (typeof USER_ROLES)[keyof typeof USER_ROLES]) => {
+    const group = navGroupsForRole(role).find((item) => item.label === "Account");
+
+    expect(group, `expected an Account group in the ${role} tree`).toBeDefined();
+
+    return group!;
+  };
+
+  it.each([USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.MEMBER])(
+    "exists for %s, because every role has an account",
+    (role) => {
+      expect(accountGroupFor(role).items).toHaveLength(1);
+    },
+  );
+
+  it.each([USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.MEMBER])(
+    "is pinned to the bottom for %s",
+    (role) => {
+      // `footer` is what puts it below the scrolling list rather than merely
+      // last in it - see NavGroup.footer.
+      expect(accountGroupFor(role).footer).toBe(true);
+    },
+  );
+
+  it.each([
+    [USER_ROLES.ADMIN, "/admin/account"],
+    [USER_ROLES.MANAGER, "/manage/account"],
+    [USER_ROLES.MEMBER, "/portal/account"],
+  ])("sends %s to their own area's mount", (role, href) => {
+    expect((accountGroupFor(role).items[0] as { href: string }).href).toBe(href);
+  });
+
+  it.each([USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.MEMBER])(
+    "is LAST in %s's tree, so it is last when the tree is flattened",
+    (role) => {
+      // The mobile sheet and appKnowledgePrompt both flatten, and neither
+      // reads `footer`. Being last in the array is what keeps those two
+      // agreeing with the rail.
+      const groups = navGroupsForRole(role);
+
+      expect(groups[groups.length - 1].label).toBe("Account");
+    },
+  );
+});
+
+// -------------------------------------------------------------------
+// Where the projects land in the ADMIN tree.
+//
+// useNavGroups splices them in after the group called "Delivery". That puts
+// them above whatever group comes next, so "Delivery admin" being a separate
+// group that follows Delivery is not tidiness - it is the entire mechanism
+// by which the boards somebody opens all day sit above a disclosure of admin
+// screens they open occasionally.
+// -------------------------------------------------------------------
+describe("the admin tree's delivery ordering", () => {
+  it("has Delivery admin as its OWN group, immediately after Delivery", () => {
+    const labels = navGroupsForRole(USER_ROLES.ADMIN).map((group) => group.label);
+    const delivery = labels.indexOf("Delivery");
+
+    expect(delivery, "expected a Delivery group").toBeGreaterThanOrEqual(0);
+    expect(labels[delivery + 1]).toBe("Delivery admin");
+  });
+
+  it("does not leave Delivery admin inside the Delivery group", () => {
+    // If it were still nested, the splice would put the projects BELOW it,
+    // which is the layout this replaced.
+    const delivery = navGroupsForRole(USER_ROLES.ADMIN).find((group) => group.label === "Delivery");
+
+    expect(delivery?.items.map((item) => item.label)).toEqual(["All projects", "Your timesheet"]);
+  });
+
+  it("calls the reporting group Reports, not Timesheets", () => {
+    // Two entries a few rows apart both called some version of "timesheet",
+    // over two different data sets, was the confusion this rename settles -
+    // "Your timesheet" is where hours are ENTERED, Reports is where logged
+    // time is READ.
+    const labels = navGroupsForRole(USER_ROLES.ADMIN)
+      .flatMap((group) => group.items)
+      .map((entry) => entry.label);
+
+    expect(labels).toContain("Reports");
+    expect(labels).not.toContain("Timesheets");
+  });
+});
+
+// -------------------------------------------------------------------
 // The static trees, asserted only where the projects group depends on them.
 // -------------------------------------------------------------------
 describe("the nav trees the projects group is spliced into", () => {

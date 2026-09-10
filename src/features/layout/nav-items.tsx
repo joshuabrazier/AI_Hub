@@ -119,6 +119,26 @@ export type NavGroup = {
 // should not have that name label transcription and summaries too. The chat
 // row underneath still carries it.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// THE ACCOUNT GROUP, PINNED TO THE BOTTOM IN EVERY AREA.
+//
+// It was in the member tree only, because the page it opens was mounted only
+// under /portal and its service guarded on MEMBER - so an administrator or a
+// manager had no account screen at all, not merely no link to one. Both are
+// fixed together: the page is mounted in all three areas and the guard is
+// requireUser, because nothing on it is scoped by role.
+//
+// Written once for the same reason aiTools is: identical in all three areas
+// bar the href, and a copy per tree is a copy that drifts.
+// -------------------------------------------------------------------
+function accountGroup(href: string): NavGroup {
+  return {
+    label: "Account",
+    footer: true,
+    items: [{ label: "Account", href, icon: UserCircle, tooltip: "Your details" }],
+  };
+}
+
 function aiTools(routes: { chat: string; transcription: string; summaries: string }): NavCollapsible {
   return {
     label: "AI",
@@ -183,32 +203,34 @@ const ADMIN_NAV: NavGroup[] = [
   // DELIVERY, AND WHY IT IS ITS OWN GROUP RATHER THAN PART OF THE TWO IT
   // LOOKS LIKE IT BELONGS TO.
   //
-  // It is not "Time and billing". That group is the Jira-era reporting
+  // It is not "Time and billing". That group is the Jira-era REPORTING
   // screens, which read a different table about work that has already been
   // logged somewhere else. Delivery is where the work is planned and the
-  // hours are entered. Filing them together would put two things called
-  // some version of "timesheet" under one parent, over two data sets, and
-  // the first person to reconcile a figure between them would be comparing
-  // the wrong two screens.
+  // hours are entered. Filing them together would put two things over two
+  // data sets under one parent, and the first person to reconcile a figure
+  // between them would be comparing the wrong two screens. Naming that group's
+  // parent "Reports" rather than "Timesheets" is the other half of the same
+  // point.
   //
   // It is not "Overview" either. Overview is Home plus the AI group, which
   // holds three tools somebody opens now and then. This is the day job, and
   // a group of its own is what says so.
   //
-  // THE SPLIT INSIDE IT IS THE ACCESS MODEL SHOWING THROUGH. Projects and
-  // the timesheet are top-level because MEMBERSHIP decides what they show,
-  // not role - they are the same two entries in all three trees, and the
-  // identical shape is deliberate. Everything under "Delivery admin" is
-  // admin-only: a client is admin-only, a rate is a client's price and a pay
-  // proxy, and the budget report is the one screen in the module carrying
-  // money. Collapsing those four keeps this section three rows tall in the
-  // ordinary case, the same decision Timesheets made below when five
-  // siblings at the top level made it the longest thing in the sidebar.
+  // THE SPLIT IS THE ACCESS MODEL SHOWING THROUGH. What is left in here -
+  // "All projects" and "Your timesheet" - is top-level because MEMBERSHIP
+  // decides what it shows, not role: they are the same two entries in all
+  // three trees, and the identical shape is deliberate. "Delivery admin" is
+  // admin-only and now sits in a GROUP OF ITS OWN, immediately below, so the
+  // person's actual project boards can be spliced in between the two. A
+  // client is admin-only, a rate is a client's price and a pay proxy, and the
+  // budget report is the one screen in the module carrying money - so
+  // collapsing those four keeps that section one row tall in the ordinary
+  // case, the same decision Reports made below when five siblings at the top
+  // level made it the longest thing in the sidebar.
   //
   // "Your timesheet" rather than "Timesheet", because time here is always
   // your own - no screen in the module offers to log an hour for somebody
-  // else - and because it has to be told apart at a glance from
-  // "Timesheets" under Time and billing.
+  // else.
   //
   // The tooltips are load-bearing beyond the sidebar: appKnowledgePrompt
   // generates what the assistant knows about this app from these entries,
@@ -232,6 +254,23 @@ const ADMIN_NAV: NavGroup[] = [
         icon: CalendarClock,
         tooltip: "Log your own week across every project you are on",
       },
+    ],
+  },
+  // -------------------------------------------------------------------
+  // ITS OWN GROUP, PURELY SO THE PROJECTS LAND ABOVE IT.
+  //
+  // useNavGroups splices the person's own projects in after the group called
+  // "Delivery", and the rail flattens groups into one list - so while this
+  // sat inside Delivery, the boards somebody opens all day appeared BELOW a
+  // disclosure of admin screens they open occasionally. Moving it out is the
+  // whole change: same entries, same order within itself, one group later.
+  //
+  // The label is not rendered anywhere. It exists for this splice and for
+  // appKnowledgePrompt, which prefixes children with their parent's label.
+  // -------------------------------------------------------------------
+  {
+    label: "Delivery admin",
+    items: [
       {
         label: "Delivery admin",
         icon: FolderCog,
@@ -266,7 +305,14 @@ const ADMIN_NAV: NavGroup[] = [
       {
         // Collapsed under one parent, like People. Five sibling links at the
         // top level made this the longest section in the sidebar.
-        label: "Timesheets",
+        //
+        // "Reports" rather than "Timesheets", which is what these are: they
+        // READ time that was logged elsewhere and present it by client, by
+        // person and by project. The old name also had to be told apart from
+        // "Your timesheet" two groups up, which is where somebody actually
+        // enters hours - two entries a few rows apart, both called some
+        // version of the same word, over two different data sets.
+        label: "Reports",
         icon: Clock,
         tooltip: "Time, jobs, staff and data quality",
         children: [
@@ -340,6 +386,7 @@ const ADMIN_NAV: NavGroup[] = [
       },
     ],
   },
+  accountGroup(ROUTES.ADMIN_ACCOUNT),
 ];
 
 // -------------------------------------------------------------------
@@ -384,6 +431,7 @@ const MANAGER_NAV: NavGroup[] = [
       },
     ],
   },
+  accountGroup(ROUTES.MANAGE_ACCOUNT),
 ];
 
 // -------------------------------------------------------------------
@@ -424,22 +472,10 @@ const MEMBER_NAV: NavGroup[] = [
       },
     ],
   },
-  // -------------------------------------------------------------------
-  // PINNED TO THE BOTTOM, and last in the array so it is also last in the
-  // reading order for anything that flattens this tree - the mobile sheet
-  // and appKnowledgePrompt both do.
-  //
-  // It sat between the AI tools and Delivery, which put a page somebody
-  // opens twice a year in the middle of the two they open daily. The bottom
-  // of a sidebar is where an account row is looked for.
-  // -------------------------------------------------------------------
-  {
-    label: "Account",
-    footer: true,
-    items: [
-      { label: "Account", href: ROUTES.PORTAL_ACCOUNT, icon: UserCircle, tooltip: "Your details" },
-    ],
-  },
+  // Last in the array as well as pinned, so it is last in the reading order
+  // for anything that flattens this tree - the mobile sheet and
+  // appKnowledgePrompt both do.
+  accountGroup(ROUTES.PORTAL_ACCOUNT),
 ];
 
 // -------------------------------------------------------------------
