@@ -202,7 +202,7 @@ import {
 // would leave a project's own screen serving the figures it held before
 // the phase somebody just deleted.
 // -------------------------------------------------------------------
-function revalidateProjectViews(): void {
+export function revalidateProjectViews(): void {
   revalidatePath(ROUTES.ADMIN_PROJECTS, "layout");
   revalidatePath(ROUTES.MANAGE_PROJECTS, "layout");
   revalidatePath(ROUTES.PORTAL_PROJECTS, "layout");
