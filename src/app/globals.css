@@ -304,19 +304,25 @@
      names and not one value, so the rail's ink is stated here per theme -
      which is the part the original hardcoded version got wrong.
      ----------------------------------------------------------------- */
-  --sidebar: #fcfdfd;
+  /* A LIGHT TINT: coloured, and still light. The two failed attempts were the
+     extremes - #fcfdfd is white in all but name, and #0f5866 was a dark slab
+     shouting over the page. A soft teal-grey panel is a coloured surface
+     without being a block of brand: the rail reads as chrome, the canvas
+     beside it reads as paper, and the tint is where the difference lives
+     instead of a border doing all the work. */
+  --sidebar: #e9f2f4;
   --sidebar-foreground: #0f1a1c;
   /* The idle row. The same value as --muted-foreground, so a nav label and a
      description elsewhere on the page read as the same kind of text. */
   --sidebar-muted-foreground: #41565a;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
-  /* Hover and the current page. A step STRONGER than --accent, because that
-     one is tuned against #ffffff and this sits on #fcfdfd - the same tint
-     would be almost invisible here. */
-  --sidebar-accent: #e4eff1;
+  /* Hover and the current page. Two steps deeper than the rail, because a
+     tint on a tint has to clear the surface it sits on - the value tuned
+     against white would be invisible here. */
+  --sidebar-accent: #d3e6ea;
   --sidebar-accent-foreground: #0f1a1c;
-  --sidebar-border: #ccdcdf;
+  --sidebar-border: #c3d9dd;
   /* The "you are here" mark. --signal is exactly this: the palette
      documents it as the brighter teal for "the active nav item", chosen to
      clear 3:1 on white as a graphical mark. */

@@ -17,32 +17,42 @@ import { cn } from "@/lib/utils";
 // THE RAIL
 // ===================================================================
 //
-// THE RAIL IS QUIET, AND IT TOOK THREE GOES TO ACCEPT THAT.
+// THE RAIL IS A LIGHT TINTED PANEL. It took four goes, so the whole path is
+// here - if you are about to change it again, one of these is probably the
+// thing you are about to re-try.
 //
-// It was `bg-primary dark:bg-sidebar` hardcoded here, with rows in
-// `text-white/85`, `bg-white/20` and `border-white/15`. Two things were wrong
-// and only one of them was the colour: every --sidebar-* token was dead in
-// light mode, and a rail painted in `--primary` with literal white on it goes
-// unreadable the moment somebody's brand colour is a light one. This repo's
-// rule is that rebranding is one file.
+//   1. `bg-primary dark:bg-sidebar` HARDCODED HERE, rows in `text-white/85`,
+//      `bg-white/20`, `border-white/15`. A mid-teal slab. The colour was
+//      arguable; the hardcoding was not - every --sidebar-* token was dead in
+//      light mode, and a rail painted in --primary with literal white on it
+//      goes unreadable the moment somebody's brand colour is a light one.
+//      This repo's rule is that rebranding is one file.
 //
-// Replacing it with the near-white surface the tokens describe left the app
-// with no large area of colour anywhere, because the same pass had also taken
-// the tint off the tables and the fill off the dashboard chips. Reading that
-// as "the rail needs colour back" produced a deep teal slab that was worse
-// than either - the frame shouting over the thing it frames, and a second
-// teal column beside it on the chat screen.
+//   2. #fcfdfd, the near-white the tokens described. White in all but name.
+//      It read as no rail at all, and it landed in the same pass that took
+//      the tint off the tables and the fill off the dashboard chips, so the
+//      whole app went colourless at once.
 //
-// THE COLOUR BELONGS IN THE CONTENT. The stat chips, the header metric, the
-// table bands and the active row below carry it; the rail's whole job is to
-// stay out of the way of the screen it borders. So it is near-white,
-// separated by its border rather than by a fill, which is what the note on
-// --sidebar said from the start.
+//   3. #0f5866, a DEEP teal. Reading "the app has no colour" as "the rail
+//      needs colour" - and a large area of saturated hue is not the same
+//      decision as a small one. The frame shouted over the thing it frames,
+//      and on the chat screen it put a second teal column beside itself.
 //
-// What survives from the detour is the token SHAPE: this component knows
+//   4. Colour on the WRITING - teal icons, teal section names, light surface.
+//      Also wrong, and wrong in a way worth naming: it answered "add colour"
+//      with three small applications of one hue instead of the one large
+//      surface that was actually being asked for.
+//
+// So: #e9f2f4. Coloured and still light. The rail reads as chrome, the canvas
+// beside it reads as paper, and the tint is where that difference lives
+// rather than a hairline doing all the work. The marks inside it are neutral,
+// because the surface is the coloured thing now.
+//
+// What survives from all of it is the token SHAPE: this component knows
 // `--sidebar`, `--sidebar-foreground`, `--sidebar-muted-foreground`,
 // `--sidebar-accent` and `--sidebar-mark` by name and not one value. That was
-// the real fix, and it is independent of which way the colours go.
+// the real fix in step 1, and it is what made steps 2 to 4 one-line changes
+// rather than four rewrites.
 //
 // -------------------------------------------------------------------
 // THE MARK is `--sidebar-mark`, which resolves to `--signal`. The palette
@@ -79,21 +89,42 @@ import { cn } from "@/lib/utils";
 const ROW =
   "group relative flex items-center rounded-md text-sm transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring/60 focus-visible:outline-none";
 
-// ON THE RAIL'S OWN TOKENS, NOT THE PAGE'S. The values happen to match
-// --muted-foreground and --accent in the light theme, and that is the point
-// of keeping them separate anyway: the rail sits on #fcfdfd rather than
-// #ffffff, so a tint tuned against white is a step too weak here, and
+// ON THE RAIL'S OWN TOKENS, NOT THE PAGE'S. The rail sits on #fcfdfd rather
+// than #ffffff, so a tint tuned against white is a step too weak here, and
 // whoever changes the rail's surface next needs one place to change its ink
 // with it. That was the actual defect in the original `text-white/85` rail -
 // not the colour, but that the ink was stated in the component.
-const ROW_IDLE =
-  "text-sidebar-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
+//
+// THE LABELS ARE NEARLY FULL-STRENGTH, not muted. These are the primary
+// navigation of the whole app; they were --muted-foreground, which is the
+// colour for a description or a hint, and it made every destination in the
+// product read as secondary text.
+const ROW_IDLE = "text-foreground/85 hover:bg-sidebar-accent hover:text-foreground";
 
-// THE CURRENT PAGE IS THE ONE COLOURED THING IN THE RAIL. `text-primary`
-// rather than the accent foreground, because on a quiet near-white rail the
-// fill alone is a very small difference to spot, and this is the row people
-// look for first. Paired with the bar in the margin below.
+// THE CURRENT PAGE. `text-primary` rather than the accent foreground, because
+// on a quiet light rail the fill alone is a very small difference to spot,
+// and this is the row people look for first. Fill, weight, colour and the bar
+// in the margin, which is four signals for one fact - deliberately, because
+// getting it wrong means somebody cannot tell where they are.
 const ROW_ACTIVE = "bg-sidebar-accent font-semibold text-primary";
+
+// -------------------------------------------------------------------
+// THE ICONS ARE NEUTRAL, AND THAT IS A REVERSAL OF THE PREVIOUS COMMIT.
+//
+// They were brand-teal for one release, as an attempt at "colour in the nav"
+// that put it on the writing instead of the surface. It was the wrong reading
+// of the ask and it also stacked badly: with the rail itself a teal tint, a
+// teal glyph beside a teal section name on a teal panel is three
+// applications of one hue in a 15rem column, and none of them ends up
+// meaning anything.
+//
+// So the SURFACE is the colour and the marks are quiet. The glyphs still take
+// their class here rather than inheriting from the row, because that is what
+// lets them sit a step lighter than the label - an icon at label strength
+// competes with the word next to it, and the word is the part being read.
+// -------------------------------------------------------------------
+const ICON_IDLE = "shrink-0 text-muted-foreground transition-colors group-hover:text-foreground";
+const ICON_ACTIVE = "shrink-0 text-primary";
 
 /**
  * The "you are here" bar: 3px in the rail's own margin.
@@ -132,7 +163,7 @@ function NavLinkRow({
         active && (collapsed ? "before:-left-1.5" : "before:-left-2"),
       )}
     >
-      <Icon size={18} aria-hidden="true" className="shrink-0" />
+      <Icon size={18} aria-hidden="true" className={active ? ICON_ACTIVE : ICON_IDLE} />
       {/* min-w-0 AND flex-1 are both load-bearing: a flex child defaults to
           min-width:auto and will not go narrower than its own text, so
           `truncate` alone does nothing and a long project name runs under the
@@ -222,7 +253,7 @@ function NavCollapsibleRow({
         childActive ? "font-semibold text-sidebar-foreground" : ROW_IDLE,
       )}
     >
-      <Icon size={18} aria-hidden="true" className="shrink-0" />
+      <Icon size={18} aria-hidden="true" className={childActive ? ICON_ACTIVE : ICON_IDLE} />
       {!collapsed && (
         <>
           <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
@@ -285,7 +316,11 @@ function NavCollapsibleRow({
                   active && collapsed && cn(MARK, "before:-left-1.5"),
                 )}
               >
-                <ChildIcon size={collapsed ? 18 : 15} aria-hidden="true" className="shrink-0" />
+                <ChildIcon
+                  size={collapsed ? 18 : 15}
+                  aria-hidden="true"
+                  className={active ? ICON_ACTIVE : ICON_IDLE}
+                />
                 {!collapsed && <span className="min-w-0 flex-1 truncate">{child.label}</span>}
                 <NavigationPendingReporter />
               </Link>
@@ -358,7 +393,12 @@ function NavGroupBlock({
         className={cn(
           collapsed
             ? "sr-only"
-            : cn("px-2.5 pb-1 text-xs font-semibold text-foreground/70", isFirst ? "pt-1" : "pt-5"),
+            // Muted rather than brand-coloured, which it was for one release.
+            // The rail's surface is the tinted thing now, and a teal section
+            // name on a teal panel above teal icons was one hue doing three
+            // jobs. A section name is a label: quieter than the rows it
+            // names, which is what weight and this colour together do.
+            : cn("px-2.5 pb-1 text-xs font-semibold text-muted-foreground", isFirst ? "pt-1" : "pt-5"),
         )}
       >
         {group.label}
