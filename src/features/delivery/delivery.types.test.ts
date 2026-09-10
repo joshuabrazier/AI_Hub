@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { RATE_BANDS } from "@/lib/data/kysely-database-types";
+import { RATE_BANDS, TASK_COLUMNS } from "@/lib/data/kysely-database-types";
 
 import {
   DAYS_IN_WEEK,
@@ -8,6 +8,8 @@ import {
   WEEK_DAY_NUMBERS,
   addCalendarDays,
   budgetProgress,
+  byAttention,
+  countByColumn,
   formatMinutesAsClock,
   formatMinutesAsHours,
   hoursToMinutes,
@@ -18,6 +20,7 @@ import {
   startOfWeek,
   weekDates,
   weekDayOf,
+  type MyWorkItemDTO,
   CreateClientSchema,
   SetUserRateSchema,
   chargedProgress,
@@ -96,6 +99,122 @@ describe("formatMinutesAsHours and hoursToMinutes, as a pair", () => {
     expect(formatMinutesAsHours(60)).toBe("1");
     expect(formatMinutesAsHours(90)).toBe("1.5");
     expect(formatMinutesAsHours(15)).toBe("0.25");
+  });
+});
+
+// -------------------------------------------------------------------
+// THE DASHBOARD'S WORK LIST.
+//
+// The ordering is a product decision, so it is made in a pure function and
+// asserted here rather than being a line of JSX nobody can test. The failure
+// it guards against is quiet: a work list that looks sensible but buries the
+// blocked items, which are the ones that sit untouched for a fortnight
+// because nothing surfaces them.
+// -------------------------------------------------------------------
+describe("byAttention", () => {
+  const task = (over: Partial<MyWorkItemDTO> = {}): MyWorkItemDTO => ({
+    taskId: "t1",
+    title: "A task",
+    boardColumn: TASK_COLUMNS.TODO,
+    phaseName: "Build",
+    projectId: "p1",
+    projectTitle: "Project",
+    clientName: "Client",
+    estimateMinutes: 60,
+    loggedMinutes: 0,
+    ...over,
+  });
+
+  it("puts BLOCKED first, then in progress, then to do", () => {
+    const sorted = [
+      task({ taskId: "a", boardColumn: TASK_COLUMNS.TODO }),
+      task({ taskId: "b", boardColumn: TASK_COLUMNS.BLOCKED }),
+      task({ taskId: "c", boardColumn: TASK_COLUMNS.IN_PROGRESS }),
+    ]
+      .sort(byAttention)
+      .map((item) => item.boardColumn);
+
+    expect(sorted).toEqual([TASK_COLUMNS.BLOCKED, TASK_COLUMNS.IN_PROGRESS, TASK_COLUMNS.TODO]);
+  });
+
+  it("groups by project within a column, so a reader is not bounced between clients", () => {
+    const sorted = [
+      task({ taskId: "a", projectTitle: "Zebra" }),
+      task({ taskId: "b", projectTitle: "Apple" }),
+      task({ taskId: "c", projectTitle: "Zebra" }),
+      task({ taskId: "d", projectTitle: "Apple" }),
+    ]
+      .sort(byAttention)
+      .map((item) => item.projectTitle);
+
+    expect(sorted).toEqual(["Apple", "Apple", "Zebra", "Zebra"]);
+  });
+
+  it("the COLUMN wins over the project, which is the whole point", () => {
+    // Apple sorts before Zebra, but a blocked Zebra task still comes first -
+    // otherwise grouping by project would bury the blocked ones again.
+    const sorted = [
+      task({ taskId: "a", projectTitle: "Apple", boardColumn: TASK_COLUMNS.TODO }),
+      task({ taskId: "b", projectTitle: "Zebra", boardColumn: TASK_COLUMNS.BLOCKED }),
+    ]
+      .sort(byAttention)
+      .map((item) => item.projectTitle);
+
+    expect(sorted).toEqual(["Zebra", "Apple"]);
+  });
+
+  it("is TOTAL, so two otherwise identical rows still order deterministically", () => {
+    // Returning 0 for rows that are not the same row makes the list's order
+    // depend on the read's, which is not guaranteed. The id is the last
+    // resort.
+    const sorted = [task({ taskId: "b" }), task({ taskId: "a" })].sort(byAttention).map((i) => i.taskId);
+
+    expect(sorted).toEqual(["a", "b"]);
+  });
+
+  it("does not lose a row whose column it does not recognise", () => {
+    // `done` never reaches this - getMyWorkService excludes it - but a new
+    // column would, and sorting it to the END is a great deal better than
+    // NaN, which makes the whole sort's result implementation-defined.
+    const sorted = [
+      task({ taskId: "a", boardColumn: TASK_COLUMNS.DONE }),
+      task({ taskId: "b", boardColumn: TASK_COLUMNS.BLOCKED }),
+    ].sort(byAttention);
+
+    expect(sorted).toHaveLength(2);
+    expect(sorted[0].boardColumn).toBe(TASK_COLUMNS.BLOCKED);
+  });
+});
+
+describe("countByColumn", () => {
+  const task = (column: (typeof TASK_COLUMNS)[keyof typeof TASK_COLUMNS]): MyWorkItemDTO => ({
+    taskId: `t-${column}-${Math.random()}`,
+    title: "A task",
+    boardColumn: column,
+    phaseName: "Build",
+    projectId: "p1",
+    projectTitle: "Project",
+    clientName: "Client",
+    estimateMinutes: 60,
+    loggedMinutes: 0,
+  });
+
+  it("counts each column separately", () => {
+    const counts = countByColumn([
+      task(TASK_COLUMNS.TODO),
+      task(TASK_COLUMNS.TODO),
+      task(TASK_COLUMNS.BLOCKED),
+      task(TASK_COLUMNS.IN_PROGRESS),
+    ]);
+
+    expect(counts).toEqual({ todo: 2, inProgress: 1, blocked: 1 });
+  });
+
+  it("is all zeroes for an empty list rather than undefined", () => {
+    // The card renders "0 in progress, 0 to do" from this, so a missing key
+    // would print "undefined to do" on the screen somebody sees on their
+    // first day.
+    expect(countByColumn([])).toEqual({ todo: 0, inProgress: 0, blocked: 0 });
   });
 });
 

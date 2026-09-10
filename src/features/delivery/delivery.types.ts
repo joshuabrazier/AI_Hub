@@ -2247,6 +2247,89 @@ export type MyWorkItemDTO = {
   loggedMinutes: number;
 };
 
+// -------------------------------------------------------------------
+// WHAT A LANDING PAGE NEEDS TO SHOW SOMEBODY ABOUT THEIR OWN WORK.
+//
+// Assembled from three reads that already exist and are already tested -
+// getMyWorkService, getMyProjectsService and getTimesheetWeekService - so
+// nothing here is a new way to reach the data, and a figure on a dashboard
+// cannot disagree with the page it links to.
+//
+// EVERY FIGURE IS SERVER-SIDE. The cards format and never compute, which is
+// the same rule the timesheet grid follows: a dashboard that re-divides
+// minutes by sixty is how a tile and the screen behind it come to differ by
+// a rounding step.
+// -------------------------------------------------------------------
+export type WorkColumnCountsDTO = {
+  todo: number;
+  inProgress: number;
+  blocked: number;
+};
+
+export type MyDeliverySummaryDTO = {
+  // Not-done tasks assigned to the caller, ordered by ORDER_OF_ATTENTION -
+  // blocked, then in progress, then to do. The full list, so a count and the
+  // rows below it are the same set.
+  work: MyWorkItemDTO[];
+  counts: WorkColumnCountsDTO;
+  projectCount: number;
+  week: {
+    // 'YYYY-MM-DD' - the week the service settled on, which is what the
+    // heading and the timesheet link both read from.
+    weekStart: string;
+    dates: string[];
+    dayTotalMinutes: number[];
+    totalMinutes: number;
+  };
+};
+
+// -------------------------------------------------------------------
+// THE ORDER A WORK LIST IS READ IN, and it is not the board's order.
+//
+// A board is arranged by where work has got to. A list of what is waiting on
+// somebody is arranged by what needs them FIRST, and blocked is top because
+// it is the only column where the next move is usually a conversation rather
+// than the work itself - it is the one that sits untouched for a fortnight
+// if nothing surfaces it.
+//
+// Exported and pure so the ordering is tested rather than inspected. `done`
+// never reaches this: getMyWorkService excludes it, because a work list is
+// what remains.
+// -------------------------------------------------------------------
+const ORDER_OF_ATTENTION: Record<string, number> = {
+  [TASK_COLUMNS.BLOCKED]: 0,
+  [TASK_COLUMNS.IN_PROGRESS]: 1,
+  [TASK_COLUMNS.TODO]: 2,
+};
+
+export function byAttention(a: MyWorkItemDTO, b: MyWorkItemDTO): number {
+  const columns =
+    (ORDER_OF_ATTENTION[a.boardColumn] ?? Number.MAX_SAFE_INTEGER) -
+    (ORDER_OF_ATTENTION[b.boardColumn] ?? Number.MAX_SAFE_INTEGER);
+
+  if (columns !== 0) return columns;
+
+  // Then by project, so somebody scanning the list is not bounced between
+  // three clients on consecutive rows. localeCompare rather than < so names
+  // with accents sort where a reader expects.
+  const projects = a.projectTitle.localeCompare(b.projectTitle);
+
+  if (projects !== 0) return projects;
+
+  // A stable last resort. Two tasks with the same title on the same project
+  // is possible, so this falls through to the id rather than returning 0 for
+  // rows that are not the same row.
+  return a.title.localeCompare(b.title) || a.taskId.localeCompare(b.taskId);
+}
+
+export function countByColumn(work: readonly MyWorkItemDTO[]): WorkColumnCountsDTO {
+  return {
+    todo: work.filter((item) => item.boardColumn === TASK_COLUMNS.TODO).length,
+    inProgress: work.filter((item) => item.boardColumn === TASK_COLUMNS.IN_PROGRESS).length,
+    blocked: work.filter((item) => item.boardColumn === TASK_COLUMNS.BLOCKED).length,
+  };
+}
+
 // Metadata only. The bytes live in Azure Blob and are streamed back through a
 // download route, never handed out as a signed URL - the same decision chat
 // attachments made, for the same reason: a signed URL is a bearer token that
