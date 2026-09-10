@@ -18,6 +18,7 @@ import {
   TRANSCRIPTION_IN_FLIGHT_STATUSES,
   TRANSCRIPTION_FILING_STATUSES,
   TRANSCRIPTION_FILING_STATUS_LABELS,
+  type TranscriptionFilingStatus,
   TRANSCRIPTION_STATUSES,
   TRANSCRIPTION_STATUS_LABELS,
 } from "@/lib/data/kysely-database-types";
@@ -67,6 +68,20 @@ import { TranscriptionDetail } from "./transcription-detail";
 const SWEEP_INTERVAL_MS = 6_000;
 
 const IN_FLIGHT: readonly string[] = TRANSCRIPTION_IN_FLIGHT_STATUSES;
+
+// -------------------------------------------------------------------
+// The filing states that will not resolve on their own.
+//
+// Everything else either finished or is still moving, and a badge for those
+// is noise in a list where finished is the normal state. These three are
+// waiting on a person, and the only way anybody would otherwise find that
+// out is by opening every transcription in turn.
+// -------------------------------------------------------------------
+const FILING_NEEDS_ATTENTION: readonly TranscriptionFilingStatus[] = [
+  TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL,
+  TRANSCRIPTION_FILING_STATUSES.FAILED,
+  TRANSCRIPTION_FILING_STATUSES.NOWHERE,
+];
 
 export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO }) {
   const router = useRouter();
@@ -271,14 +286,16 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
                               "Filed" badge on every row is noise in a list
                               where filed is the normal state, and the same
                               argument the status badge above already makes.
-                              What is worth a mark is the pair that will
-                              never resolve on their own: nowhere to put it,
-                              or SharePoint refused. Both are terminal until
-                              a person acts, which is exactly why they have
-                              to be visible from the list rather than only
-                              after opening the row. */}
-                          {transcription.filingStatus === TRANSCRIPTION_FILING_STATUSES.NOWHERE ||
-                          transcription.filingStatus === TRANSCRIPTION_FILING_STATUSES.FAILED ? (
+                              What is worth a mark is the states that will
+                              never resolve on their own.
+                              
+                              AWAITING APPROVAL IS THE IMPORTANT ONE now that
+                              nothing files without an answer. A meeting whose
+                              folder nobody has confirmed is not filed, and
+                              the only way anybody would find that out is by
+                              opening every transcription in turn. */}
+                          {transcription.filingStatus !== null &&
+                          FILING_NEEDS_ATTENTION.includes(transcription.filingStatus) ? (
                             <Badge
                               variant={
                                 transcription.filingStatus === TRANSCRIPTION_FILING_STATUSES.FAILED

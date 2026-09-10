@@ -1,3 +1,4 @@
+import { chatNotConfiguredMessage } from "@/lib/ai/assistant-identity";
 import { NextResponse } from "next/server";
 
 import { MAX_DOCUMENT_BYTES } from "@/lib/ai/attachment-formats";
@@ -61,7 +62,7 @@ export async function POST(request: Request): Promise<Response> {
   // Inert rather than broken when no token is configured - there is no point
   // storing a file for a model this environment cannot reach.
   if (!isBedrockConfigured()) {
-    return NextResponse.json({ error: "AI chat is not configured on this environment." }, { status: 503 });
+    return NextResponse.json({ error: chatNotConfiguredMessage() }, { status: 503 });
   }
 
   // Cheap rejection on the declared size, before anything is buffered.

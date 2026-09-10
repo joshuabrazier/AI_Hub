@@ -84,19 +84,23 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // -----------------------------------------------------------------
-  // Retry filing BEFORE the advance pass, and the order is deliberate.
+  // Retry the filing DECISION before the advance pass, and the order is
+  // deliberate.
   //
-  // A transcription that finishes below files itself on the spot, spending
-  // attempt one. Running this pass afterwards would find that same row and
-  // immediately spend attempt two - burning half the retry budget inside a
-  // single run, on a SharePoint that has had no time to recover. Running it
-  // first means every retry is a full sweep interval apart, which is what
-  // makes four attempts worth having.
+  // A transcription that finishes below proposes a folder on the spot,
+  // spending attempt one. Running this pass afterwards would find that same
+  // row and immediately spend attempt two - burning half the retry budget
+  // inside a single run, against a model that has had no time to recover.
+  // Running it first means every retry is a full sweep interval apart, which
+  // is what makes four attempts worth having.
+  //
+  // NOTHING IN THIS PASS WRITES TO SHAREPOINT. It works out where a meeting
+  // should go and leaves it for the person whose meeting it was to confirm.
   //
   // Its failures are its own, for the same reason as the auto-import pass:
   // an unreachable SharePoint must not stop transcriptions being summarised.
   // -----------------------------------------------------------------
-  let filing = { examined: 0, filed: 0 };
+  let filing = { examined: 0, proposed: 0 };
 
   try {
     filing = await sweepTranscriptionFilingService();
@@ -111,7 +115,7 @@ export async function POST(request: Request): Promise<Response> {
   console.info(
     `[transcription-sweep] examined=${result.examined} advanced=${result.advanced}` +
       ` autoImportDue=${autoImport.examined} imported=${autoImport.imported} gaveUp=${autoImport.gaveUp}` +
-      ` filingDue=${filing.examined} filed=${filing.filed}`,
+      ` filingDue=${filing.examined} filingProposed=${filing.proposed}`,
   );
 
   return NextResponse.json({ ok: true, ...result });

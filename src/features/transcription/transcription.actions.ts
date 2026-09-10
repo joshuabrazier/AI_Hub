@@ -18,10 +18,17 @@ import {
   retryTranscriptionSummaryService,
   startTranscriptionService,
 } from "./transcription.service";
-import { retryTranscriptionFilingService } from "./filing.service";
 import {
+  confirmTranscriptionFilingService,
+  getFilingFolderChoicesService,
+  retryTranscriptionFilingService,
+} from "./filing.service";
+import {
+  ConfirmTranscriptionFilingRequestDTO,
+  ConfirmTranscriptionFilingSchema,
   CreateTranscriptionRequestDTO,
   CreateTranscriptionSchema,
+  FilingFolderChoiceDTO,
   ImportTeamsMeetingRequestDTO,
   ImportTeamsMeetingSchema,
   RenameTranscriptionRequestDTO,
@@ -304,5 +311,55 @@ export async function retryTranscriptionFilingAction(
     return { success: true, data: status } satisfies ServerApiResponse<TranscriptionFilingStatus | null>;
   } catch (error) {
     return handleServerApiError("retryTranscriptionFilingAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Yes, file it - here, or somewhere else.
+//
+// The only path in the app that writes a meeting's notes to SharePoint. It
+// takes an optional folder id when the person is overriding the suggestion,
+// and the service re-checks that id against the catalogue rather than
+// trusting it: a folder id from a browser is untrusted exactly like one from
+// the model.
+// -------------------------------------------------------------------
+export async function confirmTranscriptionFilingAction(
+  requestDTO: ConfirmTranscriptionFilingRequestDTO,
+): Promise<ServerApiResponse<TranscriptionFilingStatus>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(ConfirmTranscriptionFilingSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const status = await confirmTranscriptionFilingService(validatedRequest.data);
+
+    return { success: true, data: status } satisfies ServerApiResponse<TranscriptionFilingStatus>;
+  } catch (error) {
+    return handleServerApiError("confirmTranscriptionFilingAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The folders somebody may choose from.
+//
+// Fetched on demand rather than shipped with the page: a crawled library
+// runs to hundreds of folders, and every transcription screen carrying that
+// list would be paying for a decision almost nobody is making on that visit.
+// -------------------------------------------------------------------
+export async function getFilingFolderChoicesAction(
+  requestDTO: TranscriptionIdRequestDTO,
+): Promise<ServerApiResponse<FilingFolderChoiceDTO[]>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(TranscriptionIdSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const choices = await getFilingFolderChoicesService(validatedRequest.data);
+
+    return { success: true, data: choices } satisfies ServerApiResponse<FilingFolderChoiceDTO[]>;
+  } catch (error) {
+    return handleServerApiError("getFilingFolderChoicesAction", error);
   }
 }

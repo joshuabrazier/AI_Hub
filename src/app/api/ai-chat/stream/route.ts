@@ -1,3 +1,4 @@
+import { chatNotConfiguredMessage } from "@/lib/ai/assistant-identity";
 import { NextResponse } from "next/server";
 
 import { isBedrockConfigured } from "@/lib/ai/bedrock-client";
@@ -55,7 +56,7 @@ export async function POST(request: Request): Promise<Response> {
   // Inert rather than broken when no token is configured, matching how the
   // retention endpoint behaves without its secret.
   if (!isBedrockConfigured()) {
-    return NextResponse.json({ error: "AI chat is not configured on this environment." }, { status: 503 });
+    return NextResponse.json({ error: chatNotConfiguredMessage() }, { status: 503 });
   }
 
   let body: unknown;

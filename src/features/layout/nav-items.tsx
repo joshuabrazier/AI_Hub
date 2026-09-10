@@ -27,6 +27,7 @@ import {
   Wallet,
 } from "lucide-react";
 
+import { chatFeatureLabel, chatFeatureTooltip } from "@/lib/ai/assistant-identity";
 import { ROUTES, projectBoardForRole } from "@/lib/routes";
 import { USER_ROLES, type UserRole } from "@/lib/data/kysely-database-types";
 
@@ -78,7 +79,15 @@ const ADMIN_NAV: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Home", href: ROUTES.ADMIN_DASHBOARD, icon: House, tooltip: "Home" },
-      { label: "AI chat", href: ROUTES.ADMIN_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
+      // DERIVED, NOT LITERAL. A deployment may name its assistant
+      // (NEXT_PUBLIC_AI_ASSISTANT_NAME), and this is a base repo - so the
+      // name must not be written down here. Named, this reads "Saga AI" and
+      // "Chat with Saga"; unnamed, "AI chat" and "Chat with the assistant".
+      // Both halves matter: the tooltip is one of the sentences
+      // appKnowledgePrompt hands the assistant about its own app, so a
+      // literal string here would have it telling people to open a menu
+      // entry that no longer exists under that name.
+      { label: chatFeatureLabel(), href: ROUTES.ADMIN_AI_CHAT, icon: Sparkles, tooltip: chatFeatureTooltip() },
       {
         label: "Transcription",
         href: ROUTES.ADMIN_TRANSCRIPTION,
@@ -282,7 +291,7 @@ const MANAGER_NAV: NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { label: "AI chat", href: ROUTES.MANAGE_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
+      { label: chatFeatureLabel(), href: ROUTES.MANAGE_AI_CHAT, icon: Sparkles, tooltip: chatFeatureTooltip() },
       {
         label: "Transcription",
         href: ROUTES.MANAGE_TRANSCRIPTION,
@@ -335,7 +344,7 @@ const MEMBER_NAV: NavGroup[] = [
     label: "Your portal",
     items: [
       { label: "Home", href: ROUTES.PORTAL, icon: House, tooltip: "Home" },
-      { label: "AI chat", href: ROUTES.PORTAL_AI_CHAT, icon: Sparkles, tooltip: "Chat with the assistant" },
+      { label: chatFeatureLabel(), href: ROUTES.PORTAL_AI_CHAT, icon: Sparkles, tooltip: chatFeatureTooltip() },
       {
         label: "Transcription",
         href: ROUTES.PORTAL_TRANSCRIPTION,

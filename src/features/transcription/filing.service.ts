@@ -33,6 +33,7 @@ import { formatDateTime } from "@/lib/format";
 import { handleError } from "@/lib/handle-errors";
 import { clientFromTitle } from "@/lib/sharepoint/client-from-title";
 import {
+  admitModelFolder,
   chooseFilingDestination,
   matchFolderByName,
   type CandidateFolder,
@@ -40,7 +41,7 @@ import {
 import { chooseFilingLibrary } from "@/lib/sharepoint/filing-library";
 import { buildFilingPrompt, FILING_SYSTEM_PROMPT } from "@/lib/sharepoint/filing.prompt";
 import { buildNotesFileName, parseFolderPath } from "@/lib/sharepoint/folder-path";
-import { GRAPH_OUTCOMES, graphOutcomeOf, graphStatusOf } from "@/lib/sharepoint/graph-client";
+import { graphStatusOf } from "@/lib/sharepoint/graph-client";
 import { buildNotesDocument } from "@/lib/sharepoint/notes-document";
 import {
   isAlreadySubfolder,
@@ -54,6 +55,8 @@ import { revalidateTranscriptionViews } from "./transcription.revalidate";
 import {
   formatTimestamp,
   speakerLabel,
+  type ConfirmTranscriptionFilingRequestDTO,
+  type FilingFolderChoiceDTO,
   type TranscriptionIdRequestDTO,
 } from "./transcription.types";
 
@@ -359,26 +362,6 @@ function participantsOf(transcription: Transcription): string[] {
   return [...seen];
 }
 
-// -------------------------------------------------------------------
-// Is this worth trying again?
-//
-// A throttle or a network blip fixes itself, so the row stays pending. A
-// missing scope, a deleted folder or a revoked consent does not, and leaving
-// those pending means the same failure every few minutes forever - which is
-// how a log stops being worth reading.
-// -------------------------------------------------------------------
-function isRetryable(error: unknown): boolean {
-  if (graphOutcomeOf(error) === GRAPH_OUTCOMES.THROTTLED) return true;
-
-  const status = graphStatusOf(error);
-
-  // No status at all is a transport failure, which is the most retryable
-  // thing there is.
-  if (status === null) return true;
-
-  return status >= 500 || status === 429;
-}
-
 function describeError(error: unknown): string {
   const status = graphStatusOf(error);
   const message = error instanceof Error ? error.message : String(error);
@@ -449,82 +432,51 @@ function joinNotes(first: string | null, second: string | null): string | null {
   return [first, second].filter((part): part is string => Boolean(part)).join(" ") || null;
 }
 
-// -------------------------------------------------------------------
-// The fallback folder, created if it is not already there.
-//
-// THE ONLY PATH THIS APP EVER CREATES, and it comes from configuration -
-// never from model output, never from a client name. A model that could name
-// a path could create one anywhere in the library, so there is deliberately
-// no route from one to the other.
-//
-// "PATH" IS DOING WORK IN THAT SENTENCE and has to keep doing it now that
-// nestInSubfolder also creates a folder. This is the only multi-segment
-// TREE the app builds, walked from the drive root. That one creates exactly
-// one child, by name, inside a folder the crawl already catalogued and
-// addressed by its item id - so a model still cannot name a location, and
-// still cannot express a depth. See filing-subfolder.ts for the full
-// argument.
-//
-// Null when nothing is configured, or when what is configured does not
-// validate, or when the folder could not be made. All three are "there is
-// nowhere to put this", which is a legitimate answer rather than an error:
-// unset means anything ambiguous is left unfiled and reported instead of
-// guessed at.
-// -------------------------------------------------------------------
-async function materialiseFallback(
-  userId: string,
-  driveId: string,
-  reason: string,
-): Promise<{ folder: CandidateFolder; via: string; reason: string } | null> {
-  const parsed = parseFolderPath(envServer.SHAREPOINT_FILING_FALLBACK_PATH);
-
-  if (!parsed.ok) return null;
-
-  try {
-    const created = await ensureFolderPath(userId, driveId, parsed.segments);
-
-    return {
-      folder: {
-        itemId: created.itemId,
-        path: `/${parsed.segments.join("/")}`,
-        name: parsed.segments[parsed.segments.length - 1],
-      },
-      via: "fallback",
-      reason,
-    };
-  } catch (error) {
-    // The holding folder itself could not be made - almost always a missing
-    // write scope, which is worth seeing in the log rather than reported as
-    // "nowhere to file it".
-    console.error(`materialiseFallback: could not create the fallback folder on drive ${driveId}`, error);
-
-    return null;
-  }
-}
-
 // ===================================================================
-// FILE ONE TRANSCRIPTION
+// PROPOSE A DESTINATION. WRITE NOTHING.
 //
-// Idempotent by two separate mechanisms, because one is not enough:
+// This used to choose a folder and upload into it in one movement. It now
+// stops at the choice, and a person says yes before anything reaches
+// SharePoint.
 //
-//   1. THE CLAIM. One filing row per transcription, inserted with DO NOTHING,
-//      so of two sweeps arriving together only one proceeds.
-//   2. THE FILE NAME. Derived from the meeting's date and title, so a second
-//      upload of the same meeting collides with the first and is reported as
-//      the existing file rather than added beside it. That covers the gap the
-//      claim does not: two runs that both pass the pending check.
+// WHY, in one sentence: every other guard in this feature makes a wrong
+// answer VISIBLE afterwards, and this one makes it impossible beforehand.
+// The reason is recorded, the method is recorded, the screen shows both -
+// all of which help somebody who already suspects a note is in the wrong
+// client's folder, and none of which help the client whose meeting notes
+// were readable by another client in the meantime.
+//
+// NOTHING HERE TOUCHES SHAREPOINT. Not the upload, not the subfolder, not
+// the holding folder. A proposal is three columns on a row:
+//
+//   folderItemId + folderPath   a catalogued folder, chosen by name or model
+//   folderPath only             the configured holding folder, which does
+//                               NOT exist yet and is created only if the
+//                               answer is yes
+//   neither                     nothing matched; the person picks one
+//
+// THE HOLDING FOLDER IS NOW A SUGGESTION RATHER THAN A DESTINATION, and
+// that is a consequence rather than a separate decision. It existed because
+// nobody was going to look at an unmatched meeting, so somewhere safe and
+// automatic beat nothing. Somebody is going to look now, so it is offered
+// like any other answer and confirmed like any other answer.
+//
+// Idempotent by the claim, as before: one filing row per transcription,
+// inserted with DO NOTHING, so of two sweeps arriving together only one
+// proceeds. The file-name collision that used to be the second defence
+// still applies, but at confirm time.
 //
 // Returns the filing row, or null when there is nothing to do.
 // ===================================================================
-export async function fileTranscription(
+export async function proposeTranscriptionFiling(
   transcription: Transcription,
   userId: string,
 ): Promise<TranscriptionFiling | null> {
   try {
     // Only a finished transcription is worth filing, and only one with words
     // in it. A completed row with no transcript cannot happen today, but
-    // uploading an empty document into a client folder is a bad enough
-    // outcome to check for rather than assume away.
+    // proposing a home for an empty document is a bad enough outcome to
+    // check for rather than assume away.
     if (transcription.status !== TRANSCRIPTION_STATUSES.COMPLETED) return null;
     if (!transcription.transcript) return null;
 
@@ -540,14 +492,15 @@ export async function fileTranscription(
     });
 
     // Somebody else holds it. Read what the row says now rather than
-    // assuming - it may already be filed, which is the answer the caller
-    // wanted.
+    // assuming - it may already be proposed or filed, which is the answer
+    // the caller wanted.
     const filing = claimed ?? (await getTranscriptionFilingRepo(transcription.id, userId));
 
     if (!filing) return null;
 
-    // Filed, given up on, or parked with nowhere to go. Nothing to do, and
-    // the row is the honest report.
+    // Anything other than pending has either been decided already or is
+    // waiting on a person. Deciding again would overwrite a proposal
+    // somebody is looking at.
     if (filing.status !== TRANSCRIPTION_FILING_STATUSES.PENDING) return filing;
 
     if (library.kind === "misconfigured") {
@@ -559,9 +512,9 @@ export async function fileTranscription(
       );
     }
 
-    // Counted before the work, so a run that dies mid-upload still spends an
-    // attempt. The status predicate inside is what makes two sweeps meeting
-    // the same row safe.
+    // Counted before the work, so a run that dies mid-decision still spends
+    // an attempt. The status predicate inside is what makes two sweeps
+    // meeting the same row safe.
     const attempted = await markTranscriptionFilingAttemptRepo(filing.id);
 
     if (!attempted) return filing;
@@ -580,65 +533,138 @@ export async function fileTranscription(
       ? { folderId: null, reason: null, failure: null }
       : await suggestFolder(userId, transcription, clientName, participants, folders);
 
-    // Appended to whatever the decision says, rather than replacing it. Both
-    // facts matter: where it ended up, and that one of the three tiers never
-    // got a chance to weigh in.
-    const withFailure = (reason: string | null): string | null =>
-      suggestion.failure ? `${reason ? `${reason} ` : ""}${suggestion.failure}` : reason;
-
     const decision = chooseFilingDestination({
       clientName,
       folders,
       modelFolderId: suggestion.folderId,
       modelReason: suggestion.reason,
-      // ALWAYS NULL, and not a gap. Materialising the fallback is a WRITE:
-      // passing one here would mean creating a holding folder for every
-      // meeting, including the ones that never needed it. It is created
-      // below, only once nothing better has been found.
+      // Still always null, and now for a second reason on top of the first:
+      // materialising a fallback is a write, and this function makes none.
       fallback: null,
     });
 
-    const destination =
-      decision.kind === "nowhere"
-        ? await materialiseFallback(userId, library.driveId, decision.reason)
-        : {
-            folder: decision.folder,
-            via: decision.kind === "matched" ? decision.via : "fallback",
-            reason: decision.reason,
-          };
+    const withFailure = (reason: string | null): string | null =>
+      suggestion.failure ? `${reason ? `${reason} ` : ""}${suggestion.failure}` : reason;
 
-    if (!destination) {
+    if (decision.kind === "matched") {
       return (
         (await updateTranscriptionFilingRepo(filing.id, {
-          status: TRANSCRIPTION_FILING_STATUSES.NOWHERE,
+          status: TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL,
           driveId: library.driveId,
-          reason: withFailure(decision.kind === "nowhere" ? decision.reason : null),
+          folderItemId: decision.folder.itemId,
+          folderPath: decision.folder.path,
+          decidedVia: decision.via,
+          reason: withFailure(decision.reason),
+          error: null,
         })) ?? filing
       );
     }
 
-    // -----------------------------------------------------------------
-    // ONE FOLDER DEEPER.
-    //
-    // A note used to go straight into the matched folder, which put meeting
-    // transcripts among a client's contracts, drawings and invoices. It
-    // now goes into a folder of its own inside that one.
-    //
-    // NOT UNDER THE HOLDING FOLDER, deliberately. The fallback is already a
-    // place somebody chose specifically for notes nothing matched, and
-    // nesting inside it second-guesses that choice for no benefit - the
-    // whole purpose of that folder is to be the place these land.
-    //
-    // A FAILURE HERE IS NOT A FAILED FILING. If the folder cannot be made,
-    // the note goes into the parent exactly as it used to rather than not
-    // being filed at all: an untidy note in the right client's folder beats
-    // no note anywhere, and the reason is recorded either way.
-    // -----------------------------------------------------------------
-    const nested =
-      destination.via === "fallback"
-        ? { folder: destination.folder, note: null }
-        : await nestInSubfolder(userId, library.driveId, destination.folder);
+    // Nothing matched. The holding folder is offered by PATH if one is
+    // configured - it is not looked up and not created, so a proposal
+    // nobody accepts leaves no trace of itself in the library.
+    const fallback = parseFolderPath(envServer.SHAREPOINT_FILING_FALLBACK_PATH);
 
+    return (
+      (await updateTranscriptionFilingRepo(filing.id, {
+        status: TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL,
+        driveId: library.driveId,
+        folderItemId: null,
+        folderPath: fallback.ok ? `/${fallback.segments.join("/")}` : null,
+        decidedVia: fallback.ok ? "fallback" : null,
+        reason: withFailure(decision.reason),
+        error: null,
+      })) ?? filing
+    );
+  } catch (error) {
+    // NOT rethrown: a finished transcription must not be reported as failed
+    // because SharePoint was unreachable. The row stays pending with an
+    // attempt spent, and the sweep comes back.
+    console.error(`proposeTranscriptionFiling: could not decide for ${transcription.id}`, error);
+
+    return null;
+  }
+}
+
+// ===================================================================
+// THE ANSWER IS YES. NOW WRITE.
+//
+// Everything that touches SharePoint lives here, and it only runs because
+// somebody said so: create the holding folder if that is what was accepted,
+// create the notes subfolder, upload the file.
+//
+// A FOLDER ID FROM THE BROWSER IS UNTRUSTED EXACTLY LIKE ONE FROM THE MODEL,
+// and gets the same treatment - admitModelFolder checks it against the
+// catalogue this app actually crawled. That is not defensiveness about the
+// person: it is what stops a stale tab, a copied id or a tampered request
+// addressing a write at a folder nobody offered. The person picks from a
+// list; the server re-checks the list.
+//
+// THE PROPOSED FOLDER IS RE-ADMITTED TOO, not trusted because we wrote it.
+// A proposal can sit for a week, and a folder can be renamed or deleted in
+// that week - so "the folder we suggested" is re-checked against the
+// catalogue at the moment of the write, and a proposal that has gone stale
+// is reported rather than uploaded into whatever now holds that id.
+// ===================================================================
+export async function confirmTranscriptionFilingService(
+  requestDTO: ConfirmTranscriptionFilingRequestDTO,
+): Promise<TranscriptionFilingStatus> {
+  try {
+    const user = await requireUser();
+
+    const transcription = await getTranscriptionForUserRepo(requestDTO.transcriptionId, user.id);
+
+    // Not theirs, or not there. notFound rather than "forbidden", so a
+    // guessed id cannot be used to discover which ones exist.
+    if (!transcription) notFound();
+
+    const filing = await getTranscriptionFilingRepo(transcription.id, user.id);
+
+    if (!filing) {
+      throw new DisplayErrorMessage("There is nothing waiting to be filed for this transcription.");
+    }
+
+    if (filing.status === TRANSCRIPTION_FILING_STATUSES.FILED) {
+      throw new DisplayErrorMessage(
+        "These notes are already filed in SharePoint. Filing again would add a second copy rather than move the first, so move it there instead.",
+      );
+    }
+
+    // Approving is only meaningful once a destination has been worked out or
+    // an attempt has failed. A row still being decided has nothing to say
+    // yes to.
+    if (
+      filing.status !== TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL &&
+      filing.status !== TRANSCRIPTION_FILING_STATUSES.FAILED
+    ) {
+      throw new DisplayErrorMessage("This is still working out where it should go. Try again in a moment.");
+    }
+
+    const library = await resolveLibrary();
+
+    if (library.kind !== "chosen") {
+      throw new DisplayErrorMessage(
+        library.kind === "off"
+          ? "SharePoint filing is not set up on this environment."
+          : library.reason,
+      );
+    }
+
+    const folders = await loadCandidateFolders(library.driveId);
+
+    const parent = await resolveConfirmedParent(user.id, library.driveId, folders, filing, requestDTO);
+
+    // A person choosing a folder is the most certain of the four ways a
+    // destination gets picked, and it is recorded as its own value so the
+    // log can tell it from the model's guess that they happened to accept.
+    const via = requestDTO.folderItemId ? "chosen" : (filing.decidedVia ?? "chosen");
+
+    const nested =
+      via === "fallback"
+        ? { folder: parent, note: null }
+        : await nestInSubfolder(user.id, library.driveId, parent);
+
+    const participants = participantsOf(transcription);
     const document = buildDocument(transcription, participants);
 
     const fileName = buildNotesFileName({
@@ -652,78 +678,190 @@ export async function fileTranscription(
 
     try {
       const uploaded = await uploadTextFile({
-        userId,
+        userId: user.id,
         driveId: library.driveId,
         parentItemId: nested.folder.itemId,
         fileName,
         content: document.text,
       });
 
-      return (
-        (await updateTranscriptionFilingRepo(filing.id, {
-          status: TRANSCRIPTION_FILING_STATUSES.FILED,
-          driveId: library.driveId,
-          // The folder the file is actually IN, which is the subfolder when
-          // one was made. A record pointing one level up is the near-miss
-          // that wastes an afternoon for whoever goes looking.
-          folderItemId: nested.folder.itemId,
-          // A SNAPSHOT. Folders get renamed and moved, and "where we put it"
-          // has to stay answerable afterwards.
-          folderPath: nested.folder.path,
-          decidedVia: destination.via,
-          reason: withFailure(joinNotes(destination.reason, nested.note)),
-          fileItemId: uploaded.item.itemId,
-          fileWebUrl: uploaded.item.webUrl,
-          fileName,
-          filedAt: new Date(),
-          error: null,
-        })) ?? filing
-      );
+      await updateTranscriptionFilingRepo(filing.id, {
+        status: TRANSCRIPTION_FILING_STATUSES.FILED,
+        driveId: library.driveId,
+        // The folder the file is actually IN, which is the subfolder when one
+        // was made. A record pointing one level up is the near-miss that
+        // wastes an afternoon for whoever goes looking.
+        folderItemId: nested.folder.itemId,
+        // A SNAPSHOT. Folders get renamed and moved, and "where we put it"
+        // has to stay answerable afterwards.
+        folderPath: nested.folder.path,
+        decidedVia: via,
+        reason: joinNotes(filing.reason, nested.note),
+        fileItemId: uploaded.item.itemId,
+        fileWebUrl: uploaded.item.webUrl,
+        fileName,
+        filedAt: new Date(),
+        error: null,
+      });
+
+      revalidateTranscriptionViews();
+
+      return TRANSCRIPTION_FILING_STATUSES.FILED;
     } catch (error) {
-      const retryable = isRetryable(error) && attempted.attempts < FILING_MAX_ATTEMPTS;
+      console.error(`confirmTranscriptionFilingService: could not file ${transcription.id}`, error);
 
-      console.error(`fileTranscription: could not file transcription ${transcription.id}`, error);
+      // FAILED rather than back to awaiting: the destination is settled and
+      // it was the write that did not work, so the next attempt is the same
+      // attempt rather than a fresh decision. The button offers exactly that.
+      await updateTranscriptionFilingRepo(filing.id, {
+        status: TRANSCRIPTION_FILING_STATUSES.FAILED,
+        driveId: library.driveId,
+        folderItemId: nested.folder.itemId,
+        folderPath: nested.folder.path,
+        decidedVia: via,
+        reason: joinNotes(filing.reason, nested.note),
+        error: describeError(error),
+      });
 
-      return (
-        (await updateTranscriptionFilingRepo(filing.id, {
-          // Left pending when another go is worth it. The sweep picks it up;
-          // nothing else has to remember.
-          status: retryable
-            ? TRANSCRIPTION_FILING_STATUSES.PENDING
-            : TRANSCRIPTION_FILING_STATUSES.FAILED,
-          driveId: library.driveId,
-          // The destination is recorded even on a failure. "We could not put
-          // it in this folder" is a different problem from "we did not know
-          // where to put it", and the remedies differ.
-          folderItemId: nested.folder.itemId,
-          folderPath: nested.folder.path,
-          decidedVia: destination.via,
-          reason: withFailure(joinNotes(destination.reason, nested.note)),
-          error: describeError(error),
-        })) ?? filing
-      );
+      revalidateTranscriptionViews();
+
+      return TRANSCRIPTION_FILING_STATUSES.FAILED;
     }
   } catch (error) {
-    // NOT rethrown: see the note at the top of the file. A finished
-    // transcription must not be reported as failed because SharePoint was
-    // unreachable.
-    console.error(`fileTranscription: filing ${transcription.id} failed outright`, error);
+    throw handleError("confirmTranscriptionFilingService", error);
+  }
+}
 
-    return null;
+// -------------------------------------------------------------------
+// Which folder the file is actually going into, having been agreed.
+//
+// Three sources, in order of who decided:
+//
+//   1. THE PERSON, when they picked a different one. Admitted against the
+//      catalogue, so an id the app never offered is refused.
+//   2. THE PROPOSAL, re-admitted rather than trusted. It may be a week old,
+//      and a folder can be renamed or deleted in a week.
+//   3. THE HOLDING FOLDER, created now because this is the moment somebody
+//      said yes to it. Still the only multi-segment path this app builds,
+//      still from configuration, still never from a model.
+//
+// Throws a message a person can act on, because every one of these is
+// something they can fix by choosing again.
+// -------------------------------------------------------------------
+async function resolveConfirmedParent(
+  userId: string,
+  driveId: string,
+  folders: readonly CandidateFolder[],
+  filing: TranscriptionFiling,
+  requestDTO: ConfirmTranscriptionFilingRequestDTO,
+): Promise<CandidateFolder> {
+  if (requestDTO.folderItemId) {
+    const chosen = admitModelFolder(requestDTO.folderItemId, folders);
+
+    if (!chosen) {
+      throw new DisplayErrorMessage(
+        "That folder is not one of the catalogued folders. It may have been removed since the list was loaded - reload and choose again.",
+      );
+    }
+
+    return chosen;
+  }
+
+  if (filing.folderItemId) {
+    const proposed = admitModelFolder(filing.folderItemId, folders);
+
+    if (!proposed) {
+      throw new DisplayErrorMessage(
+        "The folder that was suggested is no longer in the catalogue, so it was not used. Choose a folder instead.",
+      );
+    }
+
+    return proposed;
+  }
+
+  // No catalogued folder, so this is the holding folder being accepted. It
+  // is created here and nowhere else.
+  const fallback = parseFolderPath(envServer.SHAREPOINT_FILING_FALLBACK_PATH);
+
+  if (!fallback.ok) {
+    throw new DisplayErrorMessage("No folder was suggested for this meeting, so choose one.");
+  }
+
+  const created = await ensureFolderPath(userId, driveId, fallback.segments);
+
+  return {
+    itemId: created.itemId,
+    path: `/${fallback.segments.join("/")}`,
+    name: fallback.segments[fallback.segments.length - 1],
+  };
+}
+
+// ===================================================================
+// THE FOLDERS SOMEBODY MAY CHOOSE FROM
+//
+// The same closed vocabulary the model gets, for the same reason: the app
+// can only write where it has actually looked. A free-text path would let a
+// typo create a folder anywhere in the library, and a folder that is missing
+// from this list means the crawl is stale rather than that the folder cannot
+// be used.
+//
+// Guarded on OWNING A TRANSCRIPTION THAT NEEDS ONE, not merely on being
+// signed in. Folder names in a client library name clients, so this is not
+// a browse endpoint - it is the list attached to a decision somebody has
+// been asked to make.
+// ===================================================================
+export async function getFilingFolderChoicesService(
+  requestDTO: TranscriptionIdRequestDTO,
+): Promise<FilingFolderChoiceDTO[]> {
+  try {
+    const user = await requireUser();
+
+    const transcription = await getTranscriptionForUserRepo(requestDTO.transcriptionId, user.id);
+
+    if (!transcription) notFound();
+
+    const filing = await getTranscriptionFilingRepo(transcription.id, user.id);
+
+    if (
+      !filing ||
+      (filing.status !== TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL &&
+        filing.status !== TRANSCRIPTION_FILING_STATUSES.FAILED)
+    ) {
+      return [];
+    }
+
+    const library = await resolveLibrary();
+
+    if (library.kind !== "chosen") return [];
+
+    const folders = await loadCandidateFolders(library.driveId);
+
+    return folders.map((folder) => ({ itemId: folder.itemId, path: folder.path }));
+  } catch (error) {
+    throw handleError("getFilingFolderChoicesService", error);
   }
 }
 
 // ===================================================================
 // THE SWEEP
 //
-// Retries what did not finish. It has no session, so it acts on rows that
-// name their own owner and runs each upload on that person's token - the same
-// arrangement as sweepAllTranscriptionsService, and the endpoint in front of
-// it is guarded by a bearer secret for the same reason.
+// Retries DECIDING, never writing. The only rows it touches are 'pending' -
+// ones whose destination has not been worked out yet, or whose last attempt
+// at working it out failed - and the result is a proposal somebody still has
+// to confirm. A row waiting on a person is a different status precisely so
+// this cannot keep re-deciding a question nobody has answered.
+//
+// It has no session, so it acts on rows that name their own owner and runs
+// each model call on that person's account - the same arrangement as
+// sweepAllTranscriptionsService, and the endpoint in front of it is guarded
+// by a bearer secret for the same reason.
 // ===================================================================
 export async function sweepTranscriptionFilingService(): Promise<{
   examined: number;
-  filed: number;
+  // Proposals made, NOT files written. Nothing this sweep does reaches
+  // SharePoint, and a counter called "filed" would have quietly reported
+  // zero forever while working perfectly.
+  proposed: number;
 }> {
   try {
     const pending = await getPendingTranscriptionFilingsRepo({
@@ -731,26 +869,29 @@ export async function sweepTranscriptionFilingService(): Promise<{
       limit: FILING_SWEEP_BATCH_SIZE,
     });
 
-    let filed = 0;
+    let proposed = 0;
 
-    // Sequential. Each row is a model call plus Graph calls, and fanning them
-    // out would turn one scheduled pass into a burst against both.
+    // Sequential. Each row is a model call plus a catalogue read, and fanning
+    // them out would turn one scheduled pass into a burst against both.
     for (const row of pending) {
       try {
         const transcription = await getTranscriptionForUserRepo(row.transcriptionId, row.userId);
 
         if (!transcription) continue;
 
-        const result = await fileTranscription(transcription, row.userId);
+        const result = await proposeTranscriptionFiling(transcription, row.userId);
 
-        if (result?.status === TRANSCRIPTION_FILING_STATUSES.FILED) filed += 1;
+        if (result?.status === TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL) proposed += 1;
       } catch (error) {
         // One stuck row must not stop the rest of the batch.
-        console.error(`sweepTranscriptionFilingService: could not file ${row.transcriptionId}`, error);
+        console.error(
+          `sweepTranscriptionFilingService: could not decide for ${row.transcriptionId}`,
+          error,
+        );
       }
     }
 
-    return { examined: pending.length, filed };
+    return { examined: pending.length, proposed };
   } catch (error) {
     throw handleError("sweepTranscriptionFilingService", error);
   }
@@ -843,7 +984,7 @@ export async function retryTranscriptionFilingService(
 
     // No row at all is the backfill case, and needs nothing: the claim
     // inside fileTranscription creates one.
-    const filing = await fileTranscription(transcription, user.id);
+    const filing = await proposeTranscriptionFiling(transcription, user.id);
 
     revalidateTranscriptionViews();
 

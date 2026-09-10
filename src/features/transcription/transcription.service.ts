@@ -28,7 +28,10 @@ import {
   TRANSCRIPTION_SOURCES,
   TRANSCRIPTION_SOURCE_DESCRIPTIONS,
   TEAMS_AUTO_IMPORT_STATUSES,
+  TRANSCRIPTION_FILING_STATUSES,
   TRANSCRIPTION_STATUSES,
+  type TranscriptionFiling,
+  type TranscriptionFilingStatus,
   USER_ROLES,
   type Transcription,
   type TranscriptionSegment,
@@ -98,7 +101,7 @@ import {
 import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from "./transcription.mappers";
 import { getTranscriptionFilingsForUserRepo } from "@/lib/data/repositories/transcription-filing.repository";
 
-import { fileTranscription } from "./filing.service";
+import { proposeTranscriptionFiling } from "./filing.service";
 import { revalidateTranscriptionViews } from "./transcription.revalidate";
 import {
   MAX_MEDIA_BYTES,
@@ -444,10 +447,21 @@ async function summariseTranscript(
 // Best-effort and never throws: the transcript is already stored by this
 // point, and losing a job over a notification would be exactly backwards.
 // -------------------------------------------------------------------
-async function notifyFinished(transcription: Transcription, userId: string): Promise<void> {
+async function notifyFinished(
+  transcription: Transcription,
+  userId: string,
+  // What filing decided, so the notification can say the one thing the
+  // reader has to do. Null when filing is not set up, which is the case
+  // where saying nothing about it is correct.
+  filingStatus: TranscriptionFilingStatus | null = null,
+): Promise<void> {
   if (!isPushConfigured()) return;
 
   const failed = transcription.status === TRANSCRIPTION_STATUSES.FAILED;
+
+  // The ask, not the status. A lock screen has room for one sentence and it
+  // should be the one that needs an answer.
+  const needsApproval = filingStatus === TRANSCRIPTION_FILING_STATUSES.AWAITING_APPROVAL;
 
   // Looked up rather than passed in, because the background sweep has no
   // session - it acts on rows belonging to people who are not here.
@@ -457,7 +471,9 @@ async function notifyFinished(transcription: Transcription, userId: string): Pro
     title: failed ? "Transcription failed" : "Your transcription is ready",
     body: failed
       ? `"${transcription.title}" could not be transcribed. The recording is still here.`
-      : `"${transcription.title}" has been transcribed and summarised.`,
+      : needsApproval
+        ? `"${transcription.title}" is ready. Confirm where to file it in SharePoint.`
+        : `"${transcription.title}" has been transcribed and summarised.`,
     // The path for THIS person's role. It cannot be a fixed one: the proxy
     // redirects a non-member away from /portal rather than refusing them,
     // so an admin tapping a portal link would land on their dashboard
@@ -488,20 +504,42 @@ async function notifyFinished(transcription: Transcription, userId: string): Pro
 // row. The catches here are the third belt, for whatever either of them
 // fails to hold.
 //
-// Filing a FAILED row is a no-op inside fileTranscription rather than a
-// condition here, so the rule lives with the thing that owns it.
+// Proposing for a FAILED row is a no-op inside proposeTranscriptionFiling
+// rather than a condition here, so the rule lives with the thing that owns
+// it.
 // -------------------------------------------------------------------
 async function finishTranscription(transcription: Transcription, userId: string): Promise<void> {
+  // -----------------------------------------------------------------
+  // THE PROPOSAL COMES FIRST, AND THE ORDER IS THE WHOLE POINT.
+  //
+  // Filing no longer happens on its own: a destination is proposed and
+  // nothing reaches SharePoint until the person whose meeting it was says
+  // yes. That trade is right - a note in another client's folder is a
+  // confidentiality problem and an unfiled note is not - but it has an
+  // obvious way to fail, which is that nobody ever looks and every meeting
+  // quietly queues up unfiled.
+  //
+  // The notification is the answer to that, and it can only say so if it
+  // knows. So this decides first and tells them second, and they get one
+  // notification carrying the whole picture rather than "it is ready"
+  // followed by silence about the thing that still needs them.
+  //
+  // Deciding is a model call, so this costs the notification a few seconds.
+  // A push that arrives ten seconds later and says what to do beats one that
+  // arrives instantly and does not.
+  // -----------------------------------------------------------------
+  let filing: TranscriptionFiling | null = null;
+
   try {
-    await notifyFinished(transcription, userId);
+    filing = await proposeTranscriptionFiling(transcription, userId);
   } catch (error) {
-    console.error(`finishTranscription: could not notify about ${transcription.id}`, error);
+    console.error(`finishTranscription: could not propose a folder for ${transcription.id}`, error);
   }
 
   try {
-    await fileTranscription(transcription, userId);
+    await notifyFinished(transcription, userId, filing?.status ?? null);
   } catch (error) {
-    console.error(`finishTranscription: could not file ${transcription.id}`, error);
+    console.error(`finishTranscription: could not notify about ${transcription.id}`, error);
   }
 }
 
