@@ -2322,6 +2322,36 @@ export function byAttention(a: MyWorkItemDTO, b: MyWorkItemDTO): number {
   return a.title.localeCompare(b.title) || a.taskId.localeCompare(b.taskId);
 }
 
+// -------------------------------------------------------------------
+// HOW MANY ROWS THE "WAITING ON YOU" CARD SHOWS.
+//
+// A landing page card is a SUMMARY. Somebody a year into a busy project can
+// hold thirty open tasks, and a card that rendered all of them would push the
+// rest of the dashboard off the screen - the week, the quick links, anything
+// added later - on exactly the account that most needs a dashboard.
+//
+// FIVE, and the number is here rather than in the component so it is one
+// decision with a test on it. Enough to read as a to-do list, few enough that
+// the card stays the height of the one beside it.
+//
+// TRUNCATION IS NEVER SILENT, which is the property that actually matters and
+// the reason this returns `remaining` rather than just a slice. The tile above
+// the card counts the WHOLE set, and the card says "N more tasks" and links to
+// the page that lists them. A card that quietly showed the first five and said
+// nothing would have somebody believing they were done when they were not,
+// which is worse than a long card.
+// -------------------------------------------------------------------
+export const WORK_CARD_ROWS = 5;
+
+export function visibleWork(work: readonly MyWorkItemDTO[]): {
+  shown: MyWorkItemDTO[];
+  remaining: number;
+} {
+  const shown = work.slice(0, WORK_CARD_ROWS);
+
+  return { shown, remaining: work.length - shown.length };
+}
+
 export function countByColumn(work: readonly MyWorkItemDTO[]): WorkColumnCountsDTO {
   return {
     todo: work.filter((item) => item.boardColumn === TASK_COLUMNS.TODO).length,

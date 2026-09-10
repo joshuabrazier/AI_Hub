@@ -10,6 +10,8 @@ import {
   budgetProgress,
   byAttention,
   countByColumn,
+  visibleWork,
+  WORK_CARD_ROWS,
   formatMinutesAsClock,
   formatMinutesAsHours,
   hoursToMinutes,
@@ -215,6 +217,87 @@ describe("countByColumn", () => {
     // would print "undefined to do" on the screen somebody sees on their
     // first day.
     expect(countByColumn([])).toEqual({ todo: 0, inProgress: 0, blocked: 0 });
+  });
+});
+
+// -------------------------------------------------------------------
+// THE CAP ON THE "WAITING ON YOU" CARD.
+//
+// The card is a summary on a landing page, and somebody a year into a busy
+// project can hold thirty open tasks. Rendering all of them would push the
+// rest of the dashboard off the screen on exactly the account that most needs
+// one.
+//
+// The property worth pinning is not really "it shows five" - it is that the
+// truncation is VISIBLE. A card that quietly showed the first few and said
+// nothing would leave somebody believing they were done when they were not.
+// -------------------------------------------------------------------
+describe("visibleWork", () => {
+  const workOf = (count: number): MyWorkItemDTO[] =>
+    Array.from({ length: count }, (_, i) => ({
+      taskId: `t${i}`,
+      title: `Task ${i}`,
+      boardColumn: TASK_COLUMNS.TODO,
+      phaseName: "Build",
+      projectId: "p1",
+      projectTitle: "Project",
+      clientName: "Client",
+      estimateMinutes: 60,
+      loggedMinutes: 0,
+    }));
+
+  it("NEVER shows more than the cap, however long the list is", () => {
+    // The failure this exists for: a dashboard that is fine for a new starter
+    // and unusable for anybody with a real workload.
+    expect(visibleWork(workOf(200)).shown).toHaveLength(WORK_CARD_ROWS);
+  });
+
+  it("says how many it did not show, so the truncation is never silent", () => {
+    expect(visibleWork(workOf(30)).remaining).toBe(30 - WORK_CARD_ROWS);
+  });
+
+  it("shows everything, and reports nothing remaining, when the list is short", () => {
+    const { shown, remaining } = visibleWork(workOf(3));
+
+    expect(shown).toHaveLength(3);
+    expect(remaining).toBe(0);
+  });
+
+  it("has no off-by-one at exactly the cap - no '0 more tasks' row", () => {
+    // remaining must be 0 rather than a falsy-but-rendered value at the
+    // boundary, or the card prints "0 more tasks" and links to a page that
+    // shows the same five.
+    const { shown, remaining } = visibleWork(workOf(WORK_CARD_ROWS));
+
+    expect(shown).toHaveLength(WORK_CARD_ROWS);
+    expect(remaining).toBe(0);
+  });
+
+  it("copes with an empty list", () => {
+    expect(visibleWork([])).toEqual({ shown: [], remaining: 0 });
+  });
+
+  it("keeps the ORDER it was given, so the cap takes the most urgent", () => {
+    // It slices the front of a list the service already sorted by attention,
+    // so the five shown are the five that matter most. Re-sorting or slicing
+    // the tail would make the cap arbitrary.
+    const sorted = workOf(10).map((item, i) => ({ ...item, taskId: `t${i}` }));
+
+    expect(visibleWork(sorted).shown.map((item) => item.taskId)).toEqual([
+      "t0",
+      "t1",
+      "t2",
+      "t3",
+      "t4",
+    ]);
+  });
+
+  it("does not mutate what it was handed", () => {
+    const work = workOf(10);
+
+    visibleWork(work);
+
+    expect(work).toHaveLength(10);
   });
 });
 

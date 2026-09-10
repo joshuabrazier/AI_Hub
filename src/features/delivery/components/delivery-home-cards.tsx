@@ -7,7 +7,12 @@ import { formatIsoDate } from "@/lib/format";
 import { TASK_COLUMNS, TASK_COLUMN_LABELS, type TaskColumn } from "@/lib/data/kysely-database-types";
 import { cn } from "@/lib/utils";
 
-import { formatMinutesAsClock, type MyDeliverySummaryDTO, type MyWorkItemDTO } from "../delivery.types";
+import {
+  formatMinutesAsClock,
+  visibleWork,
+  type MyDeliverySummaryDTO,
+  type MyWorkItemDTO,
+} from "../delivery.types";
 
 // -------------------------------------------------------------------
 // ===================================================================
@@ -41,12 +46,6 @@ export type DeliveryHomeRoutes = {
   /** A board, by project id. Built by the caller from projectBoardForRole. */
   board: (projectId: string) => string;
 };
-
-// How many rows the work card shows before deferring to the projects page.
-// Enough to be a to-do list, few enough that the card stays a summary - and
-// the count above it always names the whole set, so nothing is hidden
-// silently.
-const WORK_ROWS = 5;
 
 const COLUMN_TONE: Record<TaskColumn, "default" | "secondary" | "destructive" | "warning"> = {
   [TASK_COLUMNS.BLOCKED]: "destructive",
@@ -123,8 +122,10 @@ export function WaitingOnYouCard({
   summary: MyDeliverySummaryDTO;
   routes: DeliveryHomeRoutes;
 }) {
-  const shown = summary.work.slice(0, WORK_ROWS);
-  const remaining = summary.work.length - shown.length;
+  // Capped at WORK_CARD_ROWS, and `remaining` is what keeps the truncation
+  // visible. See visibleWork - the decision and its reasoning live next to
+  // the DTO so they can be tested.
+  const { shown, remaining } = visibleWork(summary.work);
 
   return (
     <Card className="shadow-sm">
