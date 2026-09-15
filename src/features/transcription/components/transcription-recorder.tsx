@@ -75,6 +75,34 @@ import {
 // would be nothing to persist and a crash would take the lot.
 const CHUNK_INTERVAL_MS = 10_000;
 
+// -------------------------------------------------------------------
+// HOW BIG AN HOUR OF MEETING IS, and it was nobody's decision until now.
+//
+// MediaRecorder was constructed with a mimeType and nothing else, so the
+// browser chose. Chrome's default for Opus is around 128 kbps, which is
+// about 58 MB an hour - so a five hour workshop produced a file over 300 MB,
+// which is past the 256 MiB a single PUT can carry. A recording that cannot
+// be uploaded is the worst outcome this feature has, because the meeting is
+// already over.
+//
+// 32 kbps, and the number is not a guess. Opus is a speech codec before it
+// is a music codec: it was designed for VoIP, and at 32 kbps mono it is
+// transparent for talking - well above the 24 kbps WhatsApp and Teams
+// themselves use for a voice call. Azure Speech then downsamples to 16 kHz
+// mono to recognise it, so most of what the default was spending was thrown
+// away before a single word was transcribed.
+//
+// The effect is about 14 MB an hour rather than 58. A five hour meeting
+// becomes 72 MB, a full working day fits, and every upload is four times
+// faster on the office connection.
+//
+// A HINT, NOT A GUARANTEE. A browser that will not honour it ignores it and
+// records at its own rate, which is why the size ceiling in
+// use-transcription-upload.ts stays: this makes the ceiling almost
+// unreachable rather than impossible to reach.
+// -------------------------------------------------------------------
+const AUDIO_BITS_PER_SECOND = 32_000;
+
 type RecorderState = "idle" | "recording" | "paused";
 
 // Whether this browser will record at all. Never changes within a page, so
@@ -353,6 +381,11 @@ export function TranscriptionRecorder({
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          // ONE CHANNEL. Speech recognition is mono - Azure downmixes
+          // before it recognises anything - so a stereo capture spends
+          // bitrate encoding a second channel that is discarded. A hint
+          // like the three above: a device that cannot do it ignores it.
+          channelCount: 1,
         },
       });
 
@@ -419,7 +452,13 @@ export function TranscriptionRecorder({
         }
       }
 
-      const recorder = new MediaRecorder(stream, { mimeType: format.mimeType });
+      const recorder = new MediaRecorder(stream, {
+        mimeType: format.mimeType,
+        // See AUDIO_BITS_PER_SECOND. Without this the browser picks, and
+        // what it picks is large enough to put a long meeting past what the
+        // upload can carry.
+        audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+      });
 
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data.size === 0) return;

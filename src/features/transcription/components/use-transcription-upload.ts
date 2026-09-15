@@ -8,7 +8,7 @@ import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 
 import { createTranscriptionAction, startTranscriptionAction } from "../transcription.actions";
-import { MAX_SINGLE_PUT_BYTES, type CreateTranscriptionRequestDTO } from "../transcription.types";
+import { MAX_MEDIA_BYTES, type CreateTranscriptionRequestDTO } from "../transcription.types";
 
 // -------------------------------------------------------------------
 // useTranscriptionUpload
@@ -18,7 +18,7 @@ import { MAX_SINGLE_PUT_BYTES, type CreateTranscriptionRequestDTO } from "../tra
 // file and finishing a recording differ only in where the bytes came from.
 //
 //   1. claim a row and get a write-only URL   (server action)
-//   2. PUT the bytes straight to blob storage (never through the app)
+//   2. PUT the bytes straight to blob storage, in blocks (never through the app)
 //   3. tell the server the file has landed    (server action)
 //
 // Step 2 is the reason this is a hook rather than an action. The media can
@@ -31,10 +31,6 @@ import { MAX_SINGLE_PUT_BYTES, type CreateTranscriptionRequestDTO } from "../tra
 // event for it - and a person watching a long upload with no indication of
 // whether it is moving will reload the page and lose the recording.
 // -------------------------------------------------------------------
-
-// Azure requires this on a PUT to say what kind of blob is being created.
-// Without it the request is rejected outright.
-const BLOB_TYPE_HEADER = "x-ms-blob-type";
 
 export type TranscriptionUploadRequest = {
   /** The bytes: a File from a picker, or a Blob from MediaRecorder. */
@@ -49,6 +45,167 @@ export type TranscriptionUploadRequest = {
   source: CreateTranscriptionRequestDTO["source"];
 };
 
+// -------------------------------------------------------------------
+// ===================================================================
+// SENDING THE BYTES IN BLOCKS
+// ===================================================================
+//
+// This replaced a single `PUT Blob`, which Azure caps at 256 MiB. That
+// ceiling was reached by a real meeting: a long workshop recorded at the
+// browser's default bitrate came to over 300 MB, and the upload was rejected
+// after running to completion. A recording that cannot be uploaded is the
+// worst outcome this feature has, because the meeting is already over and
+// cannot be recorded again.
+//
+// ALWAYS IN BLOCKS, EVEN FOR A SMALL FILE, and that is the important
+// decision. A path used only by rare large uploads is a path that is never
+// exercised - so the first time it runs is the day somebody is trying to
+// save a five hour workshop, which is precisely when it must not be the
+// first time. One path, every recording, exercised constantly. A 5 MB file
+// costs one extra request for it.
+//
+// THE SAS ALREADY ALLOWS THIS. It is granted "cw" on one blob: Put Block and
+// Put Block List both need `w`, so nothing about the credential changes and
+// it is still write-only, still one blob, still an hour.
+//
+// BLOCK IDS MUST ALL BE THE SAME LENGTH before base64, which Azure requires
+// and which is easy to get wrong the moment a file needs more than ten
+// blocks. They are padded to six digits, so the scheme holds to 999,999
+// blocks - far past the 50,000 Azure allows and the 1 GiB Speech accepts.
+// -------------------------------------------------------------------
+
+// Eight megabytes, which is a compromise rather than a tuned figure. Smaller
+// blocks mean more round trips on a slow connection; larger ones mean more
+// to redo when one fails. Azure's own tooling defaults to this region.
+const BLOCK_BYTES = 8 * 1024 * 1024;
+
+function blockIdFor(index: number): string {
+  // Fixed width, so every id is the same length once encoded. Azure rejects
+  // a block list whose ids differ in length.
+  return btoa(String(index).padStart(6, "0"));
+}
+
+/**
+ * One request, with progress. XMLHttpRequest rather than fetch for the same
+ * reason the rest of this file uses it: fetch cannot report upload progress,
+ * and somebody watching a long upload with no sign of movement reloads the
+ * page and loses the recording.
+ */
+function putWithProgress(
+  url: string,
+  body: Blob | string,
+  headers: Record<string, string>,
+  onProgress: (loaded: number) => void,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.open("PUT", url, true);
+
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) onProgress(event.loaded);
+    });
+
+    xhr.addEventListener("load", () => {
+      // 201 for both Put Block and Put Block List. Anything else is a
+      // failure, including a 403 from a SAS that expired mid-upload - which
+      // is what a transfer slower than the signed window looks like.
+      if (xhr.status === 201) resolve();
+      else reject(new Error(`The upload was rejected (${xhr.status}).`));
+    });
+
+    // Status 0 with an error event is a BLOCKED CROSS-ORIGIN request. The
+    // browser will not say why - that is the point of the same-origin policy
+    // - so there is no status and nothing to distinguish it from the network
+    // being down. Named anyway, because the two fixes are different and only
+    // one of them is the reader's to make.
+    xhr.addEventListener("error", () =>
+      reject(
+        new Error(
+          "The upload could not reach storage. Check your connection - and if this keeps happening, storage may not be configured to accept uploads from this site.",
+        ),
+      ),
+    );
+
+    xhr.addEventListener("abort", () => reject(new Error("The upload was cancelled.")));
+
+    xhr.send(body);
+  });
+}
+
+/**
+ * Send `media` to `uploadUrl` as blocks, then commit them.
+ *
+ * `onProgress` receives 0-100 across the WHOLE file rather than per block,
+ * because a bar that restarts every eight megabytes tells somebody nothing
+ * about how long is left.
+ */
+async function uploadInBlocks(
+  uploadUrl: string,
+  media: Blob,
+  mediaType: string,
+  onProgress: (percent: number) => void,
+): Promise<void> {
+  const blockIds: string[] = [];
+  let completedBytes = 0;
+
+  for (let start = 0, index = 0; start < media.size; start += BLOCK_BYTES, index += 1) {
+    const block = media.slice(start, Math.min(start + BLOCK_BYTES, media.size));
+    const blockId = blockIdFor(index);
+
+    blockIds.push(blockId);
+
+    // The SAS URL already carries a query string, so every extra parameter
+    // is appended with & rather than ?.
+    await putWithProgress(
+      `${uploadUrl}&comp=block&blockid=${encodeURIComponent(blockId)}`,
+      block,
+      {},
+      (loaded) => {
+        // Bytes finished in earlier blocks, plus progress through this one.
+        const total = completedBytes + loaded;
+
+        onProgress(Math.min(99, Math.round((total / media.size) * 100)));
+      },
+    );
+
+    completedBytes += block.size;
+  }
+
+  // -----------------------------------------------------------------
+  // COMMIT. Until this lands the blocks are staged and the blob does not
+  // exist - which is the property that makes a failed upload leave nothing
+  // behind rather than a half file. Azure discards uncommitted blocks on its
+  // own after a week.
+  //
+  // The blob's content type is set HERE and not on the blocks, because the
+  // blocks have no type of their own: the committed blob takes what this
+  // request gives it.
+  // -----------------------------------------------------------------
+  const blockList =
+    `<?xml version="1.0" encoding="utf-8"?><BlockList>` +
+    blockIds.map((id) => `<Latest>${id}</Latest>`).join("") +
+    `</BlockList>`;
+
+  await putWithProgress(
+    `${uploadUrl}&comp=blocklist`,
+    blockList,
+    {
+      "Content-Type": "application/xml",
+      // The type the SERVER derived from the filename, not one the browser
+      // guessed. Nothing serves these bytes back to a browser, so this is
+      // for tidiness in the container rather than for safety - but there is
+      // no reason to write a guess when the server has already decided.
+      "x-ms-blob-content-type": mediaType,
+    },
+    () => {},
+  );
+
+  onProgress(100);
+}
+
 export function useTranscriptionUpload() {
   const [isUploading, setIsUploading] = useState(false);
   // 0-100, or null when nothing is in flight. Null rather than 0 so the bar
@@ -61,20 +218,19 @@ export function useTranscriptionUpload() {
   // -------------------------------------------------------------------
   const upload = useCallback(async (request: TranscriptionUploadRequest): Promise<string | null> => {
     // -----------------------------------------------------------------
-    // REFUSED BEFORE THE ROW IS CLAIMED, because step 2 below is a single
-    // PUT and Azure caps one at 256 MiB. Past that the transfer runs to
-    // completion and is then rejected with a status code, which reads as a
-    // fault in the app rather than as a file that was always too big - and
-    // by then somebody has waited out the whole upload and has an abandoned
-    // row to tidy up.
+    // REFUSED BEFORE THE ROW IS CLAIMED, against the ceiling that is
+    // actually left: what SPEECH will accept. The 256 MiB single-PUT limit
+    // is gone, because the upload is in blocks now.
     //
-    // The SERVER checks MAX_MEDIA_BYTES after the bytes land, which is the
-    // first moment it knows the size. This is the browser's half, and the
-    // two are at different points on purpose.
+    // Checked here rather than only on the server so that a file which can
+    // never transcribe is refused before somebody waits out its upload. The
+    // server checks the same limit again after the bytes land, which is the
+    // first moment IT knows the size - the two are at different points on
+    // purpose and neither replaces the other.
     // -----------------------------------------------------------------
-    if (request.media.size > MAX_SINGLE_PUT_BYTES) {
+    if (request.media.size > MAX_MEDIA_BYTES) {
       toast.error(
-        `That file is ${Math.round(request.media.size / (1024 * 1024))} MB, and uploads are limited to ${Math.round(MAX_SINGLE_PUT_BYTES / (1024 * 1024))} MB. If it is a screen recording, export the audio on its own and upload that.`,
+        `That file is ${Math.round(request.media.size / (1024 * 1024))} MB, and the transcription service accepts up to ${Math.round(MAX_MEDIA_BYTES / (1024 * 1024))} MB. If it is a screen recording, export the audio on its own and upload that.`,
       );
 
       return null;
@@ -97,55 +253,10 @@ export function useTranscriptionUpload() {
 
       const { transcriptionId, uploadUrl, mediaType } = created.data;
 
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-
-        xhr.open("PUT", uploadUrl, true);
-        xhr.setRequestHeader(BLOB_TYPE_HEADER, "BlockBlob");
-        // The type the SERVER derived from the filename, not one the
-        // browser guessed. Nothing serves these bytes back, so this is for
-        // tidiness in the container rather than for safety - but there is
-        // no reason to write the browser's guess when the server has
-        // already decided.
-        xhr.setRequestHeader("Content-Type", mediaType);
-
-        xhr.upload.addEventListener("progress", (event) => {
-          if (event.lengthComputable) {
-            setProgress(Math.round((event.loaded / event.total) * 100));
-          }
-        });
-
-        xhr.addEventListener("load", () => {
-          // Azure answers 201 on a successful create. Anything else is a
-          // failure, including a 403 from a SAS that has expired - which is
-          // what an upload slower than the signed window looks like.
-          if (xhr.status === 201) resolve();
-          else reject(new Error(`The upload was rejected (${xhr.status}).`));
-        });
-
-        // Status 0 with an error event is what a BLOCKED CROSS-ORIGIN
-        // request looks like from here. The browser refuses to tell a page
-        // why - that is the point of the same-origin policy - so there is
-        // no status, no headers, and nothing distinguishing it from the
-        // network being down. It is named anyway, because the two fixes are
-        // completely different and only one of them is the reader's to make:
-        // a dropped connection is theirs, a missing CORS rule on the
-        // storage account is an administrator's. The real reason is printed
-        // in the browser console by the browser itself.
-        xhr.addEventListener("error", () =>
-          reject(
-            new Error(
-              "The upload could not reach storage. Check your connection - and if this keeps happening, storage may not be configured to accept uploads from this site.",
-            ),
-          ),
-        );
-        // Fired when the page navigates away mid-transfer. Rejecting rather
-        // than hanging means the row is left in "Uploading" and can be
-        // retried, instead of a promise nothing ever settles.
-        xhr.addEventListener("abort", () => reject(new Error("The upload was cancelled.")));
-
-        xhr.send(request.media);
-      });
+      // IN BLOCKS, ALWAYS. See uploadInBlocks: one path for every upload,
+      // so the code that carries a five hour workshop is the same code that
+      // carried the two minute test this morning.
+      await uploadInBlocks(uploadUrl, request.media, mediaType, setProgress);
 
       // The bytes are in storage but nothing is transcribing them yet. This
       // is the step that confirms the file actually landed - the app never
