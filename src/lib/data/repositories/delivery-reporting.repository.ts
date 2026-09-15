@@ -313,6 +313,97 @@ export async function getReportingClientsRepo(): Promise<ReportingClientRow[]> {
 // completely different things - the first needs no action, the second means
 // the feature is not being used and the reports are describing nothing.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// Every task with the hours booked to it, ALL TIME.
+//
+// For the outstanding-effort view, which is the one report that is NOT period
+// scoped: "what is left" is a fact about now, and an estimate set in July and
+// worked in September belongs to both months.
+//
+// A LEFT JOIN, so a task nobody has booked time to comes back with nought
+// rather than vanishing. Those are exactly the rows the view exists to show -
+// work planned and not started - and an inner join would silently drop the
+// entire backlog.
+//
+// THE TASK'S ESTIMATE IS WANTED HERE, which is the opposite of the rule in
+// app-snapshot.ts. There, a task carrying an estimate would promote it to a
+// row in the project BUDGET table and double-count its hours. Here the task
+// IS the row: the question is "how much of this piece of work is left", and
+// it cannot be asked without the estimate. Two consumers, two rules, and the
+// reason they differ is which grain each is reporting at.
+//
+// `status` is the board column verbatim. `isDoneStatus` in the engine matches
+// on the lowercase word, and TASK_COLUMNS.DONE is "done" - so it lines up
+// without a translation table, and a new column would simply not count as
+// done rather than breaking.
+// -------------------------------------------------------------------
+export interface ReportingTaskWithLoggedTimeRow {
+  issueKey: string;
+  parentKey: string;
+  projectKey: string;
+  issueType: string;
+  summary: string;
+  status: string;
+  currentEstimateSeconds: number | null;
+  loggedSeconds: number;
+}
+
+export async function getReportingTasksWithLoggedTimeRepo(): Promise<ReportingTaskWithLoggedTimeRow[]> {
+  try {
+    const rows = await database
+      .selectFrom("tasks as t")
+      .innerJoin("projects as p", "p.id", "t.projectId")
+      .leftJoin("timeEntries as te", "te.taskId", "t.id")
+      .select((eb) => [
+        "t.id as issueKey",
+        "t.projectId as parentKey",
+        "p.clientId as projectKey",
+        "t.title as summary",
+        "t.boardColumn as status",
+        "t.estimateMinutes as estimateMinutes",
+        eb.fn.sum<string | null>("te.minutes").as("loggedMinutes"),
+      ])
+      .groupBy(["t.id", "t.projectId", "p.clientId", "t.title", "t.boardColumn", "t.estimateMinutes"])
+      .orderBy("t.id")
+      .execute();
+
+    return rows.map((row) => ({
+      issueKey: row.issueKey,
+      parentKey: row.parentKey,
+      projectKey: row.projectKey,
+      // Every row here is a deliverable. The engine reads this to tell a job
+      // from the work under it, and in this shape only tasks are returned.
+      issueType: "Task",
+      summary: row.summary,
+      status: row.status,
+      // Nought means "no estimate", and the engine treats that as unknown
+      // rather than as no work - so it is NULL, not 0. The delivery schema
+      // defaults `estimate_minutes` to 0 for a task nobody has sized.
+      currentEstimateSeconds: row.estimateMinutes > 0 ? row.estimateMinutes * 60 : null,
+      // sum() arrives as a numeric string, and NULL for a task with no
+      // entries. Resolved once, here.
+      loggedSeconds: Number(row.loggedMinutes ?? 0) * 60,
+    }));
+  } catch (error) {
+    throw handleError("getReportingTasksWithLoggedTimeRepo", error);
+  }
+}
+
+export async function latestReportingWorkDateRepo(): Promise<string | null> {
+  try {
+    const row = await database
+      .selectFrom("timeEntries")
+      .select((eb) => eb.fn.max<string | null>("workDate").as("latest"))
+      .executeTakeFirst();
+
+    // Already 'YYYY-MM-DD': the pg type parser maps DATE to a string on
+    // purpose, so this never becomes a Date and never shifts a day.
+    return row?.latest ?? null;
+  } catch (error) {
+    throw handleError("latestReportingWorkDateRepo", error);
+  }
+}
+
 export async function countReportingTimeEntriesRepo(): Promise<number> {
   try {
     const row = await database

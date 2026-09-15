@@ -2,7 +2,7 @@ import { ROUTES } from "@/lib/routes";
 
 import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.service";
 import { StaffList } from "../staff-cards";
-import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
+import { EmptyState, StatTile, DataStatusLine } from "../timesheet-panels";
 import TimesheetShell from "../timesheet-shell";
 
 // -------------------------------------------------------------------
@@ -20,7 +20,7 @@ import TimesheetShell from "../timesheet-shell";
 // -------------------------------------------------------------------
 export default async function StaffView(request: TimesheetRequest) {
   const { data, dashboard } = await getStaffDashboardService(request);
-  const { period, filters, report, syncStatus, periodTotalHours } = data;
+  const { period, filters, report, dataStatus, periodTotalHours } = data;
 
   const { totals } = dashboard;
 
@@ -35,8 +35,8 @@ export default async function StaffView(request: TimesheetRequest) {
     >
       {!hasAnyone ? (
         <>
-          <EmptyState syncStatus={syncStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
-          <SyncStatusLine syncStatus={syncStatus} />
+          <EmptyState dataStatus={dataStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
+          <DataStatusLine dataStatus={dataStatus} />
         </>
       ) : (
         <>
@@ -81,10 +81,10 @@ export default async function StaffView(request: TimesheetRequest) {
           <StaffList people={dashboard.people} filters={filters} />
 
           {report.totals.worklogCount === 0 && (
-            <EmptyState syncStatus={syncStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
+            <EmptyState dataStatus={dataStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
           )}
 
-          <SyncStatusLine syncStatus={syncStatus} />
+          <DataStatusLine dataStatus={dataStatus} />
         </>
       )}
     </TimesheetShell>

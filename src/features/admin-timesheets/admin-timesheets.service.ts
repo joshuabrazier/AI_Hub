@@ -1,14 +1,15 @@
 import "server-only";
 
 import { requireUserRole } from "@/lib/auth/session-auth-server";
-import { USER_ROLES } from "@/lib/data/kysely-database-types";
+import { PROJECT_CATEGORY_LABELS, USER_ROLES } from "@/lib/data/kysely-database-types";
 import {
-  countWorklogFactsRepo,
-  getJiraIssuesRepo,
-  getJiraProjectsRepo,
-  getSyncWatermarkRepo,
-  getWorklogFactsInRangeRepo,
-} from "@/lib/data/repositories/timesheet.repository";
+  countReportingTimeEntriesRepo,
+  getReportingClientsRepo,
+  getReportingProjectsRepo,
+  getReportingTasksRepo,
+  getReportingTimeEntriesInRangeRepo,
+  latestReportingWorkDateRepo,
+} from "@/lib/data/repositories/delivery-reporting.repository";
 import { envServer } from "@/lib/env-server";
 import { handleError } from "@/lib/handle-errors";
 import { buildReport } from "@/lib/timesheet/aggregate";
@@ -25,11 +26,16 @@ import {
   measureAgainstCapacity,
   toStaffCapacity,
 } from "@/lib/timesheet/staff-capacity";
-import { JIRA_WORKLOG_SYNC_JOB } from "@/features/timesheet-sync/timesheet-sync.service";
 import { SnapshotIssue, SnapshotWorklog, TimesheetSnapshot } from "@/lib/timesheet/timesheet.types";
+
+import {
+  toReportingFactRows,
+  toReportingIssueRows,
+  type ReportingFactRow,
+} from "@/lib/timesheet/app-snapshot";
 import { todayInAppZone } from "@/lib/timezone";
 
-import { loadJiraIssues, loadStaffTargets } from "./admin-timesheets-loaders";
+import { loadReportingTasks, loadStaffTargets } from "./admin-timesheets-loaders";
 
 import {
   ALL_CATEGORIES,
@@ -48,14 +54,18 @@ import {
 
 
 // -------------------------------------------------------------------
-// Read-model rows to the engine's snapshot shape.
+// Fact rows to the engine's snapshot shape.
 //
 // A straight rename, deliberately: no defaulting, no coercion, no filling in
 // of blanks. Anything missing has to reach the engine as missing so the audit
 // can report it, rather than being quietly patched here where nobody would
 // ever see it happen.
+//
+// The rows themselves are built by `toReportingFactRows` in app-snapshot.ts,
+// which is where minutes become seconds and a task's project and client are
+// resolved. This is only the last hop.
 // -------------------------------------------------------------------
-function toSnapshotWorklogs(rows: Awaited<ReturnType<typeof getWorklogFactsInRangeRepo>>): SnapshotWorklog[] {
+function toSnapshotWorklogs(rows: readonly ReportingFactRow[]): SnapshotWorklog[] {
   return rows.map((row) => ({
     worklogId: row.worklogId,
     issueKey: row.issueKey,
@@ -66,20 +76,6 @@ function toSnapshotWorklogs(rows: Awaited<ReturnType<typeof getWorklogFactsInRan
     timeSpentSeconds: row.timeSpentSeconds,
     narrative: row.narrative,
     rndClass: row.rndClass,
-  }));
-}
-
-function toSnapshotIssues(rows: Awaited<ReturnType<typeof getJiraIssuesRepo>>): SnapshotIssue[] {
-  return rows.map((row) => ({
-    issueKey: row.issueKey,
-    parentKey: row.parentKey,
-    projectKey: row.projectKey,
-    issueType: row.issueType,
-    summary: row.summary,
-    category: row.category,
-    billable: row.billable,
-    baselineEstimateSeconds: row.baselineEstimateSeconds,
-    currentEstimateSeconds: row.currentEstimateSeconds,
   }));
 }
 
@@ -118,7 +114,7 @@ export interface TimesheetRequest {
 const DEFAULT_GRANULARITY: Granularity = "month";
 
 
-type FactRows = Awaited<ReturnType<typeof getWorklogFactsInRangeRepo>>;
+type FactRows = ReportingFactRow[];
 
 const SECONDS_TO_HOURS = 3600;
 
@@ -136,15 +132,15 @@ function toHours(seconds: number): number {
 // -------------------------------------------------------------------
 const UNCATEGORISED = "uncategorised";
 
-function toCategoryOptions(rows: FactRows, projects: Awaited<ReturnType<typeof getJiraProjectsRepo>>): CategoryOptionDTO[] {
+function toCategoryOptions(rows: FactRows, projects: ProjectRows): CategoryOptionDTO[] {
   const totals = new Map<string, { seconds: number; count: number }>();
 
-  // Seed from the PROJECT list, not from the logged time. A category that
-  // exists in Jira with nothing booked against it has to show as zero, because
+  // Seed from the CLIENT list, not from the logged time. A category that
+  // exists with nothing booked against it has to show as zero, because
   // "Internal exists and has no hours" and "there is no such thing as
-  // Internal" are completely different facts - and the first one means time is
-  // being recorded somewhere other than Jira, which is exactly what somebody
-  // needs to notice.
+  // Internal" are completely different facts - and the first one means time
+  // is being recorded somewhere other than here, which is exactly what
+  // somebody needs to notice.
   for (const project of projects) {
     const key = project.category ?? UNCATEGORISED;
     if (!totals.has(key)) totals.set(key, { seconds: 0, count: 0 });
@@ -185,8 +181,11 @@ function toCategoryOptions(rows: FactRows, projects: Awaited<ReturnType<typeof g
 // this period, busiest first, because that is the order somebody looks for
 // them in.
 // -------------------------------------------------------------------
-type IssueRows = Awaited<ReturnType<typeof getJiraIssuesRepo>>;
-type ProjectRows = Awaited<ReturnType<typeof getJiraProjectsRepo>>;
+type IssueRows = SnapshotIssue[];
+// The CLIENT list. Jira called a client a "project", the engine calls it the
+// client, and these option builders were written against the Jira name - so
+// the shape keeps `projectKey` and the service maps clients into it.
+type ProjectRows = readonly { projectKey: string; name: string; category: string }[];
 
 // The Jira issue type that sits at job level, above deliverables. Read from
 // the issue rather than guessed: this instance calls level 1 "Project".
@@ -266,9 +265,21 @@ function toProjectOptions(rows: FactRows, issues: IssueRows, projects: ProjectRo
   // point of the list: you have to be able to look at the one nobody started.
   const projectRows = selectJobIssues(issues).map((issue) => ({
     value: issue.issueKey,
-    label: issue.issueKey,
+    // -----------------------------------------------------------------
+    // THE TITLE, NOT THE KEY. This was `issue.issueKey`, which in Jira was a
+    // readable "TSSS-59" that people said out loud. The app's key is a
+    // generated id, so the selector would have listed a column of UUIDs -
+    // technically correct and completely unusable.
+    //
+    // The key stays as `value`, because that is what the URL carries and
+    // what every filter is validated against. Only the label changed.
+    // -----------------------------------------------------------------
+    label: issue.summary || issue.issueKey,
     summary: issue.summary,
-    category: issue.category,
+    // SnapshotIssue types this optional, and ProjectOptionDTO does not.
+    // Absent and null mean the same thing here and only one of them can be
+    // rendered, so they are collapsed once, here.
+    category: issue.category ?? null,
     hours: toHours(totals.get(issue.issueKey) ?? 0),
     clientKey: issue.projectKey ?? null,
     clientName: issue.projectKey ? (clientNames.get(issue.projectKey) ?? issue.projectKey) : null,
@@ -372,13 +383,45 @@ export async function getAdminTimesheetsService(
       isCurrent: resolved.isCurrent,
     };
 
-    const [factRows, issueRows, projectRows, watermark, totalWorklogs] = await Promise.all([
-      getWorklogFactsInRangeRepo(period.from, period.to),
-      loadJiraIssues(),
-      getJiraProjectsRepo(),
-      getSyncWatermarkRepo(JIRA_WORKLOG_SYNC_JOB),
-      countWorklogFactsRepo(),
-    ]);
+    // -----------------------------------------------------------------
+    // FIVE READS OF THE APP'S OWN DATA, in parallel, fixed in number.
+    //
+    // This used to read a Jira-synced model - worklog facts, cached issues,
+    // the space list and the sync watermark. It reads clients, projects,
+    // tasks and time entries now. The engine underneath is untouched: the
+    // switch is a mapping, which is the only honest way to move a report
+    // about money without changing what it says.
+    //
+    // ENTRIES ARE SCOPED TO THE PERIOD; tasks and projects are not. The
+    // period bounds the HOURS, but the option lists and the budget table
+    // both have to show work with nothing booked to it - a project with a
+    // quote and no time against it is the row somebody most needs to see.
+    // -----------------------------------------------------------------
+    const [entryRows, taskRows, projectDefinitions, clientRows, totalEntries, latestWorkDate] =
+      await Promise.all([
+        getReportingTimeEntriesInRangeRepo(period.from, period.to),
+        getReportingTasksRepo(),
+        getReportingProjectsRepo(),
+        getReportingClientsRepo(),
+        countReportingTimeEntriesRepo(),
+        latestReportingWorkDateRepo(),
+      ]);
+
+    // Resolved into the shapes the filtering and the option builders below
+    // already work on. See app-snapshot.ts for what each field becomes and
+    // for the four mappings that compile fine and produce wrong numbers.
+    const factRows = toReportingFactRows(entryRows, taskRows);
+    const issueRows = toReportingIssueRows(taskRows, projectDefinitions);
+
+    // Clients, in the shape these option builders were written against. Jira
+    // called a client a "project" and the name survives in `projectKey`; the
+    // category is the display label because the split below uses it as both
+    // the key and the text on screen.
+    const projectRows: ProjectRows = clientRows.map((client) => ({
+      projectKey: client.clientId,
+      name: client.name,
+      category: PROJECT_CATEGORY_LABELS[client.category],
+    }));
 
     // The option lists are built from the WHOLE period and the whole book of
     // work, before any filter is applied. Deriving them from the filtered rows
@@ -486,7 +529,9 @@ export async function getAdminTimesheetsService(
     // matched the rows under them.
     const snapshot: TimesheetSnapshot = {
       worklogs: toSnapshotWorklogs(filteredRows),
-      issues: toSnapshotIssues(filteredIssues),
+      // Already SnapshotIssue rows - toReportingIssueRows produced them. There
+      // is no second mapping here because there is nothing left to map.
+      issues: filteredIssues,
       today: todayIso,
       options: { workingHoursPerDay: envServer.WORKING_DAY_HOURS, periodStart: period.from, periodEnd: period.to },
     };
@@ -529,14 +574,10 @@ export async function getAdminTimesheetsService(
         availableHoursOverride: capacityOverride?.periodHours,
       }),
       periodTotalHours: Math.round((periodSeconds / 3600) * 10000) / 10000,
-      syncStatus: {
-        configured: Boolean(envServer.JIRA_BASE_URL && envServer.JIRA_EMAIL && envServer.JIRA_API_TOKEN),
-        lastSuccessAt: watermark?.lastSuccessAt ?? null,
-        lastRunAt: watermark?.lastRunAt ?? null,
-        lastError: watermark?.lastError ?? null,
-        lastUpdatedCount: watermark?.lastUpdatedCount ?? 0,
-        totalWorklogs,
-      },
+      // What there is to report on at all - see DataStatusDTO. It answers the
+      // one question an empty screen cannot: quiet period, or nobody has ever
+      // logged an hour here.
+      dataStatus: { totalEntries, latestWorkDate },
       workingHoursPerDay: envServer.WORKING_DAY_HOURS,
     };
   } catch (error) {
@@ -825,8 +866,12 @@ export async function getOverviewService(request: TimesheetRequest = {}): Promis
   try {
     const { data, dashboard } = await getStaffDashboardService(request);
 
-    const issues = await loadJiraIssues();
-    const summaryByKey = new Map(issues.map((issue) => [issue.issueKey, issue.summary]));
+    // What each job is called, for the "where is the time going" list. Keyed
+    // by task id, which is what a fact's issueKey is now - the Jira issue key
+    // it replaced was readable and this one is not, so the title is no longer
+    // a nicety here, it is the only thing that makes the list mean anything.
+    const tasks = await loadReportingTasks();
+    const summaryByKey = new Map(tasks.map((task) => [task.taskId, task.title]));
 
     // The period's own facts, already narrowed to the current selection by the
     // report that produced them.
