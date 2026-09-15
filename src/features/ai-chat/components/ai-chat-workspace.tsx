@@ -41,40 +41,42 @@ import { AiChatThread } from "./ai-chat-thread";
 // with the back button. The server re-checks that id against the session on
 // every render, so putting it in the URL grants nothing.
 //
-// THE TWO COLUMNS ARE TWO SURFACES, not one surface with a gap in it. The
-// list is `bg-sidebar`; the thread paints nothing and so wears the page's
-// own background; and there is a border between them. The previous version
-// separated them with whitespace alone, which on a wide monitor is one field
-// of white with some links floating in it.
+// THE THREE COLUMNS ARE THREE SURFACES, not one surface with gaps in it. The
+// app rail is `--sidebar`, this list is `--panel`, and the thread paints
+// nothing so it wears the page's own background. An earlier version separated
+// them with whitespace alone, which on a wide monitor is one field of white
+// with some links floating in it.
 //
-// `bg-sidebar` RATHER THAN `bg-secondary`, WHICH IT WAS. This list is a
-// navigation rail - a set of things you pick one of - and so is the app's own
-// rail immediately to its left. They were two different tints, and once the
-// app rail became the near-white surface its token always specified, the
-// difference read as a mistake: an almost-white outer rail with a visibly
-// darker inner one nested inside it. One token, one surface language, and the
-// border is still what separates them.
+// -------------------------------------------------------------------
+// THIS LIST IS `bg-panel`, AND IT MUST NEVER GO BACK TO `bg-sidebar`.
 //
-// `bg-muted` IS THE TRAP HERE, and it is worth naming because it is the
-// obvious choice for a quiet panel. Check the tokens in globals.css: in the
-// light theme it is #f6fafb, a step off #ffffff that you cannot see, and in
-// the dark theme it is #131f22 - the SAME VALUE as `--card`. A muted panel
-// is invisible in one theme and, beside a card, absent in the other.
+// It WAS `bg-sidebar`, and the argument for that was reasonable while it
+// lasted: both are navigation columns, the rail was then a near-white
+// surface, and two different near-white tints side by side read as a mistake
+// rather than as a decision. One token, one surface language.
 //
-// `--sidebar` IS #fcfdfd IN LIGHT MODE, WHICH IS ALSO A STEP OFF WHITE, and
-// this used `bg-secondary` for exactly that reason: it was the only neutral
-// that steps away from both the background and the card in both themes. So
-// the swap above needs an answer rather than an assertion.
+// That argument depended entirely on the rail being near-white, and it did
+// not survive the rail becoming the brand teal. The chat screen rendered TWO
+// TEAL COLUMNS hard against each other - the one place in the app where the
+// rail has a sibling - and the list's rows, coloured with page tokens, were
+// left on a surface nobody had measured them against. The rail's own note in
+// globals.css had predicted this exact failure ("on the chat screen a second
+// teal column beside it") three moves before it happened.
 //
-// The answer is the BORDER, and the app's own rail is the proof: it is this
-// same near-white token, two inches to the left, and it reads as a column
-// because a hairline separates it rather than a fill. That is what the
-// palette's note on --sidebar says to do - "separated from the content by
-// its border rather than by a fill, so the app chrome does not darken the
-// page" - and this list is the same kind of thing, a set of items you pick
-// one of. `border-r border-border` below is therefore load-bearing here in a
-// way it was not when the fill did the work: remove it and this column
-// genuinely does vanish in light mode.
+// So the relationship is what is fixed here, not the value: the rail sits
+// furthest from the thread and this sits between them, in both themes. Tying
+// this column to the rail's token means every future change to the rail lands
+// on a surface that was never being designed.
+//
+// `bg-muted` AND `bg-secondary` ARE THE TRAPS, and both are the obvious
+// reach. `--muted` is #f2f7f8 in light, a step off #ffffff you cannot see,
+// and #131f22 in dark - the SAME VALUE as `--card`, so a panel that is
+// invisible in one theme and absent beside a card in the other. `--secondary`
+// carries badges and buttons, so tuning it for a column moves those with it.
+//
+// The border still earns its place. `border-r border-border` below separates
+// this column from the thread, where the fill difference is deliberately
+// small - the loud boundary on this screen is the one against the rail.
 //
 // The open conversation's row is `bg-background` - the thread's own surface
 // - so the selection reads as the leading edge of the column it opens rather
@@ -219,7 +221,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
             aria-hidden - that would fix only the second half. */}
         <aside
           className={cn(
-            "hidden shrink-0 overflow-hidden bg-sidebar transition-[width] duration-300 ease-in-out motion-reduce:transition-none md:block",
+            "hidden shrink-0 overflow-hidden bg-panel transition-[width] duration-300 ease-in-out motion-reduce:transition-none md:block",
             railOpen ? "w-[17rem] border-r border-border" : "w-0",
           )}
           inert={!railOpen}
@@ -277,7 +279,7 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
                   <MessagesSquare size={16} aria-hidden="true" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="gap-0 bg-sidebar p-0">
+              <SheetContent side="left" className="gap-0 bg-panel p-0">
                 {/* A VISIBLE header, not an sr-only one. SheetContent paints
                     its own close button at top-3 right-3, so with the list
                     flush to the top edge that button sits on top of the "New

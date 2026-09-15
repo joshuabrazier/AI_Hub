@@ -53,6 +53,8 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-panel-foreground: var(--panel-foreground);
+  --color-panel: var(--panel);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -122,6 +124,32 @@
   --card-foreground: #0f1a1c;
   --popover: #ffffff;
   --popover-foreground: #0f1a1c;
+
+  /* -----------------------------------------------------------------
+     AN INNER LIST PANEL, AND IT EXISTS BECAUSE SHARING --sidebar BROKE.
+     A feature that puts its own "pick one of these" column beside the app
+     rail - AI chat's conversations, and anything that copies it - paints
+     that column with this.
+     It used to use --sidebar, and the reasoning was sound at the time: both
+     are navigation columns, the rail was then near-white, and two different
+     near-white tints side by side read as a mistake rather than a design.
+     When the rail became the brand teal that reasoning inverted in one step -
+     the chat screen showed TWO TEAL COLUMNS against each other, with the
+     list's page-coloured text stranded on a surface it was never measured
+     against. The rail's own note had predicted exactly this failure three
+     moves earlier.
+     So the inner panel gets a token of its own. The relationship is what
+     matters and it holds in both themes: the rail sits furthest from the
+     thread, this sits between them. Light runs 46 / 92 / 100 in L*, dark runs
+     23 / 14 / 6 - inverted in direction, identical in structure.
+     NOT --muted AND NOT --secondary, both of which are the obvious reach and
+     both of which fail: --muted is #f2f7f8 here, a step off white nobody can
+     see, and in dark it is #131f22, the SAME VALUE as --card. --secondary
+     carries badges and buttons, so tuning it for a column would move those
+     with it.
+     ----------------------------------------------------------------- */
+  --panel: #dceaed;
+  --panel-foreground: #0f1a1c;
   /* Deep teal. Carries white text at 6.2:1, so it is safe for filled
      buttons, the sidebar's active state and any teal that must be read. */
   --primary: #1b7789;
@@ -394,6 +422,13 @@
   --card-foreground: #e6eff0;
   --popover: #131f22;
   --popover-foreground: #e6eff0;
+
+  /* The inner list panel - see the light theme's note. It sits BETWEEN the
+     rail and the thread here as it does there: L* 14.0, against a rail of
+     23.3 and a canvas of 5.7. Deliberately not --card (#131f22), so a card
+     dropped into this column still reads as a card on top of it. */
+  --panel: #16262a;
+  --panel-foreground: #e6eff0;
   --primary: #3fbece;
   --primary-foreground: #05171a;
   --signal: #4fd6e6;
