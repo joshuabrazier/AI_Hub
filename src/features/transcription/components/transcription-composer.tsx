@@ -300,7 +300,20 @@ export function TranscriptionComposer({
 
       const transcriptionId = await upload({
         media,
-        fileName: `recording${pending.extension}`,
+        // FALLING BACK, because this row came out of IndexedDB rather than
+        // from the recorder that is running now. `extension` is typed as a
+        // string and is written on every new recording, but a row stored by
+        // an earlier version of this component predates the field - and a
+        // type cannot reach backwards into data already on somebody's disk.
+        // Without this, such a row uploads as "recordingundefined", which the
+        // server refuses with "not a file type this can transcribe" about a
+        // recording it made itself.
+        //
+        // .webm is the right guess rather than a neutral one: it is the first
+        // candidate the recorder tries and what every browser this runs on
+        // actually produces. A wrong guess is refused by Azure with a decode
+        // error, which is recoverable; no guess at all loses the meeting.
+        fileName: `recording${pending.extension || ".webm"}`,
         title: title.trim().length > 0 ? title.trim() : pending.title,
         source: TRANSCRIPTION_SOURCES.RECORDING,
       });

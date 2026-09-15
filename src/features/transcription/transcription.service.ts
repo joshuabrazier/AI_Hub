@@ -114,6 +114,7 @@ import {
   TRANSCRIPTION_TIMEOUT_HOURS,
   extensionForMediaType,
   formatTimestamp,
+  SUPPORTED_MEDIA_EXTENSIONS,
   mediaTypeForFileName,
   speakerLabel,
   type CreateTranscriptionRequestDTO,
@@ -1429,7 +1430,36 @@ export async function createTranscriptionService(
     const mediaType = mediaTypeForFileName(requestDTO.fileName);
 
     if (!mediaType) {
-      throw new DisplayErrorMessage("That is not a file type this can transcribe.");
+      // -----------------------------------------------------------------
+      // SAY WHICH EXTENSION, because this refusal has been hit on a .webm -
+      // the format the recorder itself produces and which is in the table
+      // right above. That can only mean the name arriving here is not the
+      // name anybody thinks it is, and the old message gave nobody a way to
+      // find out which.
+      //
+      // THE EXTENSION ONLY, never the whole filename. An uploaded file is
+      // named by the person who chose it and can carry a client's name or a
+      // matter number; the extension is the entire diagnostic and carries
+      // none of that. `source` travels with it because it separates the two
+      // paths that build a name - a recording is named by this app, an
+      // upload by whoever made the file - and that is the first fork any
+      // investigation takes.
+      //
+      // An empty extension prints as (none), which is the shape a name with
+      // no dot in it makes and is otherwise invisible in a log line.
+      // -----------------------------------------------------------------
+      const extension = requestDTO.fileName.toLowerCase().slice(
+        requestDTO.fileName.lastIndexOf("."),
+      );
+      const shown = requestDTO.fileName.includes(".") ? extension : "(none)";
+
+      console.warn(
+        `[transcription] refused an upload: extension=${shown} source=${requestDTO.source}`,
+      );
+
+      throw new DisplayErrorMessage(
+        `That is not a file type this can transcribe (${shown}). Recordings should be .webm, and uploads can be ${SUPPORTED_MEDIA_EXTENSIONS.slice(0, 4).join(", ")} and others.`,
+      );
     }
 
     const transcriptionId = generateId();
