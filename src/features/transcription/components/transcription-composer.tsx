@@ -266,57 +266,35 @@ export function TranscriptionComposer({
   };
 
   // -------------------------------------------------------------------
-  // A RECORDING GOES THROUGH THE SAME CONVERTER A CHOSEN FILE DOES.
+  // A RECORDING IS UPLOADED IN THE FORMAT IT WAS RECORDED IN, and that is a
+  // decision rather than an omission.
   //
-  // Safari and iOS have no WebM encoder, so MediaRecorder falls through
-  // RECORDING_FORMAT_CANDIDATES to audio/mp4 and the recorder produces an
-  // .m4a. That is AAC in an MP4 container, which Azure downloads happily
-  // and then refuses with "InvalidData: The recordings URI contains invalid
-  // data" - the same failure a phone voice memo gives, and the reason the
-  // picker has converted for a long time.
+  // A pipeline audit claimed every iPhone recording must fail: Safari has no
+  // WebM encoder, so MediaRecorder falls through RECORDING_FORMAT_CANDIDATES
+  // to audio/mp4 and produces an .m4a - the same container the PICKER
+  // converts, because Azure refuses an uploaded phone voice memo. Routing
+  // recordings through that converter looked obviously right.
   //
-  // The recording path never did, so EVERY recording made on an iPhone
-  // failed, always, while the same meeting recorded on a laptop worked. It
-  // looked like the service being unreliable.
+  // IT WAS TESTED ON AN IPHONE AND IT WORKS. So whatever is true of an
+  // uploaded .m4a, a recorded one is accepted, and the premise was wrong.
   //
-  // Anything that cannot be converted is uploaded untouched, exactly as on
-  // the picker path: the service may still read a format this cannot, and
-  // refusing here would take a meeting that has already happened.
+  // Converting anyway would have been expensive rather than merely
+  // unnecessary. convertForTranscription emits 16 kHz mono WAV, which is
+  // UNCOMPRESSED - about 115 MB an hour against roughly 14 MB for the Opus
+  // the recorder produces. Every phone recording would have become eight
+  // times larger to upload, after a full decode and re-encode of the meeting
+  // inside a phone browser, to fix a failure that was not happening.
+  //
+  // THE RIGHT PLACE FOR THIS IS A FALLBACK, not a precaution: upload what
+  // was recorded, and re-encode only if the service actually refuses it.
   // -------------------------------------------------------------------
-  const normaliseRecording = async (
-    media: Blob,
-    fileName: string,
-  ): Promise<{ media: Blob; fileName: string }> => {
-    if (!needsConversion(fileName)) return { media, fileName };
-
-    setIsConverting(true);
-
-    try {
-      const result = await convertForTranscription(new File([media], fileName, { type: media.type }));
-
-      if (result.converted) return { media: result.file, fileName: result.file.name };
-
-      toast.warning(
-        "This device records in a format the transcription service often refuses, and it could not be converted here. It will be uploaded as it is.",
-      );
-
-      return { media, fileName };
-    } finally {
-      setIsConverting(false);
-    }
-  };
 
   const submitRecording = async (recording: FinishedRecording) => {
-    const normalised = await normaliseRecording(
-      recording.media,
+    const result = await upload({
+      media: recording.media,
       // The extension is what the server derives the media type from, so it
       // has to be the one the recorder actually produced.
-      `recording${recording.extension}`,
-    );
-
-    const result = await upload({
-      media: normalised.media,
-      fileName: normalised.fileName,
+      fileName: `recording${recording.extension}`,
       // Named for when it was recorded when nobody has typed anything,
       // because that is the only fact known for certain about a meeting
       // that has just finished.
@@ -385,16 +363,13 @@ export function TranscriptionComposer({
         );
       }
 
-      const normalised = await normaliseRecording(
-        assembled.media,
-        // Same fallback and the same conversion as a fresh recording: a row
-        // recovered from an iPhone is the case this exists for.
-        `recording${pending.extension || ".webm"}`,
-      );
-
       const result = await upload({
-        media: normalised.media,
-        fileName: normalised.fileName,
+        media: assembled.media,
+        // FALLING BACK on the extension, because this row came out of
+        // IndexedDB rather than from the recorder running now: a row written
+        // by an earlier version predates the field, and a type cannot reach
+        // backwards into data already on somebody's disk.
+        fileName: `recording${pending.extension || ".webm"}`,
         title: title.trim().length > 0 ? title.trim() : pending.title,
         source: TRANSCRIPTION_SOURCES.RECORDING,
       });
