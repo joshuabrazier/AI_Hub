@@ -86,7 +86,14 @@ describe("streamModelEvents", () => {
     // Reported, because a turn that answered on its second attempt looks
     // perfectly healthy from outside and the count is the only sign that the
     // endpoint is struggling.
-    expect(onSilentAttempt).toHaveBeenCalledWith(1);
+    //
+    // It carries WHICH SIDE the silence was on as well as the count: this
+    // `open` resolves, so the request reached Bedrock and the model simply
+    // did not answer. A null `openedAfterMs` would mean the opposite, and
+    // the two need different people to fix them.
+    expect(onSilentAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 1, openedAfterMs: expect.any(Number) }),
+    );
   });
 
   it("gives up with a NAMED error rather than a bare abort", async () => {
@@ -100,6 +107,94 @@ describe("streamModelEvents", () => {
     ).rejects.toThrow(ModelSilentError);
 
     expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  // -----------------------------------------------------------------
+  // WHICH SIDE THE SILENCE WAS ON.
+  //
+  // These two failures were byte-identical in the trace, and their remedies
+  // are opposite: one is our connection pool and outbound networking, the
+  // other is Bedrock not answering a request it accepted. A production
+  // silence could not be attributed without reading CloudWatch by hand, and
+  // the old error message asserted the second without being able to know it.
+  //
+  // `open` resolving is the discriminator, and it is a real one rather than
+  // a proxy: the AWS SDK's send() settles on response headers, so it cannot
+  // resolve for a request that never reached Bedrock.
+  // -----------------------------------------------------------------
+  describe("telling a silent model from an unreachable one", () => {
+    /** Never resolves: the request is never acknowledged. */
+    const neverOpens = (signal: AbortSignal) =>
+      new Promise<AsyncIterable<string>>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+
+    /** Runs a stream that is expected to give up, and hands back the error. */
+    async function giveUp(stream: AsyncGenerator<string, void, undefined>): Promise<ModelSilentError> {
+      try {
+        await collect(stream);
+      } catch (caught) {
+        if (caught instanceof ModelSilentError) return caught;
+        throw caught;
+      }
+
+      throw new Error("expected the stream to give up, and it did not");
+    }
+
+    it("says the model was never asked when no response headers came back", async () => {
+      const error = await giveUp(streamModelEvents(neverOpens, { firstEventMs: DEADLINE_MS, attempts: 2 }));
+
+      expect(error.reachedModel).toBe(false);
+      expect(error.attempts.every((entry) => entry.openedAfterMs === null)).toBe(true);
+
+      // The message has to point at the right place, because it is what
+      // somebody reads at two in the morning.
+      expect(error.message).toContain("never reached Bedrock");
+      expect(error.message).toContain("nothing was billed");
+    });
+
+    it("says the model WAS asked when headers came back and nothing followed", async () => {
+      const error = await giveUp(
+        streamModelEvents((signal) => Promise.resolve(silent(signal)), {
+          firstEventMs: DEADLINE_MS,
+          attempts: 2,
+        }),
+      );
+
+      expect(error.reachedModel).toBe(true);
+      expect(error.attempts.every((entry) => entry.openedAfterMs !== null)).toBe(true);
+      expect(error.message).toContain("Bedrock accepted the request");
+    });
+
+    it("records every attempt, so a sequence that changed shape is readable", async () => {
+      // One attempt that never opened and one that did. Reported as it
+      // happened rather than flattened to whichever came last - "never
+      // opened, then opened and went quiet" is a different story from
+      // either half on its own.
+      let call = 0;
+      const open = (signal: AbortSignal) => {
+        call += 1;
+        return call === 1 ? neverOpens(signal) : Promise.resolve(silent(signal));
+      };
+
+      const error = await giveUp(streamModelEvents(open, { firstEventMs: DEADLINE_MS, attempts: 2 }));
+
+      expect(error.attempts).toHaveLength(2);
+      expect(error.attempts[0].openedAfterMs).toBeNull();
+      expect(error.attempts[1].openedAfterMs).not.toBeNull();
+      // Any attempt reaching Bedrock makes it a question for AWS.
+      expect(error.reachedModel).toBe(true);
+    });
+
+    it("treats a response with no stream as a named failure, not a silence", async () => {
+      // A malformed answer is not an unreachable one. The headers came back,
+      // so the request was accepted and may have been billed - pointing the
+      // reader at the connection pool for this would send them the wrong way.
+      // It also throws at once rather than waiting out the deadline.
+      await expect(
+        collect(streamModelEvents(async () => undefined, { firstEventMs: DEADLINE_MS, attempts: 2 })),
+      ).rejects.toThrow(/no stream/);
+    });
   });
 
   it("STOPS RETRYING once anything has been yielded, so no reader sees an answer twice", async () => {

@@ -1568,11 +1568,23 @@ export async function* streamAiChatReplyService(
           // Recorded rather than only logged: a turn that answered on its
           // second attempt looks healthy from outside, and the count is the
           // only sign that the endpoint is struggling.
-          onSilentAttempt: (attempt) => {
+          onSilentAttempt: (detail) => {
+            // WHICH SIDE THE SILENCE WAS ON, in the line and in the trace.
+            // `openedAfterMs` is null when no response headers ever came
+            // back, which means the request was not acknowledged by Bedrock
+            // and the model was never asked - a networking problem here, not
+            // a model problem there. The two used to read identically.
+            const reached =
+              detail.openedAfterMs === null
+                ? "never reached Bedrock"
+                : `reached Bedrock after ${detail.openedAfterMs}ms then went quiet`;
+
             console.warn(
-              `[ai-chat] the model sent nothing on attempt ${attempt}; asking again (subject ${subject.id})`,
+              `[ai-chat] attempt ${detail.attempt} ${reached}; asking again (subject ${subject.id})`,
             );
-            guard?.note("silentModelAttempts", attempt);
+
+            guard?.note("silentModelAttempts", detail.attempt);
+            guard?.note("silentAttemptReachedBedrock", detail.openedAfterMs !== null);
           },
         },
       );

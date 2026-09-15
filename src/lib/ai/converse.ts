@@ -177,6 +177,11 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
     ? AbortSignal.any([params.abortSignal, timeout])
     : timeout;
 
+  // When the response headers came back, or null if they never did. See the
+  // note where it is set - it is what lets a failure say which side of the
+  // connection the silence was on.
+  let openedAt: number | null = null;
+
   try {
     // -----------------------------------------------------------------
     // STREAMED, THOUGH THE CALLER WANTS ONE BLOCK OF TEXT.
@@ -205,6 +210,24 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
       }),
       { abortSignal },
     );
+
+    // -----------------------------------------------------------------
+    // THE REQUEST WAS ACKNOWLEDGED. Recorded because the ceiling above wraps
+    // both this call and the iteration below it, so without this a failure
+    // cannot say whether Bedrock was ever reached.
+    //
+    // Two completely different problems shared one message. A request queued
+    // behind an exhausted connection pool has no socket, so no timeout in the
+    // SDK can see it and the model is never asked - nothing is billed and the
+    // fault is our networking. A request Bedrock accepts and then answers
+    // with silence has been asked, may have cost money, and is a question for
+    // AWS. `send()` settles on the response HEADERS, which makes it a real
+    // discriminator rather than a proxy for one.
+    //
+    // Set before the empty-stream check below on purpose: a response that
+    // came back without a stream still reached Bedrock.
+    // -----------------------------------------------------------------
+    openedAt = Date.now();
 
     if (!response.stream) throw new Error("Bedrock returned no stream");
 
@@ -241,7 +264,13 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
     // The SDK throws its own bare AbortError and discards the reason, so a
     // call that hit the ceiling above and one the caller cancelled would
     // otherwise be indistinguishable in the log. Said explicitly.
-    const described = describeConverseFailure(error, params.abortSignal, timeout, ceilingMs);
+    const described = describeConverseFailure(
+      error,
+      params.abortSignal,
+      timeout,
+      ceilingMs,
+      openedAt === null ? null : openedAt - startedAt,
+    );
 
     // Logged before rethrowing, and separately from the success path, so a
     // failed call is on the record with whatever usage it had reported.
@@ -263,17 +292,36 @@ function describeConverseFailure(
   callerSignal: AbortSignal | undefined,
   timeout: AbortSignal,
   ceilingMs: number,
+  // When the response headers arrived, or null if they never did. See the
+  // block where it is set: it is the difference between a model that was
+  // asked and said nothing, and a request that never got out of the host.
+  openedAfterMs: number | null,
 ): string {
   const isAbort = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 
   if (isAbort) {
     if (timeout.aborted) {
-      // Says the ceiling, because "ran to the full budget" and "failed
-      // quickly" are different problems and the SDK's own AbortError cannot
-      // tell them apart.
+      const seconds = Math.round(ceilingMs / 1000);
+
+      // -------------------------------------------------------------
+      // WHICH SIDE THE SILENCE WAS ON.
+      //
+      // This used to assert "the model accepted the request and produced
+      // nothing" for both cases, which is only half true and pointed every
+      // investigation at AWS. A request that never reached Bedrock looks
+      // identical from the caller's seat and needs the opposite fix.
+      // -------------------------------------------------------------
+      if (openedAfterMs === null) {
+        return (
+          `TimeoutError: the request never reached Bedrock - no response headers came back within the ` +
+          `${seconds}s allowed, so the model was never asked and nothing was billed. Look at the ` +
+          `connection pool and outbound networking rather than at the model.`
+        );
+      }
+
       return (
-        `TimeoutError: the model accepted the request and produced nothing for the full ` +
-        `${Math.round(ceilingMs / 1000)}s allowed, so it was stopped.`
+        `TimeoutError: Bedrock accepted the request after ${openedAfterMs}ms and then produced nothing ` +
+        `for the rest of the ${seconds}s allowed, so it was stopped. The model was asked and did not answer.`
       );
     }
 
