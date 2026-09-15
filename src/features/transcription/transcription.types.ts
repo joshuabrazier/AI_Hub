@@ -25,6 +25,32 @@ const transcriptionIdSchema = z.string().min(TABLE_ID_LENGTH);
 // minutes, so anything still running at this point is not running.
 // -------------------------------------------------------------------
 export const MAX_MEDIA_BYTES = 1024 * 1024 * 1024;
+
+// -------------------------------------------------------------------
+// AND A SECOND, SMALLER CEILING THAT THE UPLOAD ACTUALLY HAS.
+//
+// The browser sends the media as ONE `PUT Blob` with x-ms-blob-type:
+// BlockBlob. Azure caps a single Put Blob at 256 MiB; past that the only way
+// in is Put Block plus Put Block List, which this app does not implement.
+//
+// So the two limits are different and both are real: Speech would accept a
+// gigabyte, and our upload path cannot deliver one. Before this existed the
+// app advertised the larger number and a file between the two failed at the
+// PUT with "The upload was rejected (413)" - a message about the wrong
+// thing, arriving after somebody had waited for the whole transfer.
+//
+// IT IS CHECKED IN THE BROWSER, because that is the only place the size is
+// known before the bytes move. The server checks MAX_MEDIA_BYTES after the
+// upload lands, which is the first moment IT knows - the two checks are at
+// different points for that reason and neither replaces the other.
+//
+// 256 MiB is about ten hours of WebM/Opus at the bitrate MediaRecorder
+// produces, so no meeting reaches it. It matters for an UPLOADED file: a
+// screen recording with video in it hits this quickly, and being told which
+// limit was hit is the difference between re-exporting the audio and giving
+// up.
+// -------------------------------------------------------------------
+export const MAX_SINGLE_PUT_BYTES = 256 * 1024 * 1024;
 export const TRANSCRIPTION_TIMEOUT_HOURS = 6;
 export const TITLE_MAX_CHARS = 120;
 

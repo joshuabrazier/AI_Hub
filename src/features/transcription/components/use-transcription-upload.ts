@@ -8,7 +8,7 @@ import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 
 import { createTranscriptionAction, startTranscriptionAction } from "../transcription.actions";
-import type { CreateTranscriptionRequestDTO } from "../transcription.types";
+import { MAX_SINGLE_PUT_BYTES, type CreateTranscriptionRequestDTO } from "../transcription.types";
 
 // -------------------------------------------------------------------
 // useTranscriptionUpload
@@ -60,6 +60,26 @@ export function useTranscriptionUpload() {
   // in which case the reason has already been shown.
   // -------------------------------------------------------------------
   const upload = useCallback(async (request: TranscriptionUploadRequest): Promise<string | null> => {
+    // -----------------------------------------------------------------
+    // REFUSED BEFORE THE ROW IS CLAIMED, because step 2 below is a single
+    // PUT and Azure caps one at 256 MiB. Past that the transfer runs to
+    // completion and is then rejected with a status code, which reads as a
+    // fault in the app rather than as a file that was always too big - and
+    // by then somebody has waited out the whole upload and has an abandoned
+    // row to tidy up.
+    //
+    // The SERVER checks MAX_MEDIA_BYTES after the bytes land, which is the
+    // first moment it knows the size. This is the browser's half, and the
+    // two are at different points on purpose.
+    // -----------------------------------------------------------------
+    if (request.media.size > MAX_SINGLE_PUT_BYTES) {
+      toast.error(
+        `That file is ${Math.round(request.media.size / (1024 * 1024))} MB, and uploads are limited to ${Math.round(MAX_SINGLE_PUT_BYTES / (1024 * 1024))} MB. If it is a screen recording, export the audio on its own and upload that.`,
+      );
+
+      return null;
+    }
+
     setIsUploading(true);
     setProgress(0);
 
