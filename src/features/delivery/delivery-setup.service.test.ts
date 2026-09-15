@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  PROJECT_KINDS,
   PROJECT_STATUSES,
   RATE_BANDS,
   PROJECT_CATEGORIES,
@@ -451,6 +452,7 @@ const CREATE_PROJECT = {
   title: "Data platform",
   description: null,
   isBillable: true,
+  kind: PROJECT_KINDS.DELIVERY,
 };
 const UPDATE_PROJECT = {
   projectId: PROJECT_ID,

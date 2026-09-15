@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { TASK_COLUMNS } from "@/lib/data/kysely-database-types";
+import { TASK_COLUMNS, TASK_COLUMN_ORDER } from "@/lib/data/kysely-database-types";
 
 import type { BoardDTO, ProjectSummaryDTO } from "../delivery.types";
 import {
@@ -25,6 +25,7 @@ const project = (over: Partial<ProjectSummaryDTO> = {}): ProjectSummaryDTO => ({
   clientName: "Perks",
   status: "active",
   isBillable: true,
+  kind: "delivery",
   canEditTasks: false,
   ...over,
 });
@@ -32,6 +33,8 @@ const project = (over: Partial<ProjectSummaryDTO> = {}): ProjectSummaryDTO => ({
 const board = (over: Partial<BoardDTO> = {}): BoardDTO => ({
   projectId: "project-1",
   canEditTasks: false,
+  columns: TASK_COLUMN_ORDER,
+  defaultColumn: TASK_COLUMNS.TODO,
   phases: [
     {
       phaseId: "phase-1",

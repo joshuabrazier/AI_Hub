@@ -7,6 +7,7 @@ import { handleError } from "@/lib/handle-errors";
 import {
   type NewTask,
   type NewTaskAttachment,
+  type ProjectKind,
   type ProjectStatus,
   type Task,
   type TaskAttachment,
@@ -79,6 +80,12 @@ export interface AssignedTaskFilter {
   // Which columns count. "My work" normally leaves `done` out, but that is
   // the service's decision to make, not this file's.
   boardColumns?: readonly TaskColumn[];
+  // Which KINDS of project count. Same contract as the two above: absent
+  // means every kind, and an empty array means none. A work list normally
+  // leaves `ongoing` out, because a standing time code is never finished and
+  // would otherwise sit on somebody's list for ever - but that is the
+  // service's decision, not this file's.
+  projectKinds?: readonly ProjectKind[];
 }
 
 // Minutes are INTEGER MINUTES throughout. Postgres sums an INTEGER column
@@ -397,6 +404,7 @@ export async function getTasksAssignedToUserRepo(
     // render an empty IN list in any case.
     if (filter.projectStatuses && filter.projectStatuses.length === 0) return [];
     if (filter.boardColumns && filter.boardColumns.length === 0) return [];
+    if (filter.projectKinds && filter.projectKinds.length === 0) return [];
 
     let query = db
       .selectFrom("tasks as t")
@@ -428,6 +436,9 @@ export async function getTasksAssignedToUserRepo(
     }
     if (filter.boardColumns !== undefined) {
       query = query.where("t.boardColumn", "in", filter.boardColumns);
+    }
+    if (filter.projectKinds !== undefined) {
+      query = query.where("p.kind", "in", filter.projectKinds);
     }
 
     return await query

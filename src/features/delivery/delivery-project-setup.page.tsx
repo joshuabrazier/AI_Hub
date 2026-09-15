@@ -164,6 +164,7 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
               description: detail.description,
               isBillable: detail.project.isBillable,
               status: detail.project.status,
+              kind: detail.project.kind,
             }}
           />
           {/* "Open the board" is deliberately NOT here any more. It was in

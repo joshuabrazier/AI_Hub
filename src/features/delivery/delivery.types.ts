@@ -7,11 +7,14 @@ import {
 } from "@/lib/ai/attachment-formats";
 import { TABLE_ID_LENGTH } from "@/lib/constants";
 import {
+  PROJECT_KINDS,
+  PROJECT_KIND_LABELS,
   PROJECT_STATUSES,
   RATE_BANDS,
   TASK_COLUMNS,
   TASK_COLUMN_ORDER,
   USER_ROLES,
+  type ProjectKind,
   type ProjectStatus,
   type RateBand,
   type TaskColumn,
@@ -1262,6 +1265,11 @@ export const CreateProjectSchema = z.object({
   title: z.string().trim().min(1, "A project needs a title").max(PROJECT_TITLE_MAX_CHARS),
   description: optionalText(DESCRIPTION_MAX_CHARS),
   isBillable: z.boolean(),
+  // DEFAULTED RATHER THAN REQUIRED, so every existing caller keeps working -
+  // the AI project planner builds one of these from a pasted brief and has
+  // no notion of a standing time bucket, and a brief describing one is not
+  // what that feature is for.
+  kind: z.enum(PROJECT_KINDS).default(PROJECT_KINDS.DELIVERY),
 });
 
 export type CreateProjectInputDTO = z.input<typeof CreateProjectSchema>;
@@ -1302,12 +1310,25 @@ export type CreateProjectRequestDTO = z.output<typeof CreateProjectSchema>;
 // its own audit line, and neither belongs in a form somebody opened to fix
 // a typo.
 // -------------------------------------------------------------------
+// The two kinds as a select's options. Written once so the create form and
+// the edit dialog cannot come to word the same choice differently - the same
+// reason memberLabel exists.
+export const PROJECT_KIND_OPTIONS = Object.values(PROJECT_KINDS).map((kind) => ({
+  value: kind,
+  label: PROJECT_KIND_LABELS[kind],
+}));
+
 export const UpdateProjectSchema = z.object({
   projectId: projectIdSchema,
   title: z.string().trim().min(1, "A project needs a title").max(PROJECT_TITLE_MAX_CHARS).optional(),
   description: patchText(DESCRIPTION_MAX_CHARS),
   isBillable: z.boolean().optional(),
   status: z.enum(PROJECT_STATUSES).optional(),
+  // Patch-shaped like the rest: absent means "leave it alone". Flipping this
+  // changes how the project is DRAWN and nothing about its data - no task,
+  // phase or hour is touched - so it is reversible, which is why there is no
+  // confirmation on it.
+  kind: z.enum(PROJECT_KINDS).optional(),
 });
 
 export type UpdateProjectInputDTO = z.input<typeof UpdateProjectSchema>;
@@ -2185,6 +2206,14 @@ export type ProjectSummaryDTO = {
   clientName: string;
   status: ProjectStatus;
   isBillable: boolean;
+  /**
+   * Whether this work ends. Carried on the SUMMARY rather than only on the
+   * detail because it changes how a project is drawn in a list - a standing
+   * bucket of time codes is not a project somebody is delivering, and the
+   * projects page, the board and the task dialogs all need to know which
+   * they are looking at.
+   */
+  kind: ProjectKind;
   canEditTasks: boolean;
 };
 
@@ -2272,6 +2301,32 @@ export type BoardPhaseDTO = {
 export type BoardDTO = {
   projectId: string;
   canEditTasks: boolean;
+  /**
+   * WHICH COLUMNS THIS BOARD DRAWS, decided on the server.
+   *
+   * A delivery project draws all four. An ongoing project draws In progress
+   * plus any other column that still HOLDS a card, because the four states
+   * mean nothing to a standing time code - nobody moves "Annual Leave" to
+   * Done - and four columns of which three are permanently empty is a screen
+   * about a process that is not happening.
+   *
+   * The stored `board_column` on a task is untouched by this and the enum
+   * keeps all four members, so every report that groups by column still
+   * spans every project. This decides what is DRAWN, never what is stored.
+   *
+   * IT IS A SUBSET RULE, NOT A FILTER, and the difference is the whole
+   * safety of it: a column holding cards always renders. Without that,
+   * flipping a project to ongoing would hide every card sitting in To do,
+   * and the delete refusal's advice to "move it to Done instead" would
+   * become a way to lose one.
+   */
+  columns: readonly TaskColumn[];
+  /**
+   * Where a newly added card lands. To do on a delivery board, In progress on
+   * an ongoing one - a new time code is in use the moment it exists, and a
+   * card created into a column the board does not draw would be invisible.
+   */
+  defaultColumn: TaskColumn;
   phases: BoardPhaseDTO[];
 };
 

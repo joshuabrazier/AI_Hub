@@ -11,6 +11,7 @@ import type { SessionUser } from "@/lib/auth/auth.types";
 import { requireUser, requireUserRole } from "@/lib/auth/session-auth-server";
 import {
   PROJECT_STATUSES,
+  PROJECT_KIND_LABELS,
   PROJECT_STATUS_LABELS,
   RATE_BAND_LABELS,
   USER_ROLES,
@@ -409,7 +410,10 @@ function mapClientSummary(client: ClientListItem): ClientSummaryDTO {
 // `canEditTasks` is passed in rather than derived here: the nav read knows
 // the caller's own `isLead`, and the role is what overrides it.
 function mapProjectSummary(
-  project: Pick<UserProjectMembership, "id" | "title" | "clientId" | "clientName" | "status" | "isBillable">,
+  project: Pick<
+    UserProjectMembership,
+    "id" | "title" | "clientId" | "clientName" | "status" | "isBillable" | "kind"
+  >,
   canEditTasks: boolean,
 ): ProjectSummaryDTO {
   return {
@@ -419,6 +423,7 @@ function mapProjectSummary(
     clientName: project.clientName,
     status: project.status,
     isBillable: project.isBillable,
+    kind: project.kind,
     canEditTasks,
   };
 }
@@ -1036,6 +1041,7 @@ export async function getProjectDetailService(projectId: string): Promise<Projec
           clientName: project.clientName,
           status: project.status,
           isBillable: project.isBillable,
+          kind: project.kind,
         },
         access.canEditTasks,
       ),
@@ -1089,6 +1095,10 @@ export async function createProjectService(requestDTO: CreateProjectRequestDTO):
       title: requestDTO.title,
       description: requestDTO.description,
       isBillable: requestDTO.isBillable,
+      // Whether the work ends. Defaulted by the schema rather than required,
+      // so a caller that has never heard of a standing time bucket - the AI
+      // project planner, for one - creates an ordinary project.
+      kind: requestDTO.kind,
       // Stated rather than left to the column default: a new project is
       // active, and the schema offers no choice precisely so nobody can
       // create an archived one.
@@ -1137,6 +1147,7 @@ export async function updateProjectService(requestDTO: UpdateProjectRequestDTO):
       description: requestDTO.description,
       isBillable: requestDTO.isBillable,
       status: requestDTO.status,
+      kind: requestDTO.kind,
     });
 
     if (!updated) {
@@ -1147,6 +1158,15 @@ export async function updateProjectService(requestDTO: UpdateProjectRequestDTO):
       { field: "title", label: "Title", from: before.title, to: updated.title },
       { field: "description", label: "Description", from: before.description, to: updated.description },
       { field: "isBillable", label: "Billable", from: before.isBillable, to: updated.isBillable },
+      // Audited like every other field on the project. Flipping a project to
+      // ongoing changes what a dozen screens show, and "who turned this into
+      // a time bucket" is exactly the question an audit trail exists for.
+      {
+        field: "kind",
+        label: "Kind",
+        from: PROJECT_KIND_LABELS[before.kind],
+        to: PROJECT_KIND_LABELS[updated.kind],
+      },
       {
         field: "status",
         label: "Status",

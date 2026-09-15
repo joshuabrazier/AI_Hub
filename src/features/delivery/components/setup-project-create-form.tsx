@@ -8,18 +8,21 @@ import { toast } from "sonner";
 import z from "zod";
 
 import { FormInputField } from "@/components/form/form-input-field";
+import { FormSelectField } from "@/components/form/form-select-field";
 import { FormSwitchField } from "@/components/form/form-switch-field";
 import { FormTextareaField } from "@/components/form/form-textarea-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { MESSAGES } from "@/lib/constants";
+import { PROJECT_KINDS, PROJECT_KIND_HELP } from "@/lib/data/kysely-database-types";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
 
 import { createProjectAction } from "../delivery-setup.actions";
 import {
   DESCRIPTION_MAX_CHARS,
+  PROJECT_KIND_OPTIONS,
   PROJECT_TITLE_MAX_CHARS,
   type ClientOptionDTO,
   type ProjectClientRequestDTO,
@@ -49,6 +52,7 @@ const ProjectFormSchema = z.object({
   title: z.string().trim().min(1, "A project needs a title").max(PROJECT_TITLE_MAX_CHARS),
   description: z.string().trim().max(DESCRIPTION_MAX_CHARS),
   isBillable: z.boolean(),
+  kind: z.enum(PROJECT_KINDS),
 });
 
 type ProjectFormValues = z.infer<typeof ProjectFormSchema>;
@@ -75,6 +79,9 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
       // Billable is the ordinary case, and the switch says what turning it
       // off means.
       isBillable: true,
+      // An ordinary project is overwhelmingly the common case. The standing
+      // buckets are made once and then live for years.
+      kind: PROJECT_KINDS.DELIVERY,
     },
   });
 
@@ -93,6 +100,7 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
           // optionalText does to it at the boundary anyway.
           description: values.description.length > 0 ? values.description : null,
           isBillable: values.isBillable,
+          kind: values.kind,
         });
 
         if (!response.success) {
@@ -170,6 +178,17 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
             maxLength={DESCRIPTION_MAX_CHARS}
             placeholder="What the project is for. Optional."
             disabled={isPending}
+          />
+
+          {/* Before the Billable switch, because it is the broader question:
+              whether this is work at all in the sense the rest of the app
+              means, or a set of codes to book hours against. */}
+          <FormSelectField
+            control={form.control}
+            name="kind"
+            label="Kind"
+            options={PROJECT_KIND_OPTIONS}
+            description={PROJECT_KIND_HELP}
           />
 
           <FormSwitchField
