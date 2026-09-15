@@ -95,18 +95,40 @@ const ROW =
 // with it. That was the actual defect in the original `text-white/85` rail -
 // not the colour, but that the ink was stated in the component.
 //
-// THE LABELS ARE NEARLY FULL-STRENGTH, not muted. These are the primary
-// navigation of the whole app; they were --muted-foreground, which is the
-// colour for a description or a hint, and it made every destination in the
-// product read as secondary text.
-const ROW_IDLE = "text-foreground/85 hover:bg-sidebar-accent hover:text-foreground";
+// -------------------------------------------------------------------
+// EVERY COLOUR IN THE RAIL COMES FROM A --sidebar-* TOKEN, and that rule is
+// the whole reason this block is not one line.
+//
+// These were `text-foreground/85` and `text-primary` - the PAGE's ink and the
+// brand teal. Both only ever worked because the rail happened to be a
+// near-white surface, so the page's near-black read on it and the brand teal
+// stood out against it. The rail is now the brand teal itself, where
+// `text-foreground` is near-black on mid teal and `text-primary` is teal on
+// teal: unreadable and invisible respectively.
+//
+// The lesson is older than this change. globals.css records the rail's first
+// version as `bg-primary` hardcoded here with literal `text-white/85` rows,
+// and the defect that mattered was not the colour but that the ink was a
+// literal - it breaks the moment a deployment's brand colour is a light one.
+// Naming page tokens here is the same defect wearing a token's clothes: it
+// breaks the moment the rail is not white. So the rail states its own ink,
+// per theme, in one file.
+// -------------------------------------------------------------------
 
-// THE CURRENT PAGE. `text-primary` rather than the accent foreground, because
-// on a quiet light rail the fill alone is a very small difference to spot,
-// and this is the row people look for first. Fill, weight, colour and the bar
-// in the margin, which is four signals for one fact - deliberately, because
-// getting it wrong means somebody cannot tell where they are.
-const ROW_ACTIVE = "bg-sidebar-accent font-semibold text-primary";
+// THE LABELS ARE FULL-STRENGTH, not muted. These are the primary navigation
+// of the whole app; they were --muted-foreground once, which is the colour
+// for a description or a hint, and it made every destination in the product
+// read as secondary text. On the teal fill there is no room to dim them
+// anyway - see the note in globals.css about what a mid-tone slab costs.
+const ROW_IDLE = "text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground";
+
+// THE CURRENT PAGE. Fill, weight and the bar in the margin, which is three
+// signals for one fact - deliberately, because getting it wrong means
+// somebody cannot tell where they are. Colour is no longer the fourth: a
+// coloured word on a coloured rail is the stacking this file already learned
+// not to do, and the accent fill under it is now a 7.16:1 surface that does
+// the job on its own.
+const ROW_ACTIVE = "bg-sidebar-accent font-semibold text-sidebar-accent-foreground";
 
 // -------------------------------------------------------------------
 // THE ICONS ARE NEUTRAL, AND THAT IS A REVERSAL OF THE PREVIOUS COMMIT.
@@ -123,8 +145,9 @@ const ROW_ACTIVE = "bg-sidebar-accent font-semibold text-primary";
 // lets them sit a step lighter than the label - an icon at label strength
 // competes with the word next to it, and the word is the part being read.
 // -------------------------------------------------------------------
-const ICON_IDLE = "shrink-0 text-muted-foreground transition-colors group-hover:text-foreground";
-const ICON_ACTIVE = "shrink-0 text-primary";
+const ICON_IDLE =
+  "shrink-0 text-sidebar-foreground/65 transition-colors group-hover:text-sidebar-foreground";
+const ICON_ACTIVE = "shrink-0 text-sidebar-accent-foreground";
 
 /**
  * The "you are here" bar: 3px in the rail's own margin.
@@ -455,12 +478,18 @@ function NavGroupBlock({
         className={cn(
           collapsed
             ? "sr-only"
-            // Muted rather than brand-coloured, which it was for one release.
-            // The rail's surface is the tinted thing now, and a teal section
-            // name on a teal panel above teal icons was one hue doing three
-            // jobs. A section name is a label: quieter than the rows it
-            // names, which is what weight and this colour together do.
-            : cn("px-2.5 pb-1 text-xs font-semibold text-muted-foreground", isFirst ? "pt-1" : "pt-5"),
+            // A SECTION NAME IS A LABEL: quieter than the rows it names. On
+            // the teal rail it cannot get that from colour - the dimmest tone
+            // clearing AA on this fill is near-white, so --sidebar-muted-
+            // foreground reads as white and the difference has to come from
+            // somewhere else. Smaller, and tracked out: the widened letters
+            // are what say "heading" here, where a grey would have said it on
+            // the old near-white rail. See globals.css on what a mid-tone
+            // slab costs, and do not solve this by dimming the value.
+            : cn(
+                "px-2.5 pb-1 text-[0.6875rem] font-semibold tracking-[0.08em] text-sidebar-muted-foreground",
+                isFirst ? "pt-1" : "pt-5",
+              ),
         )}
       >
         {group.label}

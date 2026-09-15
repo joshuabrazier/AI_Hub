@@ -325,34 +325,62 @@
      about 8-12 to read as two surfaces; below 6 the eye takes it as one sheet
      of paper with a line drawn on it.
 
-     #d7e7eb is L* 90.6, so the gap is 9.4 - nearly double, and still
-     unmistakably a light rail rather than a return to attempt 3. The accent
-     and the border move with it: both were tuned against the old fill and a
-     tint two steps deeper than #e9f2f4 is roughly the new BASE, so left
-     alone the active row would have vanished into the rail it sits on.
+     Every light value considered sat in the top fifth of the scale, and none
+     of them was what was wanted.
+
+     -----------------------------------------------------------------
+     MOVE FIVE, AND IT ENDS THE ARGUMENT: THE RAIL IS THE BRAND TEAL.
+
+     #1b7789, sampled from the mark in public/logo.png rather than picked -
+     it is the same value --primary already carries, so the rail is now the
+     one surface in the app that IS the brand rather than a tint derived
+     from it.
+
+     This is where attempt 1 was, and it is worth being exact about what was
+     wrong with that: the COLOUR was never the defect. `bg-primary` was
+     hardcoded in sidebar.tsx with `text-white/85` rows, so these tokens were
+     dead in light mode and the rail's ink was a literal - which breaks the
+     moment a deployment's brand colour is a light one. The fill returns; the
+     hardcoding does not. Every value below is stated here, per theme, and the
+     component names tokens.
+
+     WHAT A MID-TONE SLAB COSTS, stated because it constrains anybody editing
+     this block later. White on #1b7789 is 5.19:1, comfortably AA. But the
+     rail now has almost no room for a DIMMER tone: anything under about
+     L* 94 falls below 4.5:1 against this fill, so "muted" text on the rail
+     is near-white and reads as white. The group headings therefore separate
+     themselves by size, weight and letter-spacing rather than by colour.
+     Do not solve a hierarchy problem here by dimming a label - it will fail
+     contrast before it looks different.
      ----------------------------------------------------------------- */
-  --sidebar: #d7e7eb;
-  --sidebar-foreground: #0f1a1c;
-  /* The idle row. The same value as --muted-foreground, so a nav label and a
-     description elsewhere on the page read as the same kind of text. */
-  --sidebar-muted-foreground: #41565a;
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: #ffffff;
-  /* Hover and the current page. A tint on a tint has to clear the surface it
-     sits on, and the surface just got deeper - this is L* 85.3 against the
-     rail's 90.6, the same ~5 point step the row had before, measured from
-     where the rail actually is now. */
-  --sidebar-accent: #bfdae1;
-  --sidebar-accent-foreground: #0f1a1c;
-  /* Deepened to stay a line rather than a smudge now that the fill it divides
-     is closer to it. It is no longer doing the whole job, but a rail whose
-     edge dissolves reads as unfinished. */
-  --sidebar-border: #aec9d0;
-  /* The "you are here" mark. --signal is exactly this: the palette
-     documents it as the brighter teal for "the active nav item", chosen to
-     clear 3:1 on white as a graphical mark. */
-  --sidebar-mark: var(--signal);
-  --sidebar-ring: var(--primary);
+  --sidebar: #1b7789;
+  /* 5.19:1 on the fill. */
+  --sidebar-foreground: #ffffff;
+  /* 4.59:1 - the DIMMEST value that still clears AA on this fill. See the
+     note above: this is near-white by necessity, not by preference. */
+  --sidebar-muted-foreground: #e8f3f5;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #1b7789;
+  /* Hover and the current page, DARKER than the rail rather than lighter.
+     Going lighter would wash toward the white text sitting on it; going
+     darker deepens it, and white on this is 7.16:1 - the current row is the
+     most legible thing in the rail, which is what it should be. */
+  --sidebar-accent: #14606f;
+  --sidebar-accent-foreground: #ffffff;
+  /* LIGHTER than the rail, which is an inversion and a necessary one. Three
+     of this token's four uses are hairlines INSIDE the rail - the rule under
+     a collapsed group, the divider above the footer, the line the nested
+     children hang off - and a darker line on a mid teal disappears. On the
+     outer edge it reads as a soft lip against the white canvas. */
+  --sidebar-border: #3d8fa0;
+  /* The "you are here" mark. NOT --signal any more: #0e9aab against this
+     fill is 1.54:1, which is invisible. A graphical mark needs 3:1, and this
+     pale cyan is 3.64:1 while still reading as the brand's own hue rather
+     than as a white tick. */
+  --sidebar-mark: #8ee6f2;
+  /* Was --primary, which is now the rail itself - a focus ring the same
+     colour as the thing it rings. */
+  --sidebar-ring: #bfe9f2;
 }
 
 /* Dark theme: designed, not inverted. The teals lighten so they stay legible
@@ -411,29 +439,33 @@
   /* A step darker than --card, so the rail sits BEHIND the page rather than
      on it - the same relationship the light theme draws with #fcfdfd against
      #ffffff, with the values the other way up. */
-  /* THE SAME FAULT AS LIGHT, AND IT WAS WORSE HERE. #0f1a1c on a #0b1416
-     canvas is L* 8.4 against 5.7 - a difference of 2.7 points, which is
-     nothing. Dark mode hides a weak boundary better than light does, so it
-     had never been complained about; it was still one surface.
+  /* TEAL HERE TOO, so the rail is the same DECISION in both themes rather
+     than brand chrome in one and grey chrome in the other. Not the same
+     value: #1b7789 on a #0b1416 canvas is a lit panel in a dark room, and
+     the point of the rail is to be the frame rather than the brightest
+     thing on screen.
 
-     The rail LIFTS in dark rather than deepening, which is the same decision
-     as light and not an inversion of it: in both themes the rail steps AWAY
-     from the canvas, and in a dark theme the only direction away is up.
-     #16262a is L* 14.0, so the gap is 8.3 - matching the 9.4 light mode now
-     has, which is what keeps the two themes feeling like one design. */
-  --sidebar: #16262a;
+     #0f3d47 is the brand hue held at L* 23.3 against a canvas of 5.7 - a
+     gap of 17.6, where the old #0f1a1c managed 2.7 and was effectively
+     invisible. Dark hides a weak boundary better than light does, which is
+     why nobody had reported it; it was still one surface. White on this is
+     11.8:1, so the ink has room here that it does not have in light. */
+  --sidebar: #0f3d47;
   --sidebar-foreground: #e6eff0;
-  --sidebar-muted-foreground: #93a7ab;
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: #05171a;
-  /* Lifted with the rail, and for the reason the light note gives: #1b2b2f
-     was a step above #0f1a1c and is barely above #16262a, so the active row
-     would have dissolved into the rail. L* 22.9 against the rail's 14.0. */
-  --sidebar-accent: #243a3f;
-  --sidebar-accent-foreground: #e6eff0;
-  --sidebar-border: #2f4448;
+  /* Real headroom in this theme, unlike light - #9fc4cd is 5.9:1 on the
+     fill, so a dim tone is actually dim rather than near-white. */
+  --sidebar-muted-foreground: #9fc4cd;
+  --sidebar-primary: #e6eff0;
+  --sidebar-primary-foreground: #0f3d47;
+  /* Lighter than the rail here. In light the accent goes darker to stay clear
+     of white text; on a dark rail the same reasoning points the other way. */
+  --sidebar-accent: #17545f;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #2a6875;
+  /* --signal (#4fd6e6 in dark) clears 3:1 on this fill, so unlike light the
+     mark can stay the palette's own. */
   --sidebar-mark: var(--signal);
-  --sidebar-ring: var(--primary);
+  --sidebar-ring: #7fd4e2;
 }
 
 /* -------------------------------------------------------------------
