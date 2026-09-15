@@ -77,6 +77,12 @@ export const MEETING_LOOKBACK_DAYS = 14;
 // cannot turn a screen render into an unbounded fetch.
 const MAX_EVENTS = 100;
 
+// The sweep's own page size. Its window is minutes wide, so a person with
+// more than this many meetings starting inside it has something other than
+// a calendar, and asking for a hundred rows once per subscriber per run
+// would be paying for a page that is empty every time.
+const MAX_MEETINGS_IN_WINDOW = 20;
+
 export type TeamsMeetingSummary = {
   /**
    * The calendar event's IMMUTABLE id - see IMMUTABLE_ID_HEADERS. An ordinary
@@ -185,6 +191,68 @@ export async function listRecentTeamsMeetings(
   // reads as "the import is broken", which is a much worse place to leave
   // them.
   return { meetings, truncated: typeof payload["@odata.nextLink"] === "string" };
+}
+
+// -------------------------------------------------------------------
+// The person's Teams meetings STARTING inside a window.
+//
+// A sibling of listRecentTeamsMeetings rather than an option on it, because
+// the two answer different questions and one of them is about cost. That one
+// looks back a fortnight for a person choosing a meeting to import, and it
+// is called when somebody opens a screen. This one looks back MINUTES and is
+// called on a timer, once per subscriber, for ever - so it asks for the
+// narrowest window it can and takes the smallest page.
+//
+// calendarView, like its sibling, because it expands a recurring series into
+// its occurrences. A weekly stand-up is one event with many meetings, and it
+// is the occurrence that starts at nine on a Tuesday - an /events read would
+// return the series with its original start and the sweep would nudge
+// nobody, for ever, about the meeting people actually attend most.
+//
+// THE WINDOW IS ON THE START TIME, which is not what calendarView filters
+// on. It returns anything OVERLAPPING the range, so an all-day event or a
+// long workshop that began this morning comes back for a window covering the
+// last ten minutes. Filtering to events that actually START in the range is
+// therefore done here, and it is not belt and braces: without it, somebody
+// with a day-long booking in their calendar would be nudged about it on
+// every sweep until the claim row existed, and nudged again tomorrow.
+//
+// Ordered by start ASCENDING here, unlike its sibling: these are all within
+// minutes of each other, and the earliest is the one most likely to have
+// been missed.
+// -------------------------------------------------------------------
+export async function listTeamsMeetingsStartingBetween(
+  userId: string,
+  from: Date,
+  to: Date,
+): Promise<TeamsMeetingSummary[]> {
+  const token = await getDelegatedGraphToken(userId);
+
+  // A little either side of the window, because calendarView is inclusive of
+  // overlap rather than of start, and an event starting exactly at `to` must
+  // still come back. Trimmed to the real window below.
+  const url =
+    `${GRAPH_BASE}/me/calendarView` +
+    `?startDateTime=${from.toISOString()}` +
+    `&endDateTime=${to.toISOString()}` +
+    `&$select=id,subject,isOnlineMeeting,onlineMeeting,start,end,organizer` +
+    `&$orderby=start/dateTime` +
+    `&$top=${MAX_MEETINGS_IN_WINDOW}`;
+
+  const payload = (await graphRequest(url, token, { headers: IMMUTABLE_ID_HEADERS })) as {
+    value?: GraphEvent[];
+  };
+
+  return (payload.value ?? [])
+    .map(toMeetingSummary)
+    .filter((meeting): meeting is TeamsMeetingSummary => meeting !== null)
+    // The start-time filter described above. calendarView answered about
+    // overlap; the sweep asked about beginnings.
+    .filter(
+      (meeting) =>
+        meeting.startsAt.getTime() >= from.getTime() && meeting.startsAt.getTime() <= to.getTime(),
+    )
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 }
 
 // -------------------------------------------------------------------
