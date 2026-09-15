@@ -2,35 +2,46 @@ import { describe, expect, it } from "vitest";
 
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
 
-import { isCollapsible, navGroupsForRole, projectsNavGroup, type NavProject } from "./nav-items";
+import { isCollapsible, navGroupsForRole, withMyProjects, type NavProject } from "./nav-items";
 
 // -------------------------------------------------------------------
-// The projects group in the sidebar.
+// The projects entry in the sidebar.
 //
-// Three things are worth pinning and none shows up as a broken page: a link
-// that goes to the wrong AREA, which the proxy quietly redirects rather than
-// refusing so nobody sees an error; a group that renders with nothing in it,
-// which is a heading promising something that is not there; and a group that
-// starts SHUT, which hides the projects on every screen except the ones
-// already inside it.
+// ONE ROW, AND THAT IS THE POINT OF MOST OF THIS FILE. The rail used to carry
+// a link called "All projects", then a heading reading "Projects", then a
+// disclosure also reading "Projects" - three rows over ONE list, because
+// /{area}/projects shows the projects you are a member of, which is exactly
+// what fills the children here. "All" named a fuller list that does not exist
+// anywhere in the app.
+//
+// The rest is things that do not show up as a broken page: a link that goes
+// to the wrong AREA, which the proxy quietly redirects rather than refusing so
+// nobody sees an error; and an entry that starts SHUT, which hides the
+// projects on every screen except the ones already inside it.
 // -------------------------------------------------------------------
 const projects: NavProject[] = [
   { id: "p1", title: "Data platform", clientName: "Perks" },
   { id: "p2", title: "Website", clientName: "Ardent" },
 ];
 
+type Role = (typeof USER_ROLES)[keyof typeof USER_ROLES];
+
 /**
- * The group holds exactly one entry - the collapsible - and the projects are
- * its children. Every test below goes through this rather than reaching into
- * `items[0]`, so the shape is asserted once.
+ * The Projects entry for a role, with the given projects hung under it.
+ *
+ * Goes through the real tree rather than a fabricated one, because the entry
+ * living in the STATIC tree is half of what is being asserted - it is what
+ * stops a row appearing above "Your timesheet" a moment after the sidebar
+ * paints, and what leaves somebody on no projects a way to the page.
  */
-function collapsibleFrom(role: (typeof USER_ROLES)[keyof typeof USER_ROLES], list: NavProject[]) {
-  const group = projectsNavGroup(role, list);
+function projectsEntry(role: Role, list: NavProject[]) {
+  const groups = withMyProjects(navGroupsForRole(role), role, list);
 
-  expect(group, "expected a projects group").not.toBeNull();
-  expect(group?.items, "the group holds the collapsible and nothing else").toHaveLength(1);
+  const entries = groups.flatMap((group) => group.items).filter((entry) => entry.label === "Projects");
 
-  const entry = group!.items[0];
+  expect(entries, "exactly one row in the whole rail may be called Projects").toHaveLength(1);
+
+  const entry = entries[0];
 
   expect(isCollapsible(entry), "the projects entry must be a collapsible").toBe(true);
 
@@ -39,15 +50,28 @@ function collapsibleFrom(role: (typeof USER_ROLES)[keyof typeof USER_ROLES], lis
   return entry;
 }
 
-describe("projectsNavGroup", () => {
-  it("is ABSENT when the person is on no projects", () => {
-    // An empty heading is worse than no heading - it promises something that
-    // is not there, and the "All projects" link already says so in words.
-    expect(projectsNavGroup(USER_ROLES.MEMBER, [])).toBeNull();
+describe("the projects entry", () => {
+  it("IS the projects page as well as the list of them", () => {
+    // The whole change. One row that navigates to /{area}/projects AND
+    // expands into the projects themselves, replacing the link-above-a-
+    // disclosure that showed the same set twice under two names.
+    expect(projectsEntry(USER_ROLES.ADMIN, projects).href).toBe("/admin/projects");
+    expect(projectsEntry(USER_ROLES.MANAGER, projects).href).toBe("/manage/projects");
+    expect(projectsEntry(USER_ROLES.MEMBER, projects).href).toBe("/portal/projects");
+  });
+
+  it("STAYS when the person is on no projects", () => {
+    // It used to be dropped, and relied on the "All projects" link beside it
+    // to cover that case. With the link gone, vanishing would strand somebody
+    // on no projects with no way to the page that says so.
+    const entry = projectsEntry(USER_ROLES.MEMBER, []);
+
+    expect(entry.children).toHaveLength(0);
+    expect(entry.href).toBe("/portal/projects");
   });
 
   it("is a COLLAPSIBLE, so it can be shut", () => {
-    expect(collapsibleFrom(USER_ROLES.MEMBER, projects).label).toBe("Projects");
+    expect(projectsEntry(USER_ROLES.MEMBER, projects).label).toBe("Projects");
   });
 
   it("starts OPEN, which is the whole reason it can be a collapsible at all", () => {
@@ -55,11 +79,11 @@ describe("projectsNavGroup", () => {
     // already one of its children (`entry.defaultOpen ?? childActive`). For
     // these that would mean the projects were hidden on every screen where
     // seeing them is worth anything, which is a list nobody can navigate WITH.
-    expect(collapsibleFrom(USER_ROLES.ADMIN, projects).defaultOpen).toBe(true);
+    expect(projectsEntry(USER_ROLES.ADMIN, projects).defaultOpen).toBe(true);
   });
 
   it("gives one child per project, labelled with the project", () => {
-    expect(collapsibleFrom(USER_ROLES.MEMBER, projects).children.map((child) => child.label)).toEqual([
+    expect(projectsEntry(USER_ROLES.MEMBER, projects).children.map((child) => child.label)).toEqual([
       "Data platform",
       "Website",
     ]);
@@ -70,7 +94,7 @@ describe("projectsNavGroup", () => {
     // refusing it, so a hand-built /admin/... followed by a member is not an
     // error anybody sees - it is a link that quietly goes somewhere else.
     const hrefFor = (role: (typeof USER_ROLES)[keyof typeof USER_ROLES]) =>
-      collapsibleFrom(role, projects).children[0].href;
+      projectsEntry(role, projects).children[0].href;
 
     expect(hrefFor(USER_ROLES.ADMIN)).toBe("/admin/projects/p1");
     expect(hrefFor(USER_ROLES.MANAGER)).toBe("/manage/projects/p1");
@@ -81,7 +105,7 @@ describe("projectsNavGroup", () => {
     // "Website" for two clients is the ordinary case, and the label alone
     // cannot tell them apart in a sidebar. The rail also shows this on hover,
     // since a long title is truncated to the width of the rail.
-    expect(collapsibleFrom(USER_ROLES.MEMBER, projects).children[1]).toMatchObject({
+    expect(projectsEntry(USER_ROLES.MEMBER, projects).children[1]).toMatchObject({
       tooltip: "Website - Ardent",
     });
   });
@@ -97,7 +121,7 @@ describe("projectsNavGroup", () => {
       clientName: "Perks",
     }));
 
-    expect(collapsibleFrom(USER_ROLES.ADMIN, many).children).toHaveLength(12);
+    expect(projectsEntry(USER_ROLES.ADMIN, many).children).toHaveLength(12);
   });
 });
 
@@ -232,11 +256,12 @@ describe("the admin tree's delivery ordering", () => {
   });
 
   it("does not leave Delivery admin inside the Delivery group", () => {
-    // If it were still nested, the splice would put the projects BELOW it,
-    // which is the layout this replaced.
+    // Nested, the admin disclosure would sit between the projects and the
+    // timesheet - putting the boards somebody opens all day underneath a
+    // group of screens they open occasionally.
     const delivery = navGroupsForRole(USER_ROLES.ADMIN).find((group) => group.label === "Delivery");
 
-    expect(delivery?.items.map((item) => item.label)).toEqual(["All projects", "Your timesheet"]);
+    expect(delivery?.items.map((item) => item.label)).toEqual(["Projects", "Your timesheet"]);
   });
 
   it("calls the reporting group Reports, not Timesheets", () => {
@@ -253,36 +278,56 @@ describe("the admin tree's delivery ordering", () => {
   });
 });
 
-// -------------------------------------------------------------------
-// The static trees, asserted only where the projects group depends on them.
-// -------------------------------------------------------------------
-describe("the nav trees the projects group is spliced into", () => {
-  it.each([USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.MEMBER])(
-    "gives %s a Delivery group to sit under",
-    (role) => {
-      // useNavGroups splices the projects group directly after Delivery, and
-      // falls back to appending when there is none. This asserts the ordinary
-      // path stays the ordinary path.
-      expect(navGroupsForRole(role).some((group) => group.label === "Delivery")).toBe(true);
-    },
-  );
+// ===================================================================
+// ONE WAY TO THE PROJECTS, NOT THREE.
+//
+// This is the regression guard for the thing that was actually wrong, and the
+// history is worth keeping because the previous attempt made it worse. There
+// were three rows - a link "All projects", a group heading "Projects", and a
+// disclosure "Projects" - over ONE list. The test that used to live here
+// checked the two ROWS were not given the same NAME, which treated the
+// duplication as a naming collision rather than as a duplicate.
+// ===================================================================
+const ALL_ROLES = [USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.MEMBER] as const;
 
-  it("has no group already called Projects, which would render twice", () => {
-    for (const role of [USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.MEMBER]) {
-      expect(navGroupsForRole(role).filter((group) => group.label === "Projects")).toHaveLength(0);
-    }
+describe("one way to the projects", () => {
+  it.each(ALL_ROLES)("gives %s exactly one row that goes to the projects page", (role) => {
+    const projectsPage = navGroupsForRole(role)
+      .flatMap((group) => group.items)
+      .filter((entry) => entry.href?.endsWith("/projects"));
+
+    expect(projectsPage).toHaveLength(1);
+    expect(projectsPage[0].label).toBe("Projects");
   });
 
-  it("has no entry already labelled Projects in the rail either", () => {
-    // The collapsible's own row is labelled "Projects", and the overflow link
-    // beside it was renamed "All projects" for exactly this reason. Two rows
-    // reading "Projects" one above the other is the failure this catches.
-    for (const role of [USER_ROLES.ADMIN, USER_ROLES.MANAGER, USER_ROLES.MEMBER]) {
-      const labels = navGroupsForRole(role)
-        .flatMap((group) => group.items)
-        .map((entry) => entry.label);
+  it.each(ALL_ROLES)("never labels a row 'All projects' for %s", (role) => {
+    // It named a fuller list that does not exist: /{area}/projects shows the
+    // projects you are a MEMBER of, the same set the disclosure listed.
+    const labels = navGroupsForRole(role)
+      .flatMap((group) => group.items)
+      .map((entry) => entry.label);
 
-      expect(labels.filter((label) => label === "Projects")).toHaveLength(0);
-    }
+    expect(labels).not.toContain("All projects");
+  });
+
+  it.each(ALL_ROLES)("has no separate Projects GROUP for %s to render a second heading", (role) => {
+    // A group called "Projects" holding one disclosure called "Projects" put
+    // the word on screen twice, one row above the other.
+    expect(navGroupsForRole(role).filter((group) => group.label === "Projects")).toHaveLength(0);
+
+    expect(
+      withMyProjects(navGroupsForRole(role), role, projects).filter(
+        (group) => group.label === "Projects",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it.each(ALL_ROLES)("keeps the projects above the timesheet for %s", (role) => {
+    // The entry lives in the static tree rather than arriving with the fetch,
+    // so it cannot appear ABOVE "Your timesheet" a moment after the sidebar
+    // paints and push it under somebody's cursor.
+    const delivery = navGroupsForRole(role).find((group) => group.label === "Delivery");
+
+    expect(delivery?.items.map((entry) => entry.label)).toEqual(["Projects", "Your timesheet"]);
   });
 });

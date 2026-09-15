@@ -238,44 +238,106 @@ function NavCollapsibleRow({
     if (childActive) setOpen(true);
   }
 
-  const groupButton = (
-    <button
-      type="button"
-      onClick={() => setOpen((previous) => !previous)}
-      aria-expanded={open}
-      aria-label={entry.label}
-      className={cn(
-        ROW,
-        "h-9",
-        collapsed ? "mx-1.5 w-[calc(100%-0.75rem)] justify-center" : "mx-2 w-[calc(100%-1rem)] gap-2.5 px-2.5",
-        // A group whose child is open is not itself the current page, so it
-        // gets the weight without the mark - the mark is on the child.
-        childActive ? "font-semibold text-sidebar-foreground" : ROW_IDLE,
-      )}
-    >
-      <Icon size={18} aria-hidden="true" className={childActive ? ICON_ACTIVE : ICON_IDLE} />
-      {!collapsed && (
-        <>
-          <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
-          <ChevronRight
-            size={14}
-            aria-hidden="true"
-            className={cn("ml-auto shrink-0 text-sidebar-muted-foreground transition-transform", open && "rotate-90")}
-          />
-        </>
-      )}
-    </button>
+  // The group's own page, when it has one. Projects does; "AI" and "Reports"
+  // are categories with nothing behind them.
+  const selfActive = entry.href !== undefined && pathname === entry.href;
+
+  const chevron = (
+    <ChevronRight
+      size={14}
+      aria-hidden="true"
+      className={cn("ml-auto shrink-0 text-sidebar-muted-foreground transition-transform", open && "rotate-90")}
+    />
   );
+
+  const rowClasses = cn(
+    ROW,
+    "h-9",
+    collapsed ? "mx-1.5 w-[calc(100%-0.75rem)] justify-center" : "mx-2 w-[calc(100%-1rem)] gap-2.5 px-2.5",
+    // Standing ON the group's own page is the same state as any other current
+    // page, mark included. A group whose CHILD is open is not itself the
+    // current page, so it gets the weight without the mark - the mark belongs
+    // on the child.
+    selfActive ? ROW_ACTIVE : childActive ? "font-semibold text-sidebar-foreground" : ROW_IDLE,
+    selfActive && MARK,
+    selfActive && (collapsed ? "before:-left-1.5" : "before:-left-2"),
+  );
+
+  const iconClasses = selfActive || childActive ? ICON_ACTIVE : ICON_IDLE;
+
+  // -----------------------------------------------------------------
+  // TWO CONTROLS WHEN THE GROUP IS ALSO A PLACE, and that is the point of it.
+  //
+  // Projects is a row you can GO to and a list you can OPEN, and it used to be
+  // two separate rows for exactly that reason - a link above a disclosure,
+  // over the same set of projects. One button cannot be both, so where there
+  // is an href the label is a link and the chevron is its own button beside
+  // it. Everything without one keeps the single toggling button it had.
+  //
+  // The chevron carries its own accessible name rather than inheriting the
+  // row's: two controls in a row both announced as "Projects" is worse than
+  // no disclosure at all for anyone listening to it.
+  //
+  // COLLAPSED, THERE IS NO CHEVRON AT ALL - the rail is icon-only, and the
+  // whole row is the link. The children still expand inline underneath when
+  // the group is open, which is the behaviour the rail already had.
+  // -----------------------------------------------------------------
+  const groupRow =
+    entry.href !== undefined ? (
+      <div className={cn("flex items-center", collapsed ? "justify-center" : "pr-1")}>
+        <Link
+          href={entry.href}
+          aria-label={entry.label}
+          aria-current={selfActive ? "page" : undefined}
+          className={cn(rowClasses, !collapsed && "w-auto flex-1")}
+        >
+          <Icon size={18} aria-hidden="true" className={iconClasses} />
+          {!collapsed && <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>}
+          <NavigationPendingReporter />
+        </Link>
+
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={() => setOpen((previous) => !previous)}
+            aria-expanded={open}
+            aria-label={`${open ? "Hide" : "Show"} ${entry.label.toLowerCase()}`}
+            className={cn(
+              "flex size-7 shrink-0 items-center justify-center rounded-md transition-colors",
+              "hover:bg-sidebar-accent",
+            )}
+          >
+            {chevron}
+          </button>
+        )}
+      </div>
+    ) : (
+      <button
+        type="button"
+        onClick={() => setOpen((previous) => !previous)}
+        aria-expanded={open}
+        aria-label={entry.label}
+        className={rowClasses}
+      >
+        <Icon size={18} aria-hidden="true" className={iconClasses} />
+        {!collapsed && (
+          <>
+            <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
+            {chevron}
+          </>
+        )}
+      </button>
+    );
 
   return (
     <div>
       {collapsed ? (
         <Tooltip>
-          <TooltipTrigger asChild>{groupButton}</TooltipTrigger>
+          <TooltipTrigger asChild>{groupRow}</TooltipTrigger>
           <TooltipContent side="right">{entry.label}</TooltipContent>
         </Tooltip>
       ) : (
-        groupButton
+        groupRow
       )}
 
       {open && (
