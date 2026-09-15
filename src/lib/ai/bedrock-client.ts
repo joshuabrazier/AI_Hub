@@ -257,6 +257,54 @@ export const SMITHY_DEFAULT_MAX_SOCKETS = 50;
  */
 export const AZURE_OUTBOUND_IDLE_MS = 240_000;
 
+/**
+ * How long a socket may sit IDLE IN THE POOL before we destroy it ourselves.
+ *
+ * ===================================================================
+ * THE CONSTANT ABOVE WAS DECLARED AND NEVER ENFORCED, and this is what
+ * enforces it. Its own comment said anything kept alive "has to be reused or
+ * released well inside" four minutes; the agent had `keepAlive`,
+ * `keepAliveMsecs`, `maxSockets` and `maxFreeSockets`, and nothing that
+ * released anything. A free socket could sit in the pool indefinitely.
+ *
+ * WHY THAT IS THE WORST POSSIBLE FAILURE. Azure App Service drops an idle
+ * outbound connection at four minutes SILENTLY - no FIN, no RST. Node never
+ * learns, so the dead socket stays in the keep-alive pool looking perfectly
+ * healthy. The next request is handed it, writes a request into a connection
+ * that no longer exists, and waits. Nothing comes back. There is no error to
+ * catch and no response headers, so `send()` never settles - which is
+ * precisely the "never reached Bedrock" signature, and it is produced by a
+ * connection we cached rather than by anything wrong at AWS.
+ *
+ * It also explains the shape exactly: fine under sustained use, dead after a
+ * gap, and working again straight afterwards because the failure evicts the
+ * bad socket. Measured in production - two calls three minutes apart both
+ * answered in under two seconds, and the next one seven minutes later hung
+ * for the full budget.
+ *
+ * TCP KEEP-ALIVE IS NOT ENOUGH ON ITS OWN. `keepAliveMsecs` sets SO_KEEPALIVE
+ * probes, which are zero-length packets; App Service's outbound path does not
+ * reliably count them as activity, so the probes can be running while Azure
+ * considers the connection idle. They stay on - they cost nothing and help
+ * where they are honoured - but they are not the mechanism.
+ *
+ * WHY 60 SECONDS, sitting between the other two timeouts:
+ *
+ *   BEDROCK_SOCKET_IDLE_MS   25s   an IN-FLIGHT request's idle timeout, set
+ *                                  per request by the SDK. Shorter than this,
+ *                                  so this can never pre-empt a live call -
+ *                                  the tighter one always fires first.
+ *   this                     60s   a FREE socket's time in the pool.
+ *   AZURE_OUTBOUND_IDLE_MS  240s   when Azure kills it without telling us.
+ *
+ * Long enough that a working app reuses connections all day, and far enough
+ * inside four minutes that we always let go first. The cost of letting go is
+ * one fresh connection - measured at about 1.4s to response headers, against
+ * a 60-second hang for getting it wrong.
+ * ===================================================================
+ */
+export const BEDROCK_FREE_SOCKET_TTL_MS = 60_000;
+
 // How long a request may sit waiting for a socket before the SDK logs that
 // the pool is at capacity. Deliberately short: this is a diagnostic, and the
 // question it answers - "is anything queueing at all" - is only useful
@@ -305,6 +353,17 @@ export function getBedrockClient(): BedrockRuntimeClient {
         keepAliveMsecs: BEDROCK_KEEP_ALIVE_MS,
         maxSockets: BEDROCK_MAX_SOCKETS,
         maxFreeSockets: BEDROCK_MAX_FREE_SOCKETS,
+        // WE LET GO BEFORE AZURE DOES. Node's Agent restores this timeout on
+        // a socket the moment it returns to the free pool, and destroys it
+        // when it fires - so an idle connection is ours to discard rather
+        // than Azure's to kill silently. See BEDROCK_FREE_SOCKET_TTL_MS for
+        // why this is the difference between a fresh 1.4s connection and a
+        // 60s hang against a socket that stopped existing minutes ago.
+        //
+        // It cannot cut a live request short: the SDK sets its own, tighter
+        // `socketTimeout` per request, and that governs while the socket is
+        // in use.
+        timeout: BEDROCK_FREE_SOCKET_TTL_MS,
       }),
       // Pulled forward from its default so the SDK's own capacity warning
       // appears while the queue is still short enough to be a clue rather

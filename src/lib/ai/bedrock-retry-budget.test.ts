@@ -10,6 +10,7 @@ import {
   BEDROCK_KEEP_ALIVE_MS,
   BEDROCK_LADDER_WORST_CASE_MS,
   BEDROCK_MAX_FREE_SOCKETS,
+  BEDROCK_FREE_SOCKET_TTL_MS,
   BEDROCK_MAX_SOCKETS,
   BEDROCK_SOCKET_IDLE_MS,
   MAX_ATTEMPTS,
@@ -323,11 +324,42 @@ describe("the Bedrock connection pool", () => {
     expect(BEDROCK_MAX_FREE_SOCKETS).toBeLessThan(BEDROCK_MAX_SOCKETS);
   });
 
-  it("releases a kept-alive connection well before Azure severs it", () => {
-    // If the platform tears the connection down first, the teardown arrives
-    // as a socket hang-up in the middle of somebody's reply rather than as a
-    // connection we chose to drop.
+  it("probes a kept-alive connection well inside Azure's window", () => {
+    // Necessary and NOT sufficient - see the next test. SO_KEEPALIVE probes
+    // are zero-length packets and App Service's outbound path does not
+    // reliably count them as activity, so they help where they are honoured
+    // and cannot be the mechanism.
     expect(BEDROCK_KEEP_ALIVE_MS).toBeLessThan(AZURE_OUTBOUND_IDLE_MS / 2);
+  });
+
+  // -----------------------------------------------------------------
+  // THE ONE THAT WAS MISSING, AND THE PRODUCTION FAULT IT ALLOWED.
+  //
+  // AZURE_OUTBOUND_IDLE_MS was declared, commented as the thing a kept-alive
+  // socket had to be "reused or released well inside", and enforced by
+  // nothing: the agent had no timeout, so a free socket could sit in the
+  // pool indefinitely.
+  //
+  // Azure drops an idle outbound connection at four minutes SILENTLY. The
+  // dead socket stays in the pool looking healthy, the next request writes
+  // into it, and nothing ever comes back - no error, no headers, so send()
+  // never settles. Measured: two calls three minutes apart answered in under
+  // two seconds; the next, seven minutes later, hung for its full budget.
+  // -----------------------------------------------------------------
+  it("destroys an idle socket itself rather than letting Azure kill it quietly", () => {
+    expect(BEDROCK_FREE_SOCKET_TTL_MS).toBeLessThan(AZURE_OUTBOUND_IDLE_MS);
+
+    // Real headroom, not a hair's breadth. The socket has to be gone before
+    // Azure starts counting it out, and both clocks are approximate.
+    expect(AZURE_OUTBOUND_IDLE_MS - BEDROCK_FREE_SOCKET_TTL_MS).toBeGreaterThanOrEqual(120_000);
+  });
+
+  it("never pre-empts a live request, because the in-flight timeout is tighter", () => {
+    // The ordering that makes the free-socket TTL safe to set at all. A
+    // request in flight is governed by the SDK's own per-request
+    // socketTimeout; this only ever applies to a socket sitting in the pool.
+    // Were it the shorter of the two, it would abort live calls.
+    expect(BEDROCK_FREE_SOCKET_TTL_MS).toBeGreaterThan(BEDROCK_SOCKET_IDLE_MS);
   });
 
   it("leaves the pool bigger than any one turn can hold on its own", () => {
