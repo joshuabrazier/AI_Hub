@@ -1571,12 +1571,14 @@ export async function* streamAiChatReplyService(
           onSilentAttempt: (detail) => {
             // WHICH SIDE THE SILENCE WAS ON, in the line and in the trace.
             // `openedAfterMs` is null when no response headers ever came
-            // back, which means the request was not acknowledged by Bedrock
-            // and the model was never asked - a networking problem here, not
-            // a model problem there. The two used to read identically.
+            // back, so nothing acknowledged the request - which points at a
+            // networking problem here rather than a model problem there. The
+            // two used to read identically. It is a hint and not a verdict:
+            // see model-stream.ts on why an unacknowledged request may still
+            // have reached Bedrock inside the SDK's own retry ladder.
             const reached =
               detail.openedAfterMs === null
-                ? "never reached Bedrock"
+                ? "was never acknowledged"
                 : `reached Bedrock after ${detail.openedAfterMs}ms then went quiet`;
 
             console.warn(

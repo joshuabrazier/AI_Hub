@@ -121,6 +121,13 @@ describe("streamModelEvents", () => {
   // `open` resolving is the discriminator, and it is a real one rather than
   // a proxy: the AWS SDK's send() settles on response headers, so it cannot
   // resolve for a request that never reached Bedrock.
+  //
+  // IT IS ONLY SOUND ONE WAY ROUND, and the messages are asserted here for
+  // exactly that. Headers arriving prove the model was asked. Headers NOT
+  // arriving prove only that nothing came back - send() is also unsettled
+  // while the SDK sleeps between retries of its own, and an attempt that came
+  // back 429 reached Bedrock. So the unreached message may say where to look
+  // and must not say what was billed.
   // -----------------------------------------------------------------
   describe("telling a silent model from an unreachable one", () => {
     /** Never resolves: the request is never acknowledged. */
@@ -141,7 +148,7 @@ describe("streamModelEvents", () => {
       throw new Error("expected the stream to give up, and it did not");
     }
 
-    it("says the model was never asked when no response headers came back", async () => {
+    it("says nothing acknowledged the request when no response headers came back", async () => {
       const error = await giveUp(streamModelEvents(neverOpens, { firstEventMs: DEADLINE_MS, attempts: 2 }));
 
       expect(error.reachedModel).toBe(false);
@@ -149,8 +156,14 @@ describe("streamModelEvents", () => {
 
       // The message has to point at the right place, because it is what
       // somebody reads at two in the morning.
-      expect(error.message).toContain("never reached Bedrock");
-      expect(error.message).toContain("nothing was billed");
+      expect(error.message).toContain("Nothing acknowledged the request");
+      expect(error.message).toContain("outbound networking");
+
+      // And it must stop there. It cannot see inside the SDK's retry ladder,
+      // so it is in no position to say the model was never asked or that
+      // nothing was billed - claims somebody would act on.
+      expect(error.message).not.toContain("nothing was billed");
+      expect(error.message).not.toContain("never asked");
     });
 
     it("says the model WAS asked when headers came back and nothing followed", async () => {

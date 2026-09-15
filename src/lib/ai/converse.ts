@@ -294,7 +294,7 @@ function describeConverseFailure(
   ceilingMs: number,
   // When the response headers arrived, or null if they never did. See the
   // block where it is set: it is the difference between a model that was
-  // asked and said nothing, and a request that never got out of the host.
+  // asked and said nothing, and a request nothing ever acknowledged.
   openedAfterMs: number | null,
 ): string {
   const isAbort = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
@@ -308,14 +308,22 @@ function describeConverseFailure(
       //
       // This used to assert "the model accepted the request and produced
       // nothing" for both cases, which is only half true and pointed every
-      // investigation at AWS. A request that never reached Bedrock looks
-      // identical from the caller's seat and needs the opposite fix.
+      // investigation at AWS. A request nothing acknowledged looks identical
+      // from the caller's seat and needs the opposite fix.
+      //
+      // The signal is only sound one way round. `send()` settling on the
+      // response headers cannot happen for a request Bedrock never received,
+      // so a number here proves the model was asked. Nothing coming back
+      // proves only that nothing came back: `send()` also stays unsettled
+      // while the SDK sleeps between retries of its own, and an attempt that
+      // came back 429 or 500 did reach Bedrock. So this half says where to
+      // look, and stops short of saying what was or was not billed.
       // -------------------------------------------------------------
       if (openedAfterMs === null) {
         return (
-          `TimeoutError: the request never reached Bedrock - no response headers came back within the ` +
-          `${seconds}s allowed, so the model was never asked and nothing was billed. Look at the ` +
-          `connection pool and outbound networking rather than at the model.`
+          `TimeoutError: nothing acknowledged the request - no response headers came back within the ` +
+          `${seconds}s allowed. Look at the connection pool and outbound networking rather than at ` +
+          `the model, bearing in mind the SDK may have been retrying an attempt that did reach Bedrock.`
         );
       }
 

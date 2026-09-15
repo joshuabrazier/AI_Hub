@@ -27,8 +27,7 @@ function state(overrides: Partial<DeploymentState> = {}): DeploymentState {
     seenBuildId: OLD,
     currentBuildId: OLD,
     reloadedForBuildId: null,
-    isVisible: true,
-    hasUnsavedWork: false,
+    wouldLoseWork: false,
     ...overrides,
   };
 }
@@ -40,12 +39,23 @@ describe("decideDeploymentAction", () => {
   });
 
   it("adopts the first build it is told about rather than reloading for it", () => {
-    // A tab that has just loaded was served by this build moments ago.
-    // Reloading here would mean reloading once on every single page load.
+    // Only reachable when the server could not stamp its own build into the
+    // page. Reloading here would mean reloading once on every page load.
     expect(decideDeploymentAction(state({ seenBuildId: null, currentBuildId: NEW }))).toEqual({
       action: "adopt",
       buildId: NEW,
     });
+  });
+
+  it("reloads a tab whose HTML came from a build that has already moved on", () => {
+    // THE CASE THE SERVED-BY STAMP EXISTS FOR. A tab that loaded while a
+    // deployment was rolling gets old HTML and a new first poll. Discovering
+    // `seenBuildId` from that poll made it adopt the new id and stay exempt
+    // for as long as it stayed open, holding action hashes the running server
+    // rejects. Told what actually served it, it reloads on the first poll.
+    expect(
+      decideDeploymentAction(state({ seenBuildId: OLD, currentBuildId: NEW })),
+    ).toEqual({ action: "reload", buildId: NEW });
   });
 
   it("reloads when the build has moved on", () => {
@@ -113,23 +123,13 @@ describe("decideDeploymentAction", () => {
   // WHEN, given that it is going to.
   // -----------------------------------------------------------------
   describe("choosing its moment", () => {
-    it("reloads a hidden tab at once, unsaved work or not", () => {
-      // The best case there is: nobody is looking, nothing is on screen to
-      // interrupt, and the tab is fresh by the time it is looked at again.
-      // This is where most stale tabs are - open on a second monitor across
-      // several deploys.
-      expect(
-        decideDeploymentAction(state({ currentBuildId: NEW, isVisible: false, hasUnsavedWork: true })),
-      ).toEqual({ action: "reload", buildId: NEW });
-    });
-
     it("waits rather than throwing away something half-written", () => {
       // Not a softening of "reload automatically" - it is what makes an
       // automatic reload safe enough to do at all. Losing a half-written
       // message to save a click is a worse bug than the one being fixed,
       // and it would be the app doing it rather than the deploy.
       expect(
-        decideDeploymentAction(state({ currentBuildId: NEW, hasUnsavedWork: true })),
+        decideDeploymentAction(state({ currentBuildId: NEW, wouldLoseWork: true })),
       ).toEqual({ action: "wait" });
     });
 
@@ -138,8 +138,24 @@ describe("decideDeploymentAction", () => {
       // and on every visibility change, so sending the message or clearing
       // the box is enough.
       expect(
-        decideDeploymentAction(state({ currentBuildId: NEW, hasUnsavedWork: false })),
+        decideDeploymentAction(state({ currentBuildId: NEW, wouldLoseWork: false })),
       ).toEqual({ action: "reload", buildId: NEW });
+    });
+
+    it("protects work in a HIDDEN tab exactly as much as a visible one", () => {
+      // This is the one that was wrong. A hidden tab reloaded immediately on
+      // the reasoning that nobody is looking - but alt-tabbing away from a
+      // half-written message hides the tab, and a recording, an upload or a
+      // streaming reply all keep running in one. Looking something up in
+      // another window was the way to lose your draft, and a meeting cannot
+      // be recorded twice.
+      //
+      // Visibility is no longer an input at all: it prompts a re-check and
+      // never overrides the answer. The state type not having the field is
+      // the assertion; this is here so the reasoning has somewhere to live.
+      expect(
+        decideDeploymentAction(state({ currentBuildId: NEW, wouldLoseWork: true })),
+      ).toEqual({ action: "wait" });
     });
   });
 });

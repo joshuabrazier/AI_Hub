@@ -106,11 +106,12 @@ export const MODEL_FIRST_EVENT_WORST_CASE_MS = MODEL_FIRST_EVENT_MS * MODEL_FIRS
 // right POLICY - the reader is waiting either way - and it made two
 // completely different failures indistinguishable in the log:
 //
-//   NEVER OPENED     the request never got response headers back. It may
-//                    never have left the host: a connection queued behind an
-//                    exhausted pool has no socket, so no timeout in the SDK
-//                    can see it, and Azure's outbound SNAT has the same
-//                    shape. The model was never asked. NOTHING WAS BILLED.
+//   NEVER OPENED     no response headers ever came back, so this side never
+//                    got an acknowledgement. The likeliest reading is that
+//                    the request never left the host: a connection queued
+//                    behind an exhausted pool has no socket, so no timeout in
+//                    the SDK can see it, and Azure's outbound SNAT has the
+//                    same shape. Look at our networking first.
 //
 //   OPENED, SILENT   headers came back, so Bedrock accepted the request and
 //                    began a response, and then no event ever arrived. The
@@ -122,9 +123,22 @@ export const MODEL_FIRST_EVENT_WORST_CASE_MS = MODEL_FIRST_EVENT_MS * MODEL_FIRS
 // but sent nothing") without being able to know it. A production silence
 // could not be attributed without reading CloudWatch by hand.
 //
-// `open` resolving IS the discriminator, and it is a real one rather than a
-// proxy: the AWS SDK's `send()` settles when the response headers arrive, so
-// it cannot resolve for a request that never reached Bedrock.
+// -------------------------------------------------------------------
+// "NEVER OPENED" IS NOT THE SAME AS "NEVER ASKED", and the message must not
+// say that it is.
+//
+// `send()` settling on the response headers is a sound one-way signal: it
+// CANNOT settle for a request Bedrock never received, so `openedAfterMs`
+// being a number does prove the model was asked. The converse does not
+// follow. `send()` wraps the SDK's whole retry ladder, so it is also
+// unsettled while the SDK is sleeping between attempts of its own - and an
+// attempt that came back 429 or 500 reached Bedrock. Headers can be lost on
+// the way back, too, for a request that arrived.
+//
+// So "no headers" means "unacknowledged", which is a strong hint and not a
+// billing statement. Saying "nothing was billed" would be an assertion this
+// code is not in a position to make, and the whole point of the split is to
+// stop asserting things it cannot know.
 // ===================================================================
 
 /** What one abandoned attempt actually did, measured rather than assumed. */
@@ -135,8 +149,10 @@ export type SilentAttempt = {
    * Milliseconds from the attempt starting to the response headers arriving,
    * or NULL when they never did.
    *
-   * Null is the whole point: it means the request was never acknowledged by
-   * Bedrock, so the silence is on this side of the connection.
+   * Null is the whole point: nothing came back to acknowledge the request, so
+   * the silence is most likely on this side of the connection. It is evidence
+   * rather than proof - see the block above on why "unacknowledged" is not
+   * the same as "never asked".
    */
   openedAfterMs: number | null;
   /** How long the attempt ran before it was abandoned. */
@@ -150,9 +166,11 @@ export class ModelSilentError extends Error {
   /**
    * True when at least one attempt got response headers back.
    *
-   * The single fact worth knowing first: false means look at our networking
-   * and nothing was billed; true means the model was asked and said nothing,
-   * which is a question for AWS.
+   * The single fact worth knowing first, and it is only sound in one
+   * direction: true PROVES the model was asked and said nothing, which is a
+   * question for AWS. False means nothing acknowledged the request, which
+   * points at our networking without ruling out an attempt that reached
+   * Bedrock inside the SDK's own retry ladder.
    */
   readonly reachedModel: boolean;
 
@@ -168,9 +186,10 @@ export class ModelSilentError extends Error {
           `Response headers came back after ${attempts
             .map((entry) => (entry.openedAfterMs === null ? "never" : `${entry.openedAfterMs}ms`))
             .join(" then ")}, so the model was asked and did not answer.`
-        : `The request never reached Bedrock: ${times}, ${seconds}s each, no response headers ever ` +
-          `came back. The model was never asked, so nothing was billed - look at the connection ` +
-          `pool and outbound networking rather than at the model.`,
+        : `Nothing acknowledged the request: ${times}, ${seconds}s each, no response headers ever ` +
+          `came back. That points at the connection pool and outbound networking rather than at ` +
+          `the model - though the SDK may also have been retrying an attempt of its own, which ` +
+          `would have reached Bedrock.`,
     );
 
     this.name = "ModelSilentError";

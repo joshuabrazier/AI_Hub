@@ -1,7 +1,4 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-
-import { UNKNOWN_BUILD_ID } from "@/features/layout/deployment-watch";
+import { getBuildId } from "@/features/layout/build-id";
 
 // -------------------------------------------------------------------
 // Which build is serving this app right now.
@@ -10,21 +7,10 @@ import { UNKNOWN_BUILD_ID } from "@/features/layout/deployment-watch";
 // it was served by, and reload before somebody presses a button that
 // silently does nothing. See deployment-watch.ts for the rule.
 //
-// -------------------------------------------------------------------
-// IT READS .next/BUILD_ID RATHER THAN AN ENVIRONMENT VARIABLE, and the
-// reason is that the alternative can cause a reload loop.
-//
-// A value baked in through next.config's `env` is inlined into the client
-// bundle at BUILD time but re-evaluated on the server at RUNTIME. Generate it
-// from a timestamp or a fresh git call and the two disagree permanently -
-// every poll reports a "new" build, every tab reloads, and the app is
-// unusable until somebody closes it. BUILD_ID is written once by `next build`
-// and does not change for the life of the deployment, which is exactly the
-// property needed.
-//
-// It is also the RIGHT id rather than a proxy for one: Next.js derives the
-// server action hashes from this same build, so a tab whose BUILD_ID differs
-// is precisely a tab whose action ids the server will reject.
+// Where the id comes from, and why it is that one rather than a version
+// string or a timestamp, is in `build-id.ts`. The root layout reads the same
+// function, so the id stamped into a tab's HTML and the id this hands back
+// are the same value read the same way.
 //
 // -------------------------------------------------------------------
 // NO AUTHENTICATION, deliberately. A build id is not a secret - it is a
@@ -34,33 +20,17 @@ import { UNKNOWN_BUILD_ID } from "@/features/layout/deployment-watch";
 // tab could never notice it was stale.
 // -------------------------------------------------------------------
 
-// Read once per process. The file cannot change while this server is running:
-// a new build is a new deployment and therefore a new process.
-let cached: string | null = null;
-
-async function readBuildId(): Promise<string> {
-  if (cached) return cached;
-
-  try {
-    // `process.cwd()` is the app root under both `next start` and the
-    // standalone server, which places .next beside the server it runs.
-    const raw = await readFile(path.join(process.cwd(), ".next", "BUILD_ID"), "utf8");
-    const buildId = raw.trim();
-
-    cached = buildId.length > 0 ? buildId : UNKNOWN_BUILD_ID;
-  } catch {
-    // Development has no BUILD_ID, and a deployment that somehow cannot read
-    // its own is not a reason to fail a request. Unknown is reported plainly
-    // and the client treats it as "no information" rather than as a change.
-    cached = UNKNOWN_BUILD_ID;
-  }
-
-  return cached;
-}
+// Stated rather than inferred. Route handlers are dynamic by default in this
+// version of Next, but "which build is running" answered from a build-time
+// snapshot is the one answer that must never be possible.
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   return Response.json(
-    { buildId: await readBuildId() },
+    // Unknown when the build cannot be determined - `next dev`, or a read
+    // that failed. Not a reason to fail the request: the client treats it as
+    // "no information" rather than as a change.
+    { buildId: await getBuildId() },
     {
       // Never cached anywhere. A cached answer to "which build is running"
       // is the one answer that is certainly wrong after a deploy, and this

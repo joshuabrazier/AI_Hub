@@ -27,9 +27,9 @@
 //
 // Three guards against it, and each is load-bearing:
 //
-//   1. COMPARE AGAINST WHAT THIS TAB STARTED WITH, not against a stored
-//      "latest". A reload makes the tab adopt the new build, so the
-//      comparison is then equal and the reason to reload is gone.
+//   1. COMPARE AGAINST WHAT SERVED THIS TAB'S HTML, not against a stored
+//      "latest". A reload fetches the document again from the new build, so
+//      the comparison is then equal and the reason to reload is gone.
 //   2. RELOAD ONCE PER BUILD. If the tab reloads for build X and still does
 //      not consider itself on X, something is wrong in a way more reloading
 //      cannot fix - so it stops and leaves the reactive toast to catch it.
@@ -39,19 +39,20 @@
 // -------------------------------------------------------------------
 
 export type DeploymentState = {
-  /** The build this tab was served by. Null until the first poll answers. */
+  /**
+   * The build that rendered this tab's HTML, stamped in by the root layout.
+   * Null only when the server could not say - see guard 3.
+   */
   seenBuildId: string | null;
   /** The build the server is on now. Null when the poll failed or is unknown. */
   currentBuildId: string | null;
   /** The build this tab has already reloaded for, from sessionStorage. */
   reloadedForBuildId: string | null;
-  /** False when the tab is in the background - nobody is looking at it. */
-  isVisible: boolean;
   /**
-   * True when something would be lost by reloading: text typed into an input
-   * or a textarea, or a request in flight.
+   * True when something would be lost by reloading: text somebody has typed
+   * and not yet sent, or work in flight that the reload would abort.
    */
-  hasUnsavedWork: boolean;
+  wouldLoseWork: boolean;
 };
 
 export type DeploymentDecision =
@@ -74,8 +75,21 @@ export function decideDeploymentAction(state: DeploymentState): DeploymentDecisi
   // done it to everybody at once.
   if (!currentBuildId || currentBuildId === UNKNOWN_BUILD_ID) return { action: "wait" };
 
-  // The first answer only establishes what this tab is running. It is never
-  // a reason to reload: the tab was served by this build moments ago.
+  // -----------------------------------------------------------------
+  // THE FALLBACK, and it is only a fallback now.
+  //
+  // `seenBuildId` normally arrives from the server that rendered the page, so
+  // there is nothing to discover. It is null only when that server could not
+  // read its own build, and then the first answer establishes what this tab
+  // will be compared against.
+  //
+  // Adopting is NEVER a reason to reload, and that asymmetry is the whole
+  // point of doing it in the layout instead. A tab that adopts its first poll
+  // is exempt from everything that happened between its HTML being served and
+  // that poll landing - which is exactly the rolling-deploy window this
+  // feature exists for, so a page loaded mid-deploy would stay stale for as
+  // long as it stayed open.
+  // -----------------------------------------------------------------
   if (!seenBuildId) return { action: "adopt", buildId: currentBuildId };
 
   // Guard 1. Same build, nothing to do. This is the overwhelmingly common
@@ -88,16 +102,7 @@ export function decideDeploymentAction(state: DeploymentState): DeploymentDecisi
   if (state.reloadedForBuildId === currentBuildId) return { action: "wait" };
 
   // -----------------------------------------------------------------
-  // A NEW BUILD IS OUT. Reloading is now a question of WHEN, not whether.
-  //
-  // A HIDDEN TAB RELOADS AT ONCE, and this is the case worth having: it is
-  // where most stale tabs are, nobody is looking, and there is nothing on
-  // screen to interrupt. The tab is already fresh by the time it is looked
-  // at again.
-  // -----------------------------------------------------------------
-  if (!state.isVisible) return { action: "reload", buildId: currentBuildId };
-
-  // -----------------------------------------------------------------
+  // A NEW BUILD IS OUT. Reloading is now a question of WHEN, not whether,
   // AND IT WAITS FOR SOMEBODY MID-SENTENCE.
   //
   // This is not a softening of "reload automatically" - it is what makes an
@@ -107,9 +112,26 @@ export function decideDeploymentAction(state: DeploymentState): DeploymentDecisi
   //
   // The wait is short by nature: the state is re-evaluated on every poll and
   // whenever the tab is hidden or focused, so it reloads the moment the box
-  // is cleared, sent, or the tab is put in the background.
+  // is cleared or sent.
+  //
   // -----------------------------------------------------------------
-  if (state.hasUnsavedWork) return { action: "wait" };
+  // THE GUARD DOES NOT DEPEND ON WHETHER ANYBODY IS LOOKING, and it used to.
+  //
+  // A hidden tab reloaded immediately, on the reasoning that nobody is
+  // looking so nothing can be interrupted. That is false twice over, and the
+  // two cases are the two most expensive things in this app:
+  //
+  //   - Alt-tabbing away from a half-written message hides the tab. The
+  //     draft is not abandoned, it is mid-thought, and the old rule made
+  //     LOOKING SOMETHING UP the way to lose it.
+  //   - A recording, an upload or a streaming reply keeps running in a
+  //     hidden tab. Reloading kills a model turn already paid for, or an
+  //     in-progress recording of a meeting that cannot be made twice.
+  //
+  // Visibility is still what PROMPTS a check (see the visibilitychange
+  // listener) - it just no longer overrides the answer.
+  // -----------------------------------------------------------------
+  if (state.wouldLoseWork) return { action: "wait" };
 
   return { action: "reload", buildId: currentBuildId };
 }

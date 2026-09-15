@@ -5,8 +5,10 @@ import { useCallback, useEffect, useRef } from "react";
 import {
   DEPLOYMENT_POLL_MS,
   RELOADED_FOR_KEY,
+  UNKNOWN_BUILD_ID,
   decideDeploymentAction,
 } from "./deployment-watch";
+import { isWorkInFlight } from "./work-in-flight";
 
 // -------------------------------------------------------------------
 // Reload a tab that has outlived the build it was served by.
@@ -24,35 +26,65 @@ import {
 // notices first.
 // -------------------------------------------------------------------
 
+// ===================================================================
+// WOULD RELOADING THROW AWAY WORK? TWO KINDS, AND NEITHER IS OBVIOUS.
+//
+// Getting this wrong in the permissive direction is the worst thing this
+// feature can do: it would be the app destroying somebody's writing to save
+// them a click, which is a bigger bug than the staleness being fixed. Getting
+// it wrong in the cautious direction costs one poll.
+// ===================================================================
+
 /**
- * Would reloading throw away work somebody is in the middle of?
+ * Has somebody typed since this page loaded?
  *
- * Deliberately conservative: it asks whether anything has been TYPED, not
- * whether a field is focused. Somebody who wrote half a message, clicked
- * away to read something and came back would otherwise lose it - and losing
- * a paragraph to save a click is a worse bug than the one this fixes.
+ * Set by a listener rather than inferred from the DOM, and the distinction is
+ * the whole point. "Some input has a value in it" is not the same question:
+ * half the forms in this app are SERVER-PREFILLED - `/welcome`, the account
+ * page, the settings pages all render with the current values in the boxes -
+ * so a value-only check is permanently true there and the tab would never
+ * reload at all. The feature would look like it worked while quietly doing
+ * nothing on exactly the pages people leave open.
  *
- * It does not try to be clever about which inputs matter. A search box with
- * a word in it delays the reload by one poll, which costs nothing; getting
- * it wrong the other way costs somebody their writing.
+ * Trusted events only: a programmatic `value` assignment does not fire
+ * `input` at all, but a synthetic event dispatched by some library could, and
+ * a form that repopulates itself must not pin the tab open for ever.
  */
-function hasUnsavedWork(): boolean {
+let hasTyped = false;
+
+function noteTyping(event: Event) {
+  if (event.isTrusted) hasTyped = true;
+}
+
+/**
+ * Is there text on screen that would be lost?
+ *
+ * Paired with `hasTyped` rather than used alone, so a prefilled form is not
+ * mistaken for a draft - and paired the other way too, so a search box that
+ * was typed in and then cleared stops blocking. What has to be true is BOTH:
+ * somebody typed, and something is still in a box.
+ *
+ * It does not try to be clever about which inputs matter. A search box with a
+ * word in it delays the reload by one poll, which costs nothing.
+ */
+const TEXTUAL_INPUT_TYPES = ["text", "search", "email", "url", "tel", "number", "password"];
+
+function hasTextInAField(): boolean {
   const fields = document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
     "input, textarea",
   );
 
   for (const field of fields) {
-    // Buttons and checkboxes carry a `value` that has nothing to do with
-    // anything somebody typed.
-    if (field instanceof HTMLInputElement && !["text", "search", "email", "url", "tel", "number", "password"].includes(field.type)) {
+    // Buttons, checkboxes and hidden fields carry a `value` that has nothing
+    // to do with anything somebody typed.
+    if (field instanceof HTMLInputElement && !TEXTUAL_INPUT_TYPES.includes(field.type)) {
       continue;
     }
 
     if (field.value.trim().length > 0) return true;
   }
 
-  // Rich text and anything else editable - the chat composer and the site
-  // content editors both use one.
+  // Rich text and anything else editable - the site content editors use one.
   for (const editable of document.querySelectorAll<HTMLElement>("[contenteditable='true']")) {
     if ((editable.textContent ?? "").trim().length > 0) return true;
   }
@@ -60,10 +92,36 @@ function hasUnsavedWork(): boolean {
   return false;
 }
 
-export function DeploymentWatcher() {
-  // The build this tab was served by. A ref rather than state: nothing
-  // renders from it, and a re-render on every poll would be pure waste.
-  const seenBuildId = useRef<string | null>(null);
+function wouldLoseWork(): boolean {
+  // The invisible half, and the expensive one: a streaming reply already paid
+  // for, a recording that cannot be made twice, an upload mid-flight. None of
+  // those is in the DOM, so the features that own them declare it.
+  if (isWorkInFlight()) return true;
+
+  // Anything that has said it is busy in the accessibility tree counts too.
+  // It is the standard way to say "this region is mid-update", so honouring
+  // it means a feature added later is covered without knowing this exists.
+  if (document.querySelector('[aria-busy="true"]')) return true;
+
+  return hasTyped && hasTextInAField();
+}
+
+export function DeploymentWatcher({ servedBy }: { servedBy: string }) {
+  // -----------------------------------------------------------------
+  // THE BUILD THAT RENDERED THIS DOCUMENT, handed down by the root layout.
+  //
+  // It used to be discovered: null at mount, then whatever the first poll
+  // reported. That is wrong in the one window that matters. A tab that loads
+  // WHILE a deployment is rolling gets its HTML from the old instance and its
+  // first poll from the new one, adopts the new id as its own, and is then
+  // exempt for as long as it stays open - holding old action hashes and old
+  // chunk names while believing it is current. The server already knows the
+  // answer, so it says so instead.
+  //
+  // A ref rather than state: nothing renders from it, and a re-render on
+  // every poll would be pure waste.
+  // -----------------------------------------------------------------
+  const seenBuildId = useRef<string | null>(servedBy === UNKNOWN_BUILD_ID ? null : servedBy);
 
   const check = useCallback(async () => {
     let currentBuildId: string | null = null;
@@ -100,8 +158,7 @@ export function DeploymentWatcher() {
       seenBuildId: seenBuildId.current,
       currentBuildId,
       reloadedForBuildId,
-      isVisible: document.visibilityState === "visible",
-      hasUnsavedWork: hasUnsavedWork(),
+      wouldLoseWork: wouldLoseWork(),
     });
 
     if (decision.action === "adopt") {
@@ -147,6 +204,11 @@ export function DeploymentWatcher() {
     // -----------------------------------------------------------------
     if (process.env.NODE_ENV !== "production") return;
 
+    // Capture, so it is seen even where a handler below stops propagation.
+    // React's own onChange is built on this event, so anything typed into a
+    // controlled input is covered without the feature knowing about it.
+    document.addEventListener("input", noteTyping, true);
+
     void check();
 
     const timer = setInterval(() => void check(), DEPLOYMENT_POLL_MS);
@@ -154,9 +216,11 @@ export function DeploymentWatcher() {
     // -----------------------------------------------------------------
     // ALSO ON EVERY VISIBILITY CHANGE, in both directions, and both matter.
     //
-    // Hidden: the moment nobody is looking is the best moment to reload, and
+    // Hidden: a tab nobody is looking at is the easiest one to replace, and
     // it is where most stale tabs are - left open on a second monitor for
-    // days across several deploys.
+    // days across several deploys. It is NOT a licence to skip the checks
+    // above; see the note in deployment-watch.ts about what a hidden tab can
+    // still be holding.
     //
     // Visible: somebody coming back to a tab is about to use it, so this is
     // the last chance to be current before they press something. A poll on
@@ -169,6 +233,7 @@ export function DeploymentWatcher() {
 
     return () => {
       clearInterval(timer);
+      document.removeEventListener("input", noteTyping, true);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [check]);
