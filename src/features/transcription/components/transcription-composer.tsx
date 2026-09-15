@@ -291,15 +291,35 @@ export function TranscriptionComposer({
     setIsRecovering(true);
 
     try {
-      const media = await assembleRecording(pending);
+      const assembled = await assembleRecording(pending);
 
-      if (!media) {
-        toast.error("That recording could not be read back from this device.");
+      if (!assembled.ok) {
+        // -------------------------------------------------------------
+        // REFUSED HERE RATHER THAN BY AZURE. A recording missing its first
+        // chunk has no EBML header, so nothing can read it - and uploading
+        // it spends somebody's bandwidth to be told "the audio format
+        // cannot be detected" several minutes later, by which time the
+        // failure looks like a fault in the transcription service rather
+        // than in what was recorded.
+        // -------------------------------------------------------------
+        toast.error(
+          assembled.reason === "no-header"
+            ? "The start of that recording was not saved to this device, so the file has no header and cannot be transcribed. Save a copy if you want the audio, but it will not play in most players either."
+            : "That recording could not be read back from this device.",
+        );
         return;
       }
 
+      // Survivable, and said plainly rather than silently: every missing
+      // chunk is a few seconds of the meeting that is not in the file.
+      if (assembled.gaps.length > 0) {
+        toast.warning(
+          `${assembled.gaps.length} part${assembled.gaps.length === 1 ? "" : "s"} of that recording did not save to this device. The rest will still be transcribed, with those seconds missing.`,
+        );
+      }
+
       const transcriptionId = await upload({
-        media,
+        media: assembled.media,
         // FALLING BACK, because this row came out of IndexedDB rather than
         // from the recorder that is running now. `extension` is typed as a
         // string and is written on every new recording, but a row stored by
@@ -334,12 +354,17 @@ export function TranscriptionComposer({
 
     const media = await assembleRecording(pending);
 
-    if (!media) {
+    if (!media.ok) {
+      // A headerless recording can still be DOWNLOADED. The bytes are
+      // theirs, a specialist tool may yet get something out of them, and
+      // refusing would be this app deciding somebody may not have their own
+      // audio. It is the transcribe path that refuses, because that one
+      // cannot succeed.
       toast.error("That recording could not be read back from this device.");
       return;
     }
 
-    downloadBlob(media, safeDownloadName(pending.title, pending.extension));
+    downloadBlob(media.media, safeDownloadName(pending.title, pending.extension));
   };
 
   const dropPending = async () => {
