@@ -16,6 +16,7 @@ import {
   SMITHY_DEFAULT_MAX_SOCKETS,
 } from "./bedrock-client";
 import { converseCeilingFor } from "./converse";
+import { MAX_CALLER_CEILING_MS, PLATFORM_IDLE_CEILING_MS } from "./platform-limits";
 
 // ===================================================================
 // THE FOUR LAYERS THAT CAN GIVE UP ON A REPLY, AND THE ORDER THEY MUST DO
@@ -211,6 +212,44 @@ describe("a one-shot call's ceiling", () => {
     // fails at BEDROCK_SOCKET_IDLE_MS on the first attempt, and the ceiling
     // has to be past that or even the honest case never gets its name.
     expect(converseCeilingFor(300)).toBeGreaterThan(BEDROCK_SOCKET_IDLE_MS);
+  });
+
+  // -----------------------------------------------------------------
+  // AND IT CANNOT OUTGROW THE PLATFORM, which is what it did.
+  //
+  // The derivation scales with the token cap and had no upper bound, so a
+  // generous cap produced a deadline the request could not live to see. The
+  // project plan asks for 8,000 tokens: 8000/30*1000 + 30000 is 296,667ms,
+  // and Azure is entitled to sever an idle connection at 230,000.
+  //
+  // The consequence is not "a longer wait". It is a failure with NO RECORD
+  // OF ITSELF - the platform reports nothing when it cuts a connection, so
+  // there is no log row, no error and nothing to investigate. Which is
+  // exactly what a failing "Read the brief" left behind.
+  // -----------------------------------------------------------------
+  it("never asks for longer than the request is allowed to live", () => {
+    // The real caller, and the one that was over.
+    expect(converseCeilingFor(8_000)).toBeLessThanOrEqual(MAX_CALLER_CEILING_MS);
+
+    // And nothing a caller could plausibly ask for gets past it either.
+    for (const tokens of [300, 1_500, 4_000, 8_000, 64_000, 1_000_000]) {
+      expect(converseCeilingFor(tokens)).toBeLessThanOrEqual(MAX_CALLER_CEILING_MS);
+    }
+  });
+
+  it("leaves the platform enough margin to abort, log and return", () => {
+    // Our deadline firing is only useful if the abort, the request-log write
+    // and the error's trip back to the caller all land before the cut. A
+    // clamp with no margin would be a race we lose half the time.
+    expect(MAX_CALLER_CEILING_MS).toBeLessThan(PLATFORM_IDLE_CEILING_MS);
+    expect(PLATFORM_IDLE_CEILING_MS - MAX_CALLER_CEILING_MS).toBeGreaterThanOrEqual(10_000);
+  });
+
+  it("clamps rather than scaling once it reaches the platform's limit", () => {
+    // Two very different caps landing on the same number is the clamp
+    // working. Asserted because a future edit that "fixes" the derivation
+    // to keep scaling would silently restore the original bug.
+    expect(converseCeilingFor(100_000)).toBe(converseCeilingFor(1_000_000));
   });
 });
 

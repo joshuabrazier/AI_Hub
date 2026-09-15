@@ -10,7 +10,13 @@ import {
 import { type AiChatRequestKind } from "@/lib/data/kysely-database-types";
 import { handleError } from "@/lib/handle-errors";
 
-import { BEDROCK_MODEL_ID, BEDROCK_REGION, getBedrockClient, isBedrockConfigured } from "./bedrock-client";
+import {
+  BEDROCK_MODEL_ID,
+  BEDROCK_REGION,
+  getBedrockClient,
+  isBedrockConfigured,
+} from "./bedrock-client";
+import { MAX_CALLER_CEILING_MS } from "./platform-limits";
 
 // -------------------------------------------------------------------
 // One model call, one block of text back.
@@ -82,8 +88,32 @@ export class BedrockNotConfiguredError extends Error {
 const SLOWEST_TOKENS_PER_SECOND = 30;
 const PREFILL_ALLOWANCE_MS = 30_000;
 
+// -------------------------------------------------------------------
+// AND CLAMPED TO WHAT THE PLATFORM WILL ALLOW, which is the correction this
+// function was missing.
+//
+// The derivation above scales with the caller's token cap and had no upper
+// bound, so a generous cap produced a ceiling longer than the request itself
+// can live. A project-plan draft asks for 8,000 tokens, which derives to 297
+// seconds - and Azure App Service is entitled to sever an idle connection at
+// 230. A ceiling past that point cannot fire: the platform cuts first, the
+// app never learns, and there is no log row to look at afterwards. Which is
+// precisely how a failing "Read the brief" produced nothing to investigate.
+//
+// THE CLAMP DOES NOT SHORTEN ANY CALL THAT COULD HAVE SUCCEEDED. A reply that
+// needs longer than MAX_CALLER_CEILING_MS was going to be severed anyway; all
+// the clamp changes is who reports it, and only one of the two candidates can
+// write a log row and name the reason.
+//
+// A GENEROUS TOKEN CAP IS STILL RIGHT, and this is what makes the two
+// independent. Truncating a plan mid-JSON makes it unparseable, so the cap
+// should be well clear of the longest plausible reply. The cap bounds the
+// OUTPUT; this bounds the WAIT. They were the same number by accident.
+// -------------------------------------------------------------------
 export function converseCeilingFor(maxTokens: number): number {
-  return Math.ceil((maxTokens / SLOWEST_TOKENS_PER_SECOND) * 1000) + PREFILL_ALLOWANCE_MS;
+  const derived = Math.ceil((maxTokens / SLOWEST_TOKENS_PER_SECOND) * 1000) + PREFILL_ALLOWANCE_MS;
+
+  return Math.min(derived, MAX_CALLER_CEILING_MS);
 }
 
 // The default, for a caller that has not thought about it. Matches
@@ -135,7 +165,11 @@ export async function converseText(params: ConverseTextParams): Promise<Converse
     cacheWriteTokens: null,
   };
 
-  const ceilingMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // Clamped here as well as inside converseCeilingFor, because `timeoutMs` is
+  // a raw number a caller can pass without going through that helper - and a
+  // ceiling above the platform's limit is not a longer wait, it is a failure
+  // nobody can investigate.
+  const ceilingMs = Math.min(params.timeoutMs ?? DEFAULT_TIMEOUT_MS, MAX_CALLER_CEILING_MS);
 
   // AbortSignal.any needs Node 18.17 / 20.3; this app is on Node 20.
   const timeout = AbortSignal.timeout(ceilingMs);
