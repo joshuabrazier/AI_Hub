@@ -218,6 +218,89 @@ export function segmentsToText(segments: TranscriptionSegment[]): string {
 }
 
 // -------------------------------------------------------------------
+// ===================================================================
+// WHAT AZURE ACTUALLY SAID ABOUT THE FILE
+// ===================================================================
+//
+// The job-level error is the one somebody sees today, and it is too coarse
+// to act on. "InvalidData: The recordings URI contains invalid data" is
+// returned for at least three different faults that need three different
+// fixes:
+//
+//   the blob could not be READ   a missing Storage Blob Data Reader role on
+//                                the Speech resource, a firewall rule, or
+//                                public network access turned off. contentUrl
+//                                carries no SAS, so that role is the ONLY
+//                                thing making the blob readable.
+//   the bytes were not AUDIO     a truncated or headerless file.
+//   the audio could not be DECODED  a codec the service does not accept.
+//
+// Told apart, one of those is an Azure configuration change, one is a
+// re-upload and one is a re-encode. Collapsed into one sentence, every
+// failure looks like "transcription is broken again" - which is exactly how
+// it has been read.
+//
+// THE REPORT IS AZURE'S OWN PER-FILE LOG, and it comes through the same API
+// this file already uses. A batch job produces a TranscriptionReport
+// alongside the transcript, listing each source URL with its own status and
+// error. No portal, no Log Analytics workspace, no diagnostic setting for
+// somebody to remember to turn on - and it is fetched at the moment of
+// failure, so the detail is attached to the row rather than sitting in a
+// query nobody runs.
+//
+// BEST EFFORT, ALWAYS. This runs while a job is already failing. If the
+// report cannot be listed, downloaded or parsed, the caller keeps the
+// job-level error it already had - a diagnostic that throws would turn a
+// transcription failure into a transcription CRASH, which is strictly worse.
+// -------------------------------------------------------------------
+export async function getTranscriptionFailureDetail(jobId: string): Promise<string | null> {
+  try {
+    const filesResponse = await speechFetch(`transcriptions/${encodeURIComponent(jobId)}/files`);
+
+    const files = (await filesResponse.json()) as {
+      values?: { kind?: string; links?: { contentUrl?: string } }[];
+    };
+
+    const reportUrl = files.values?.find((file) => file.kind === "TranscriptionReport")?.links
+      ?.contentUrl;
+
+    if (!reportUrl) return null;
+
+    // Already signed by the service, like the transcript URL, which is why
+    // it is fetched directly rather than through speechFetch.
+    const response = await fetch(reportUrl, { cache: "no-store" });
+
+    if (!response.ok) return null;
+
+    const report = (await response.json()) as {
+      failedTranscriptionsCount?: number;
+      details?: { status?: string; errorKind?: string; errorMessage?: string }[];
+    };
+
+    const failures = (report.details ?? []).filter((detail) => detail.status !== "Succeeded");
+
+    if (failures.length === 0) return null;
+
+    // One line per failed source. In practice there is exactly one, because
+    // every job this app creates carries a single contentUrl - but the shape
+    // is a list and reading only the first would quietly hide the rest if
+    // that ever changed.
+    return failures
+      .map((failure) =>
+        [failure.errorKind, failure.errorMessage].filter(Boolean).join(": "),
+      )
+      .filter((line) => line.length > 0)
+      .join(" | ");
+  } catch (error) {
+    // Deliberately swallowed. See the note above: the caller is already
+    // reporting a failure and this is extra detail, not the answer.
+    console.warn(`[speech] could not read the failure report for job ${jobId}`, error);
+
+    return null;
+  }
+}
+
+// -------------------------------------------------------------------
 // Fetch and flatten a finished transcript.
 //
 // The Speech API returns a list of result FILES rather than the text, so

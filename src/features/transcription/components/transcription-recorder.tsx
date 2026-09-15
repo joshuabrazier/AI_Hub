@@ -231,14 +231,19 @@ export function TranscriptionRecorder({
   // markup React hydrates against has to be the markup the server sent.
   const canHoldScreenAwake = useSyncExternalStore(subscribeToNothing, isWakeLockSupported, () => true);
 
+  // True for the window between start() being called and a recorder
+  // existing. recorderRef is null for all of it, so it cannot guard itself -
+  // see the note in start().
+  const isStartingRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  // NO SHARED CHUNK BUFFER. Each recorder owns its own, captured in the
+  // closure that start() creates - see the note there. A module-level ref
+  // was what let two recorders interleave into one file.
   // The device-held copy this recording is being written to, and the next
   // chunk number. Refs because they are read inside the recorder's own
   // handlers, which close over the render that created them.
   const recordingIdRef = useRef<string | null>(null);
-  const sequenceRef = useRef(0);
   // Elapsed time. A ref rather than state because the recorder's own
   // handlers close over the render that created them and have to read the
   // clock as it stands at the moment of stopping, not as it stood then.
@@ -364,9 +369,40 @@ export function TranscriptionRecorder({
   useEffect(() => releaseStream, [releaseStream]);
 
   const start = async () => {
+    // -----------------------------------------------------------------
+    // ONE RECORDER, AND THIS GUARD IS THE WHOLE REASON THE FEATURE WORKS.
+    //
+    // start() is async, and `state` does not become "recording" until after
+    // getUserMedia and the IndexedDB open have both resolved. On a first
+    // recording that window is as long as the permission prompt; after that
+    // it is still a device open. The button looks like it did nothing for
+    // the whole of it, which is exactly when somebody clicks again.
+    //
+    // WHAT A SECOND CLICK USED TO DO. It ran start() again: streamRef,
+    // chunksRef and recorderRef were all overwritten, and recorder A was
+    // never stopped. Both dataavailable handlers then pushed into whichever
+    // array was current, so the assembled blob was TWO INDEPENDENT WEBM
+    // STREAMS INTERLEAVED - with a second EBML header partway through. That
+    // plays in a tolerant player, which reads the first stream and stops,
+    // and comes back from Azure as "the audio format is invalid or cannot
+    // be detected". Nothing anywhere said a word about it.
+    //
+    // It also corrupted the copy on the device, through a different door:
+    // sequenceRef was shared, so A's chunks took the even numbers and B's
+    // the odd ones. One of the two then had no chunk 0, which is the EBML
+    // header, and the recovery panel offered a file nothing could read.
+    //
+    // A REF AND NOT STATE, because state is not visible to the call that is
+    // already running - which is the entire failure being prevented.
+    // -----------------------------------------------------------------
+    if (isStartingRef.current || recorderRef.current || streamRef.current) return;
+
+    isStartingRef.current = true;
+
     const format = pickFormat();
 
     if (!format) {
+      isStartingRef.current = false;
       toast.error("This browser cannot record audio. Upload a file instead.");
       return;
     }
@@ -390,7 +426,12 @@ export function TranscriptionRecorder({
       });
 
       streamRef.current = stream;
-      chunksRef.current = [];
+
+      // OWNED BY THIS CALL, not by the component. If a second recorder ever
+      // existed it would have its own, so neither could corrupt the other's
+      // file or its stored sequence.
+      const chunks: Blob[] = [];
+      let sequence = 0;
 
       clockRef.current = startClock(performance.now());
 
@@ -429,7 +470,6 @@ export function TranscriptionRecorder({
       // during the meeting.
       const recordingId = crypto.randomUUID();
       recordingIdRef.current = recordingId;
-      sequenceRef.current = 0;
 
       const canPersist = isRecordingStoreAvailable();
 
@@ -465,12 +505,12 @@ export function TranscriptionRecorder({
 
         // Kept in memory as well, so the common path assembles without
         // touching the database at all.
-        chunksRef.current.push(event.data);
+        chunks.push(event.data);
 
         if (!canPersist) return;
 
-        const seq = sequenceRef.current;
-        sequenceRef.current += 1;
+        const seq = sequence;
+        sequence += 1;
 
         // Deliberately not awaited: this fires on the recorder's own
         // schedule and must not hold it up. A write that fails is logged and
@@ -486,7 +526,7 @@ export function TranscriptionRecorder({
         // hands back nothing on stop. The type is the one that was
         // recorded, so the Blob describes itself correctly even though the
         // server derives its own from the filename.
-        const media = new Blob(chunksRef.current, { type: format.mimeType });
+        const media = new Blob(chunks, { type: format.mimeType });
 
         // Read BEFORE the clock is cleared, so the figure stored is the real
         // length of the meeting rather than the number of times a throttled
@@ -495,7 +535,7 @@ export function TranscriptionRecorder({
 
         clockRef.current = IDLE_CLOCK;
 
-        chunksRef.current = [];
+        chunks.length = 0;
         releaseStream();
         setState("idle");
         setElapsedSeconds(0);
@@ -537,6 +577,11 @@ export function TranscriptionRecorder({
       clockRef.current = IDLE_CLOCK;
       releaseStream();
       toast.error(microphoneFailureMessage(error));
+    } finally {
+      // In a finally so a refused permission or a dead device leaves the
+      // button usable. Without it, one denied prompt would lock recording
+      // for the life of the page.
+      isStartingRef.current = false;
     }
   };
 
