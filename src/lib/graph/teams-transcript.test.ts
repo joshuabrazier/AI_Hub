@@ -6,6 +6,7 @@ import {
   speakersIn,
   teamsSegmentsToText,
   teamsSourceRef,
+  transcriptIdFromSourceRef,
 } from "./teams-transcript";
 
 // -------------------------------------------------------------------
@@ -366,5 +367,60 @@ describe("teamsSourceRef", () => {
 
   it("keeps the event id when the transcript id is empty", () => {
     expect(eventIdFromSourceRef(teamsSourceRef("event", ""))).toBe("event");
+  });
+});
+
+// -------------------------------------------------------------------
+// THE TRANSCRIPT HALF, which is what stops one meeting landing in a client's
+// SharePoint once per attendee.
+//
+// The asymmetry between the two parsers is the whole point and is easy to
+// "tidy" into a bug, so it is pinned here: an old ref with no separator is
+// all EVENT and no transcript, and an event id is precisely the thing that
+// is NOT shared between attendees. Returning the whole ref from the
+// transcript parser would hand the cross-user lookup an event id to match
+// on, which is how two unrelated meetings get linked.
+// -------------------------------------------------------------------
+describe("transcriptIdFromSourceRef", () => {
+  it("returns the half after the separator", () => {
+    expect(transcriptIdFromSourceRef(teamsSourceRef("AAMkAGI2", "MSMjMCMjZGM"))).toBe("MSMjMCMjZGM");
+  });
+
+  it("round-trips with the builder, which is how the dedup key is derived", () => {
+    const transcriptId = "MSMjMCMjZGMwZDM";
+
+    expect(transcriptIdFromSourceRef(teamsSourceRef("any-event", transcriptId))).toBe(transcriptId);
+  });
+
+  it("returns EMPTY for a ref with no separator, where its sibling returns the whole thing", () => {
+    // Written before this format existed. The event parser keeps matching
+    // such a row; the transcript parser must not, because "no transcript
+    // half" has to mean no dedup rather than the wrong one.
+    expect(transcriptIdFromSourceRef("AAMkAGI2")).toBe("");
+    expect(eventIdFromSourceRef("AAMkAGI2")).toBe("AAMkAGI2");
+  });
+
+  it("is EMPTY rather than undefined for an empty ref", () => {
+    expect(transcriptIdFromSourceRef("")).toBe("");
+  });
+
+  it("keeps the whole transcript id even if one ever contained a separator", () => {
+    // The builder's comment says neither id's alphabet includes the
+    // separator. If that ever stops being true, splitting on the FIRST one
+    // keeps the event half exact and the transcript half whole, which is the
+    // failure mode worth having.
+    expect(transcriptIdFromSourceRef("event|a|b")).toBe("a|b");
+    expect(eventIdFromSourceRef("event|a|b")).toBe("event");
+  });
+
+  it("gives two attendees of one meeting the SAME key from DIFFERENT refs", () => {
+    // The property the whole fix rests on, verified against a real
+    // two-attendee meeting before it was built: event ids are per mailbox
+    // and differ, transcript ids belong to the meeting and match.
+    const alice = teamsSourceRef("alice-mailbox-event-id", "shared-transcript-id");
+    const bob = teamsSourceRef("bob-mailbox-event-id", "shared-transcript-id");
+
+    expect(alice).not.toBe(bob);
+    expect(transcriptIdFromSourceRef(alice)).toBe(transcriptIdFromSourceRef(bob));
   });
 });
