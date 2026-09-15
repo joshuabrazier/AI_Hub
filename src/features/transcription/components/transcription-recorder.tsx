@@ -192,7 +192,19 @@ export function TranscriptionRecorder({
   onRecorded,
   defaultTitle,
   disabled,
+  onActiveChange,
 }: {
+  /**
+   * Fired whenever a recording starts or stops.
+   *
+   * The state lives here, but the things that can DESTROY a recording are
+   * the parent's: the tab strip that unmounts this component and the sidebar
+   * links that replace it. Neither could see the state, so switching tab
+   * mid-meeting stopped the microphone with nothing said. useWorkInFlight
+   * already computes the same fact, but it only talks to the deployment
+   * watcher.
+   */
+  onActiveChange?: (active: boolean) => void;
   /** Called once, with the finished recording. The caller owns clearing it from the store. */
   onRecorded: (recording: FinishedRecording) => void;
   // A FUNCTION rather than a string, because the default name is built from
@@ -215,6 +227,14 @@ export function TranscriptionRecorder({
   // reason `recording-store.ts` exists, and an automatic reload would be the
   // app causing exactly the loss that file is there to prevent.
   useWorkInFlight(state !== "idle");
+
+  // Told to the parent as well, because the deployment watcher is not the
+  // only thing that can throw a recording away - see onActiveChange. It uses
+  // `state` directly rather than the isActive declared further down, which
+  // belongs to the wake lock and is computed after this.
+  useEffect(() => {
+    onActiveChange?.(state !== "idle");
+  }, [state, onActiveChange]);
 
   // MediaRecorder is missing on some older browsers and, more often, on any
   // page not served over HTTPS - getUserMedia is a secure-context API. Said

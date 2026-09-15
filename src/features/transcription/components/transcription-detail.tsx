@@ -192,8 +192,17 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
   // meeting and only the text was fetched. Offering the button anyway would
   // hand somebody a download that 404s, which reads as a lost recording
   // rather than as one that never existed.
+  const isStalled = current.status === TRANSCRIPTION_STATUSES.AWAITING_MEDIA;
+
+  // AWAITING_MEDIA IS INCLUDED, and it is the case that matters most. A row
+  // sitting there means the blob was committed but the job never started -
+  // and once a job HAS started the device copy is discarded, so on a stalled
+  // row the blob is frequently the only copy of that meeting left. Offering
+  // no way to reach it was the difference between a recoverable upload and a
+  // lost meeting.
   const hasRecording =
-    current.source !== TRANSCRIPTION_SOURCES.TEAMS && (current.transcript !== null || isFailed);
+    current.source !== TRANSCRIPTION_SOURCES.TEAMS &&
+    (current.transcript !== null || isFailed || isStalled);
 
   // Still awaiting media on a screen somebody is LOOKING at means the upload
   // did not finish - during a real upload the composer is what is on screen,
@@ -201,7 +210,7 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
   // as something to retry rather than as progress: retrying re-checks
   // storage, which either finds the file and starts, or says plainly that it
   // never arrived.
-  const isStalled = current.status === TRANSCRIPTION_STATUSES.AWAITING_MEDIA;
+
 
   return (
     <div className="min-w-0 rounded-xl border border-border">

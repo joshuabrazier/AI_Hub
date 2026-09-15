@@ -91,6 +91,7 @@ import {
 } from "@/lib/storage/media-storage";
 import {
   deleteTranscriptionJob,
+  getTranscriptionFailureDetail,
   getTranscriptionResult,
   getTranscriptionStatus,
   isSpeechConfigured,
@@ -690,12 +691,34 @@ async function advanceTranscription(
   }
 
   if (job.state === "Failed") {
-    await deleteTranscriptionJob(transcription.speechJobId);
+    // -----------------------------------------------------------------
+    // READ THE REPORT BEFORE GIVING UP, and do NOT delete the job.
+    //
+    // The job-level error is too coarse to act on: "InvalidData: The
+    // recordings URI contains invalid data" is returned when the blob could
+    // not be READ, when the bytes were not audio, and when the audio could
+    // not be DECODED. Those need an Azure role change, a re-upload and a
+    // re-encode respectively - and collapsed into one sentence, every
+    // failure reads as "transcription is broken again".
+    //
+    // Azure writes the per-file reason into a TranscriptionReport alongside
+    // the transcript. This used to delete the job on the same line it
+    // failed, which destroyed that report before anything read it - so the
+    // one place the real reason was written down was removed at exactly the
+    // moment somebody needed it.
+    //
+    // The job is now LEFT for Azure's own retention to clear. It holds no
+    // audio, only the outcome.
+    // -----------------------------------------------------------------
+    const detail = await getTranscriptionFailureDetail(transcription.speechJobId);
 
-    // The file stays. This is the case the format warning is about - an MP4
-    // the service would not demux - and the person may want to convert it
-    // and try again rather than find the meeting gone.
-    return failWith(job.error ?? "The transcription service could not process this recording.");
+    // The file stays. The person may want to convert it and try again
+    // rather than find the meeting gone.
+    return failWith(
+      [job.error ?? "The transcription service could not process this recording.", detail]
+        .filter(Boolean)
+        .join(" - "),
+    );
   }
 
   if (job.state !== "Succeeded") {
@@ -711,7 +734,23 @@ async function advanceTranscription(
     // would be marked failed on the first sweep - even though Azure had
     // finished it successfully minutes after it started, and the transcript
     // was sitting there waiting to be collected.
-    const ageHours = (Date.now() - transcription.createdAt.getTime()) / (60 * 60 * 1000);
+    // -----------------------------------------------------------------
+    // THE AGE OF THE JOB, NOT OF THE ROW, and the difference loses meetings.
+    //
+    // createdAt is when the RECORDING was made. A meeting recorded on Friday
+    // and retried on Monday starts a brand new Speech job with a row that is
+    // three days old - so the very first poll of that new job aged it out
+    // and failed it instantly, and every retry after that did the same. The
+    // recording was fine and unreachable.
+    //
+    // updatedAt is stamped by every patch this service makes, including the
+    // one that stores the new speechJobId on a retry, so it tracks the job
+    // rather than the recording. It also advances on each status transition,
+    // which is the right direction: a job that is visibly progressing is not
+    // a job that has hung.
+    // -----------------------------------------------------------------
+    const jobStartedAt = transcription.updatedAt ?? transcription.createdAt;
+    const ageHours = (Date.now() - jobStartedAt.getTime()) / (60 * 60 * 1000);
 
     if (ageHours > TRANSCRIPTION_TIMEOUT_HOURS) {
       await deleteTranscriptionJob(transcription.speechJobId);

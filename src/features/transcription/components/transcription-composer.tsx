@@ -117,6 +117,18 @@ export function TranscriptionComposer({
   // interrupting it would be the worst-timed reload in the app.
   useWorkInFlight(isUploading || isConverting || isRecovering);
 
+  // -----------------------------------------------------------------
+  // IS A MEETING BEING RECORDED RIGHT NOW?
+  //
+  // Reported up by the recorder, because the two things that can destroy a
+  // recording are BOTH out here and neither could see it: the tab strip
+  // unmounts the recorder (Radix renders content only while selected,
+  // unless forceMount), and unmounting stops the microphone track.
+  // Somebody clicking "Upload a file" mid-meeting lost everything from that
+  // click onward, with nothing said at any point.
+  // -----------------------------------------------------------------
+  const [isRecordingNow, setIsRecordingNow] = useState(false);
+
   // The default name for a recording. A function, not a value, because it
   // reads the clock - computing it during render would differ between
   // server and client and break hydration.
@@ -236,26 +248,75 @@ export function TranscriptionComposer({
   const submitFile = async () => {
     if (!file) return;
 
-    const transcriptionId = await upload({
+    const result = await upload({
       media: file,
       fileName: file.name,
       title: title.trim().length > 0 ? title.trim() : deriveTranscriptionTitle(file.name),
       source: TRANSCRIPTION_SOURCES.UPLOAD,
     });
 
-    if (transcriptionId) {
+    // A ROW is enough to open here, started or not: the person still has the
+    // file they chose, so nothing is at stake in showing them the row and
+    // letting them retry it.
+    if (result) {
       setFile(null);
       setTitle("");
-      onStarted(transcriptionId);
+      onStarted(result.transcriptionId);
+    }
+  };
+
+  // -------------------------------------------------------------------
+  // A RECORDING GOES THROUGH THE SAME CONVERTER A CHOSEN FILE DOES.
+  //
+  // Safari and iOS have no WebM encoder, so MediaRecorder falls through
+  // RECORDING_FORMAT_CANDIDATES to audio/mp4 and the recorder produces an
+  // .m4a. That is AAC in an MP4 container, which Azure downloads happily
+  // and then refuses with "InvalidData: The recordings URI contains invalid
+  // data" - the same failure a phone voice memo gives, and the reason the
+  // picker has converted for a long time.
+  //
+  // The recording path never did, so EVERY recording made on an iPhone
+  // failed, always, while the same meeting recorded on a laptop worked. It
+  // looked like the service being unreliable.
+  //
+  // Anything that cannot be converted is uploaded untouched, exactly as on
+  // the picker path: the service may still read a format this cannot, and
+  // refusing here would take a meeting that has already happened.
+  // -------------------------------------------------------------------
+  const normaliseRecording = async (
+    media: Blob,
+    fileName: string,
+  ): Promise<{ media: Blob; fileName: string }> => {
+    if (!needsConversion(fileName)) return { media, fileName };
+
+    setIsConverting(true);
+
+    try {
+      const result = await convertForTranscription(new File([media], fileName, { type: media.type }));
+
+      if (result.converted) return { media: result.file, fileName: result.file.name };
+
+      toast.warning(
+        "This device records in a format the transcription service often refuses, and it could not be converted here. It will be uploaded as it is.",
+      );
+
+      return { media, fileName };
+    } finally {
+      setIsConverting(false);
     }
   };
 
   const submitRecording = async (recording: FinishedRecording) => {
-    const transcriptionId = await upload({
-      media: recording.media,
+    const normalised = await normaliseRecording(
+      recording.media,
       // The extension is what the server derives the media type from, so it
       // has to be the one the recorder actually produced.
-      fileName: `recording${recording.extension}`,
+      `recording${recording.extension}`,
+    );
+
+    const result = await upload({
+      media: normalised.media,
+      fileName: normalised.fileName,
       // Named for when it was recorded when nobody has typed anything,
       // because that is the only fact known for certain about a meeting
       // that has just finished.
@@ -263,18 +324,24 @@ export function TranscriptionComposer({
       source: TRANSCRIPTION_SOURCES.RECORDING,
     });
 
-    if (transcriptionId) {
-      // The server has it. Only now is the device copy dropped - this is
-      // the single place that happens on a successful path.
+    // `started`, NOT merely an id. A row with no Speech job behind it is not
+    // the server having the recording in any sense that matters - and the
+    // copy on this device is the only other one there is.
+    if (result?.started) {
       await discardRecording(recording.recordingId).catch((error) => {
         console.warn("[composer] could not clear the uploaded recording", error);
       });
 
       setTitle("");
       setPending(null);
-      onStarted(transcriptionId);
+      onStarted(result.transcriptionId);
       return;
     }
+
+    // A row exists but nothing is transcribing it. Open it so the retry is
+    // in front of them, and KEEP the device copy - refreshPending below puts
+    // the recovery panel back.
+    if (result) onStarted(result.transcriptionId);
 
     // The upload failed and the reason has already been shown. The
     // recording is still on the device, so surface it rather than letting
@@ -318,31 +385,30 @@ export function TranscriptionComposer({
         );
       }
 
-      const transcriptionId = await upload({
-        media: assembled.media,
-        // FALLING BACK, because this row came out of IndexedDB rather than
-        // from the recorder that is running now. `extension` is typed as a
-        // string and is written on every new recording, but a row stored by
-        // an earlier version of this component predates the field - and a
-        // type cannot reach backwards into data already on somebody's disk.
-        // Without this, such a row uploads as "recordingundefined", which the
-        // server refuses with "not a file type this can transcribe" about a
-        // recording it made itself.
-        //
-        // .webm is the right guess rather than a neutral one: it is the first
-        // candidate the recorder tries and what every browser this runs on
-        // actually produces. A wrong guess is refused by Azure with a decode
-        // error, which is recoverable; no guess at all loses the meeting.
-        fileName: `recording${pending.extension || ".webm"}`,
+      const normalised = await normaliseRecording(
+        assembled.media,
+        // Same fallback and the same conversion as a fresh recording: a row
+        // recovered from an iPhone is the case this exists for.
+        `recording${pending.extension || ".webm"}`,
+      );
+
+      const result = await upload({
+        media: normalised.media,
+        fileName: normalised.fileName,
         title: title.trim().length > 0 ? title.trim() : pending.title,
         source: TRANSCRIPTION_SOURCES.RECORDING,
       });
 
-      if (transcriptionId) {
+      // Same rule as a fresh recording, and it matters more here: this IS
+      // the recovery path, so discarding on a row that nothing is
+      // transcribing would throw away the copy somebody came here to save.
+      if (result?.started) {
         await discardRecording(pending.id);
         setTitle("");
         setPending(null);
-        onStarted(transcriptionId);
+        onStarted(result.transcriptionId);
+      } else if (result) {
+        onStarted(result.transcriptionId);
       }
     } finally {
       setIsRecovering(false);
@@ -411,7 +477,13 @@ export function TranscriptionComposer({
         <TabsList>
           {canRecord ? (
             <>
-              <TabsTrigger value="upload">
+              {/* DISABLED WHILE A MEETING IS RUNNING. forceMount above keeps
+                  the recorder alive if somebody does switch, but leaving
+                  them free to switch means the recorder is running on a tab
+                  nobody can see - with no clock, no stop button and no sign
+                  it is still going. The meeting cannot be recorded twice,
+                  so the answer is not to let it happen. */}
+              <TabsTrigger value="upload" disabled={isRecordingNow}>
                 <Upload size={15} aria-hidden="true" />
                 Upload a file
               </TabsTrigger>
@@ -422,7 +494,7 @@ export function TranscriptionComposer({
             </>
           ) : null}
           {canImport ? (
-            <TabsTrigger value="teams">
+            <TabsTrigger value="teams" disabled={isRecordingNow}>
               <Users size={15} aria-hidden="true" />
               From Teams
             </TabsTrigger>
@@ -541,8 +613,15 @@ export function TranscriptionComposer({
         {/* ----------------------------------------------------------
             Record
             ---------------------------------------------------------- */}
-        <TabsContent value="record" className="space-y-4">
+        {/* forceMount, so switching tab HIDES the recorder rather than
+            unmounting it. Radix renders content only while selected
+            otherwise, and unmounting stops the microphone mid-meeting. The
+            triggers are disabled below as well - this is the half that
+            makes an accident survivable, that is the half that prevents
+            it. */}
+        <TabsContent value="record" className="space-y-4" forceMount hidden={undefined}>
           <TranscriptionRecorder
+            onActiveChange={setIsRecordingNow}
             onRecorded={submitRecording}
             defaultTitle={defaultRecordingTitle}
             disabled={isUploading || isRecovering}

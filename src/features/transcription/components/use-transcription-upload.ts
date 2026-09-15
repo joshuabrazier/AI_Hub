@@ -206,6 +206,19 @@ async function uploadInBlocks(
   onProgress(100);
 }
 
+// -------------------------------------------------------------------
+// WHAT AN UPLOAD ENDED AS, and the two halves are not the same thing.
+//
+// `transcriptionId` means a ROW exists. `started` means a Speech JOB exists.
+// A caller that treats a returned id as proof of both will delete the only
+// copy on the device for a recording nothing is transcribing - which is how
+// a meeting is lost, since the recovery panel is the only way back.
+//
+// Null is the third outcome: nothing was created at all, and the reason has
+// already been shown.
+// -------------------------------------------------------------------
+export type UploadResult = { transcriptionId: string; started: boolean } | null;
+
 export function useTranscriptionUpload() {
   const [isUploading, setIsUploading] = useState(false);
   // 0-100, or null when nothing is in flight. Null rather than 0 so the bar
@@ -216,7 +229,7 @@ export function useTranscriptionUpload() {
   // Returns the new transcription's id, or null if anything went wrong -
   // in which case the reason has already been shown.
   // -------------------------------------------------------------------
-  const upload = useCallback(async (request: TranscriptionUploadRequest): Promise<string | null> => {
+  const upload = useCallback(async (request: TranscriptionUploadRequest): Promise<UploadResult> => {
     // -----------------------------------------------------------------
     // REFUSED BEFORE THE ROW IS CLAIMED, against the ceiling that is
     // actually left: what SPEECH will accept. The 256 MiB single-PUT limit
@@ -265,14 +278,18 @@ export function useTranscriptionUpload() {
 
       if (!started.success) {
         toast.error(started.formError ?? MESSAGES.SOMETHING_WENT_WRONG);
-        // The row still exists, sitting in "Uploading", and the person can
-        // retry it from the list rather than losing the recording.
-        return transcriptionId;
+
+        // THE ROW EXISTS AND THE JOB DOES NOT, and the caller has to be able
+        // to tell those apart. It used to return the id here as well as on
+        // success, so a caller checking truthiness read a failed start as
+        // "the server has it" and deleted the copy on the device - see
+        // `started` on the result type.
+        return { transcriptionId, started: false };
       }
 
       toast.success(MESSAGES.TRANSCRIPTION_STARTED);
 
-      return transcriptionId;
+      return { transcriptionId, started: true };
     } catch (error) {
       handleFrontendErrorWithToast(error);
       return null;
