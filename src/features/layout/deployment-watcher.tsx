@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef } from "react";
 
+import { isStaleDeploymentError, registerDeploymentProbe } from "@/lib/deployment-probe";
+
 import {
   DEPLOYMENT_POLL_MS,
   RELOADED_FOR_KEY,
@@ -209,6 +211,27 @@ export function DeploymentWatcher({ servedBy }: { servedBy: string }) {
     // controlled input is covered without the feature knowing about it.
     document.addEventListener("input", noteTyping, true);
 
+    // -----------------------------------------------------------------
+    // THE POLL IS THE FLOOR, NOT THE ONLY WAY IN.
+    //
+    // A rejected server action is the tab being told outright that it is
+    // stale, which is better evidence than anything a poll can produce and
+    // arrives without being asked for. Both routes below feed the SAME check,
+    // so the loop guard and the unsaved-work guard apply either way - this
+    // only changes when the question gets asked, never the answer.
+    // -----------------------------------------------------------------
+    const releaseProbe = registerDeploymentProbe(() => void check());
+
+    // The safety net for paths nobody routed anywhere. A server action that
+    // fails in a `void somePromise()` with no catch surfaces here and nowhere
+    // else, and those are exactly the background polls that would otherwise
+    // keep posting a dead action id until the tab is closed.
+    const onRejection = (event: PromiseRejectionEvent) => {
+      if (isStaleDeploymentError(event.reason)) void check();
+    };
+
+    window.addEventListener("unhandledrejection", onRejection);
+
     void check();
 
     const timer = setInterval(() => void check(), DEPLOYMENT_POLL_MS);
@@ -233,6 +256,8 @@ export function DeploymentWatcher({ servedBy }: { servedBy: string }) {
 
     return () => {
       clearInterval(timer);
+      releaseProbe();
+      window.removeEventListener("unhandledrejection", onRejection);
       document.removeEventListener("input", noteTyping, true);
       document.removeEventListener("visibilitychange", onVisibility);
     };
