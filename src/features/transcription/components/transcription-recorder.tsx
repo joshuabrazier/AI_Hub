@@ -6,6 +6,7 @@ import { Circle, Mic, MicOff, Square } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { useWorkInFlight } from "@/features/layout/work-in-flight";
 
 import { RECORDING_FORMAT_CANDIDATES, formatDuration } from "../transcription.types";
 import {
@@ -179,6 +180,13 @@ export function TranscriptionRecorder({
 }) {
   const [state, setState] = useState<RecorderState>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // Tell the deployment watcher not to reload over a recording, PAUSED
+  // INCLUDED - a pause is somebody stepping out of the room, not the end of
+  // the meeting, and the meeting cannot be recorded twice. This is the
+  // reason `recording-store.ts` exists, and an automatic reload would be the
+  // app causing exactly the loss that file is there to prevent.
+  useWorkInFlight(state !== "idle");
 
   // MediaRecorder is missing on some older browsers and, more often, on any
   // page not served over HTTPS - getUserMedia is a secure-context API. Said
