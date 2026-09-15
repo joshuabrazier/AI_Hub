@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { noteIfStaleDeployment } from "@/lib/deployment-probe";
 import { ROUTES } from "@/lib/routes";
 
 import { cancelTeamsAutoImportAction, getMeetingNowAction } from "../transcription.actions";
@@ -146,7 +147,25 @@ export function useMeetingNow(): MeetingNowDTO | null {
       // have leased.
       if (!options.force && !claimPollLease()) return;
 
-      const result = await getMeetingNowAction();
+      // A SERVER ACTION ON A TIMER, which is the shape that fills a log after
+      // a deploy. The action id is hashed from the build this bundle came
+      // from, so once a new one is out every poll is rejected before any of
+      // our code runs - and it keeps being rejected, every ninety seconds,
+      // for as long as the tab stays open. Nobody sees it: nothing was
+      // clicked, so nothing routes through the toast handler.
+      //
+      // The rejection IS proof this tab is stale, so it is handed to the
+      // deployment watcher rather than dropped. No toast - the watcher
+      // decides, and declines if reloading would destroy anything.
+      let result;
+
+      try {
+        result = await getMeetingNowAction();
+      } catch (error) {
+        noteIfStaleDeployment(error);
+
+        return;
+      }
 
       if (cancelled) return;
 
