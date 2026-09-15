@@ -5,6 +5,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import AppShell from "@/features/layout/app-shell";
+import { getBuildId } from "@/features/layout/build-id";
+import { DeploymentWatcher } from "@/features/layout/deployment-watcher";
 import { BRAND } from "@/lib/brand";
 
 // Inter carries running text.
@@ -48,11 +50,17 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Which build rendered THIS document. Read here rather than discovered by
+  // the client, for the reason in `deployment-watcher.tsx`: a tab that adopts
+  // whatever its first poll reports is permanently exempt if it happened to
+  // load while a deployment was rolling.
+  const servedBy = await getBuildId();
+
   return (
     <html
       lang="en"
@@ -66,6 +74,12 @@ export default function RootLayout({
         >
           Skip to content
         </a>
+
+        {/* Renders nothing. Mounted HERE rather than inside AppShell because
+            AppShell returns bare children on the chromeless routes - the
+            landing page and sign-in - and a tab left open on sign-in over a
+            deploy is stale in exactly the same way as any other. */}
+        <DeploymentWatcher servedBy={servedBy} />
 
         <ThemeProvider>
           <TooltipProvider>

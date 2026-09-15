@@ -34,6 +34,7 @@ import {
   assistantObject,
   assistantSubject,
 } from "@/lib/ai/assistant-identity";
+import { useWorkInFlight } from "@/features/layout/work-in-flight";
 import { removeAiChatAttachmentAction } from "../ai-chat.actions";
 import {
   MAX_MESSAGE_CHARS,
@@ -119,6 +120,12 @@ export function AiChatThread({
 
   const isStreaming = reply !== null;
   const isUploading = uploadingCount > 0;
+
+  // Tell the deployment watcher not to reload over this. A streaming reply
+  // has already been paid for and cannot be resumed, and an upload mid-flight
+  // leaves a staged row with no bytes behind it. Neither is visible in the
+  // DOM, so neither would be noticed otherwise.
+  useWorkInFlight(isStreaming || isUploading);
 
   // -------------------------------------------------------------------
   // Upload chosen files.

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useWorkInFlight } from "@/features/layout/work-in-flight";
 import { TRANSCRIPTION_SOURCES } from "@/lib/data/kysely-database-types";
 import { downloadBlob, safeDownloadName } from "@/lib/download-blob";
 import { formatDateTime } from "@/lib/format";
@@ -108,6 +109,13 @@ export function TranscriptionComposer({
   // so the screen has to say what it is doing or the file simply appears to
   // not attach.
   const [isConverting, setIsConverting] = useState(false);
+
+  // Tell the deployment watcher not to reload over any of this. An upload in
+  // flight leaves a row with no media behind it; a conversion is several
+  // seconds of decoding that would have to be done again; recovery is
+  // literally the act of rescuing a recording from a previous crash, and
+  // interrupting it would be the worst-timed reload in the app.
+  useWorkInFlight(isUploading || isConverting || isRecovering);
 
   // The default name for a recording. A function, not a value, because it
   // reads the clock - computing it during render would differ between

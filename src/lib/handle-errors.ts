@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { MESSAGES } from "./constants";
 import { ServerApiResponse } from "./types";
 import { isDisplayError, isRedirectError } from "./errors";
+import { isStaleDeploymentError, probeForNewDeployment } from "./deployment-probe";
 import { redirect, unstable_rethrow } from "next/navigation";
 
 // -------------------------------------------------------------------
@@ -63,12 +64,10 @@ export function handleServerApiError(method: string, error: unknown): ServerApiR
 //
 // Nothing can be fixed by retrying. The page has to be reloaded to fetch
 // the current build's JavaScript, so that is what we tell people to do.
+//
+// The predicate itself lives in `deployment-probe.ts` now, because the same
+// question is asked from places that must NOT show a toast - see below.
 // -------------------------------------------------------------------
-function isStaleDeploymentError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-
-  return message.includes("Failed to find Server Action");
-}
 
 // -------------------------------------------------------------------
 // handleFrontendErrorWithToast - log error then show error toast
@@ -77,10 +76,15 @@ export function handleFrontendErrorWithToast(error: unknown) {
   if (isStaleDeploymentError(error)) {
     console.error("Stale deployment: this page predates the running build.", error);
 
-    // A button rather than an automatic reload. Reloading unprompted would
-    // throw away whatever somebody had typed - a half-written chat message,
-    // a form they are part-way through - and this fires on the first action
-    // they attempt, which is often mid-task.
+    // Tell the watcher first. It may reload on its own - this error is proof
+    // the tab is stale, which is stronger than anything its poll can learn -
+    // and it will decline if something would be lost by doing so.
+    probeForNewDeployment();
+
+    // The toast stays regardless, because the watcher is allowed to say no.
+    // A button rather than an automatic reload: this fires on the first
+    // action somebody attempts, which is often mid-task, and throwing away a
+    // half-written chat message to save a click is the wrong trade.
     toast.error("The app has been updated. Reload the page to continue.", {
       duration: Infinity,
       action: { label: "Reload", onClick: () => window.location.reload() },

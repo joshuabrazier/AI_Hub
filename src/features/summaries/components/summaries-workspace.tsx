@@ -11,6 +11,7 @@ import { ModelMarkdown } from "@/components/model-markdown";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useWorkInFlight } from "@/features/layout/work-in-flight";
 import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import { cn } from "@/lib/utils";
@@ -63,6 +64,11 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
 
   // Held so Stop can abort a request that may have a minute left to run.
   const abortRef = useRef<AbortController | null>(null);
+
+  // Tell the deployment watcher not to reload over a summary being written.
+  // This feature stores nothing, so an interrupted one is not resumable and
+  // not recoverable - it is a model call paid for and thrown away.
+  useWorkInFlight(isStreaming);
 
   const characters = text.trim().length;
   const tooShort = characters > 0 && characters < MIN_INPUT_CHARS;
