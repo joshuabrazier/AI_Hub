@@ -309,20 +309,45 @@
      shouting over the page. A soft teal-grey panel is a coloured surface
      without being a block of brand: the rail reads as chrome, the canvas
      beside it reads as paper, and the tint is where the difference lives
-     instead of a border doing all the work. */
-  --sidebar: #e9f2f4;
+     instead of a border doing all the work.
+
+     -----------------------------------------------------------------
+     MOVE FOUR, AND IT IS A DEPTH RATHER THAN A DIRECTION. #e9f2f4 was the
+     right IDEA executed too faintly: the tint was there, and it was not doing
+     the job the note above claims for it. The border was still carrying the
+     boundary on its own.
+
+     MEASURED IN L*, NOT IN CONTRAST RATIO, because a contrast ratio between
+     two near-white surfaces is a useless number - #e9f2f4 on white is 1.12:1,
+     and so is every other pale tint anybody would consider. Perceptual
+     lightness separates them: on a 0-100 scale the rail was 94.9 against a
+     canvas of 100, a difference of FIVE POINTS. A surface boundary needs
+     about 8-12 to read as two surfaces; below 6 the eye takes it as one sheet
+     of paper with a line drawn on it.
+
+     #d7e7eb is L* 90.6, so the gap is 9.4 - nearly double, and still
+     unmistakably a light rail rather than a return to attempt 3. The accent
+     and the border move with it: both were tuned against the old fill and a
+     tint two steps deeper than #e9f2f4 is roughly the new BASE, so left
+     alone the active row would have vanished into the rail it sits on.
+     ----------------------------------------------------------------- */
+  --sidebar: #d7e7eb;
   --sidebar-foreground: #0f1a1c;
   /* The idle row. The same value as --muted-foreground, so a nav label and a
      description elsewhere on the page read as the same kind of text. */
   --sidebar-muted-foreground: #41565a;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
-  /* Hover and the current page. Two steps deeper than the rail, because a
-     tint on a tint has to clear the surface it sits on - the value tuned
-     against white would be invisible here. */
-  --sidebar-accent: #d3e6ea;
+  /* Hover and the current page. A tint on a tint has to clear the surface it
+     sits on, and the surface just got deeper - this is L* 85.3 against the
+     rail's 90.6, the same ~5 point step the row had before, measured from
+     where the rail actually is now. */
+  --sidebar-accent: #bfdae1;
   --sidebar-accent-foreground: #0f1a1c;
-  --sidebar-border: #c3d9dd;
+  /* Deepened to stay a line rather than a smudge now that the fill it divides
+     is closer to it. It is no longer doing the whole job, but a rail whose
+     edge dissolves reads as unfinished. */
+  --sidebar-border: #aec9d0;
   /* The "you are here" mark. --signal is exactly this: the palette
      documents it as the brighter teal for "the active nav item", chosen to
      clear 3:1 on white as a graphical mark. */
@@ -386,14 +411,27 @@
   /* A step darker than --card, so the rail sits BEHIND the page rather than
      on it - the same relationship the light theme draws with #fcfdfd against
      #ffffff, with the values the other way up. */
-  --sidebar: #0f1a1c;
+  /* THE SAME FAULT AS LIGHT, AND IT WAS WORSE HERE. #0f1a1c on a #0b1416
+     canvas is L* 8.4 against 5.7 - a difference of 2.7 points, which is
+     nothing. Dark mode hides a weak boundary better than light does, so it
+     had never been complained about; it was still one surface.
+
+     The rail LIFTS in dark rather than deepening, which is the same decision
+     as light and not an inversion of it: in both themes the rail steps AWAY
+     from the canvas, and in a dark theme the only direction away is up.
+     #16262a is L* 14.0, so the gap is 8.3 - matching the 9.4 light mode now
+     has, which is what keeps the two themes feeling like one design. */
+  --sidebar: #16262a;
   --sidebar-foreground: #e6eff0;
   --sidebar-muted-foreground: #93a7ab;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #05171a;
-  --sidebar-accent: #1b2b2f;
+  /* Lifted with the rail, and for the reason the light note gives: #1b2b2f
+     was a step above #0f1a1c and is barely above #16262a, so the active row
+     would have dissolved into the rail. L* 22.9 against the rail's 14.0. */
+  --sidebar-accent: #243a3f;
   --sidebar-accent-foreground: #e6eff0;
-  --sidebar-border: #243437;
+  --sidebar-border: #2f4448;
   --sidebar-mark: var(--signal);
   --sidebar-ring: var(--primary);
 }
