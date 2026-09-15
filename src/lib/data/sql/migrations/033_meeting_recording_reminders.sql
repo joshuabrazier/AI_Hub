@@ -35,7 +35,7 @@
 -- answerable afterwards.
 --
 -- Apply manually:
---   psql "$DATABASE_URL" -f src/lib/data/sql/migrations/031_meeting_recording_reminders.sql
+--   psql "$DATABASE_URL" -f src/lib/data/sql/migrations/033_meeting_recording_reminders.sql
 ---------------------------------------------------------------------
 
 BEGIN;
@@ -61,6 +61,6 @@ CREATE TABLE IF NOT EXISTS meeting_recording_reminders (
 CREATE INDEX IF NOT EXISTS idx_meeting_recording_reminders_starts_at
     ON meeting_recording_reminders (starts_at);
 
-INSERT INTO schema_migrations (filename) VALUES ('031_meeting_recording_reminders.sql');
+INSERT INTO schema_migrations (filename) VALUES ('033_meeting_recording_reminders.sql');
 
 COMMIT;

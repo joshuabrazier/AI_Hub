@@ -44,7 +44,7 @@
 --
 -- This file is GENERATED from the migrations directory. Regenerate it when
 -- migrations are added - it is a snapshot of the repo, not of any database.
--- Generated against 32 migration file(s).
+-- Generated against 33 migration file(s).
 ---------------------------------------------------------------------
 
 WITH in_repo (filename, destructive) AS (
@@ -80,7 +80,8 @@ WITH in_repo (filename, destructive) AS (
     ('027_project_plan_request_kind.sql', false),
     ('028_project_reporting_fields.sql', false),
     ('029_category_belongs_to_the_client.sql', false),
-    ('030_ongoing_projects.sql', false)
+    ('032_ongoing_projects.sql', false),
+    ('033_meeting_recording_reminders.sql', false)
 )
 SELECT
     COALESCE(r.filename, a.filename)                             AS migration,
