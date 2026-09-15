@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import AppShell from "@/features/layout/app-shell";
+import { DeploymentWatcher } from "@/features/layout/deployment-watcher";
 import { BRAND } from "@/lib/brand";
 
 // Inter carries running text.
@@ -66,6 +67,12 @@ export default function RootLayout({
         >
           Skip to content
         </a>
+
+        {/* Renders nothing. Mounted HERE rather than inside AppShell because
+            AppShell returns bare children on the chromeless routes - the
+            landing page and sign-in - and a tab left open on sign-in over a
+            deploy is stale in exactly the same way as any other. */}
+        <DeploymentWatcher />
 
         <ThemeProvider>
           <TooltipProvider>
