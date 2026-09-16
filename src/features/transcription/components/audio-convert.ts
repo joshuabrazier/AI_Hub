@@ -62,6 +62,21 @@ export function needsConversion(fileName: string): boolean {
 // -------------------------------------------------------------------
 const MAX_CONVERTIBLE_SECONDS = 3 * 60 * 60;
 
+// -------------------------------------------------------------------
+// The bounds of "that decode looks too short for that file".
+//
+// 8 kB per second is 64 kbps, comfortably above what a voice codec uses
+// and therefore a SAFE floor: dividing a file size by it gives the least
+// audio that file could plausibly hold. A decode shorter than a third of
+// that did not finish.
+//
+// Both numbers are deliberately loose. The cost of missing a truncated
+// decode is a partial transcript nobody is told about; the cost of a false
+// positive is uploading the original, which is what used to happen anyway.
+// -------------------------------------------------------------------
+const MAX_PLAUSIBLE_BYTES_PER_SECOND = 8 * 1024;
+const MIN_DECODED_FRACTION = 1 / 3;
+
 export type ConversionResult =
   | { converted: true; file: File }
   // Left alone, with the reason. The caller uploads the original.
@@ -117,6 +132,39 @@ export async function convertToWav(file: File): Promise<ConversionResult> {
 
     if (decoded.duration > MAX_CONVERTIBLE_SECONDS) {
       return { converted: false, reason: "too-long" };
+    }
+
+    // -----------------------------------------------------------------
+    // A DECODE THAT DID NOT THROW IS NOT A DECODE THAT WORKED.
+    //
+    // decodeAudioData stops at the first thing it cannot read and resolves
+    // with whatever it managed - so a file that is damaged part way through
+    // yields a short buffer and no error at all. Replacing the original
+    // with that is the worst outcome this module has: the upload succeeds,
+    // the transcription succeeds, and somebody is handed a confident
+    // transcript of the first ninety seconds of a two hour meeting with
+    // nothing anywhere saying the rest was dropped.
+    //
+    // Nothing decoded is unambiguous. A SHORT decode is judged against the
+    // source's own size, using a floor low enough that no real codec sits
+    // under it - 8 kB per second is well below the 16 kbps a voice codec
+    // manages - so this fires on a file that decoded to a fraction of its
+    // length, and never on one that is merely efficiently compressed.
+    //
+    // Both return `failed`, so the ORIGINAL is uploaded and the service
+    // gets its own chance. Refusing outright would take away a recording of
+    // a meeting that already happened.
+    // -----------------------------------------------------------------
+    if (decoded.length === 0) return { converted: false, reason: "failed" };
+
+    const impliedSeconds = file.size / MAX_PLAUSIBLE_BYTES_PER_SECOND;
+
+    if (impliedSeconds > 1 && decoded.duration < impliedSeconds * MIN_DECODED_FRACTION) {
+      console.warn(
+        `[convert] decode produced ${decoded.duration.toFixed(1)}s from a file implying at least ${impliedSeconds.toFixed(1)}s - uploading the original`,
+      );
+
+      return { converted: false, reason: "failed" };
     }
 
     const mono = downmixToMono(decoded);

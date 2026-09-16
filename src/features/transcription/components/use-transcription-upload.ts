@@ -7,7 +7,11 @@ import { toast } from "sonner";
 import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 
-import { createTranscriptionAction, startTranscriptionAction } from "../transcription.actions";
+import {
+  createTranscriptionAction,
+  refreshTranscriptionUploadUrlAction,
+  startTranscriptionAction,
+} from "../transcription.actions";
 import { MAX_MEDIA_BYTES, type CreateTranscriptionRequestDTO } from "../transcription.types";
 import { uploadInBlocks } from "./blob-upload";
 
@@ -104,12 +108,25 @@ export function useTranscriptionUpload() {
         return null;
       }
 
-      const { transcriptionId, uploadUrl, mediaType } = created.data;
+      const { transcriptionId, uploadUrl, mediaType, expiresAt } = created.data;
 
       // IN BLOCKS, ALWAYS. See uploadInBlocks: one path for every upload,
       // so the code that carries a five hour workshop is the same code that
       // carried the two minute test this morning.
-      await uploadInBlocks(uploadUrl, request.media, mediaType, setProgress);
+      //
+      // WITH A WAY TO RENEW THE CREDENTIAL. The SAS lasts an hour and a
+      // large recording on a client site's broadband does not fit in one -
+      // so without this the transfer simply met a 403 part way through a
+      // meeting nobody could re-record. Staged blocks survive seven days,
+      // so a renewed URL carries on from where it stopped.
+      await uploadInBlocks(uploadUrl, request.media, mediaType, setProgress, {
+        expiresAt,
+        refreshUrl: async () => {
+          const refreshed = await refreshTranscriptionUploadUrlAction({ transcriptionId });
+
+          return refreshed.success ? refreshed.data.uploadUrl : null;
+        },
+      });
 
       // The bytes are in storage but nothing is transcribing them yet. This
       // is the step that confirms the file actually landed - the app never

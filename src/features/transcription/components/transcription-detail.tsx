@@ -753,6 +753,20 @@ function guidanceFor(
     return "The transcription service could not fetch the stored recording, which is a permissions problem on the storage account rather than anything wrong with your file. An administrator needs to give the Speech resource the Storage Blob Data Reader role. Your recording is safe and can be downloaded.";
   }
 
+  if (kind === TRANSCRIPTION_FAILURE_KINDS.SERVICE_CREDENTIALS) {
+    // A DIFFERENT PART OF AZURE from the storage case below, and naming the
+    // wrong one costs whoever can fix it an afternoon in the wrong blade.
+    return "The transcription service refused this app's credentials, which is a key or a subscription problem rather than anything wrong with your recording. An administrator needs to check the Speech resource key. Your recording is safe and can be downloaded.";
+  }
+
+  if (kind === TRANSCRIPTION_FAILURE_KINDS.UNUSABLE) {
+    // The file is intact and has nothing to transcribe in it. Converting
+    // would produce a smaller file with the same absence, so no retry is
+    // offered and the sentence says why rather than leaving somebody
+    // clicking a button that cannot work.
+    return "There is no speech in this file for the service to find, so there is nothing further to try here. If you meant to record the meeting audio, check that the right source was being captured.";
+  }
+
   if (kind === TRANSCRIPTION_FAILURE_KINDS.TOO_LARGE) {
     return "Nothing further can be done with this one here. If it is a screen or video recording, export the audio on its own and upload that instead - it is a fraction of the size.";
   }

@@ -90,6 +90,17 @@ const RETRY_BASE_MS = 1_000;
 const BLOCK_IDLE_MS = 60_000;
 
 // -------------------------------------------------------------------
+// How long a refreshed upload URL is assumed to last.
+//
+// Mirrors the server's signing window. Stated here rather than imported
+// because media-storage.ts is server-only and importing it would pull the
+// Azure SDK into this bundle - and because this is only ever used as a
+// MARGIN, so being approximately right is the whole requirement. A refresh
+// that turns out to be needed sooner is triggered by a 403 anyway.
+// -------------------------------------------------------------------
+const SAS_LIFETIME_GUESS_MS = 60 * 60 * 1000;
+
+// -------------------------------------------------------------------
 // And how long to wait for an ANSWER once the body has all gone.
 //
 // A separate, much longer ceiling, because the two silences mean opposite
@@ -290,6 +301,27 @@ async function putWithRetry(
 }
 
 /**
+ * Where a fresh upload URL comes from when the signed one is running out.
+ *
+ * Optional, because one caller cannot offer it: the re-encode path writes
+ * to a key the row does not claim yet, so there is no row for a refresh to
+ * be authorised against. That upload is also the smaller one - a converted
+ * file, on a connection that has already carried the original - so an hour
+ * is a far safer window for it than for a first upload.
+ */
+export type UploadUrlSource = () => Promise<string | null>;
+
+// -------------------------------------------------------------------
+// How close to expiry is too close to start another block.
+//
+// Five minutes, because the question is not "is the credential still
+// valid" but "will it still be valid when this block FINISHES". An eight
+// megabyte block on a poor connection is minutes of transfer, and a URL
+// that expires half way through one wastes the whole block.
+// -------------------------------------------------------------------
+const SAS_REFRESH_MARGIN_MS = 5 * 60 * 1000;
+
+/**
  * Send `media` to `uploadUrl` as blocks, then commit them.
  *
  * `onProgress` receives 0-100 across the WHOLE file rather than per block,
@@ -301,6 +333,19 @@ export async function uploadInBlocks(
   media: Blob,
   mediaType: string,
   onProgress: (percent: number) => void,
+  // -----------------------------------------------------------------
+  // KEEPING A LONG UPLOAD ALIVE. The SAS lasts an hour; a large recording
+  // on a client site's broadband does not fit in one. Without these the
+  // transfer met a 403 part way through a meeting that cannot be
+  // re-recorded, and threw the whole thing away.
+  //
+  // RESUMING COSTS NOTHING, which is what makes it worth doing rather than
+  // merely possible: blocks are STAGED, Azure holds them for seven days,
+  // and the blob does not exist until the commit. So a refreshed URL
+  // carries on from the block that failed and everything already sent is
+  // still there.
+  // -----------------------------------------------------------------
+  options: { expiresAt?: Date; refreshUrl?: UploadUrlSource } = {},
 ): Promise<void> {
   const blockIds: string[] = [];
   let completedBytes = 0;
@@ -309,27 +354,64 @@ export async function uploadInBlocks(
   // its high-water mark so a retry looks like a pause rather than a loss.
   let shownPercent = 0;
 
+  let currentUrl = uploadUrl;
+  let expiresAt = options.expiresAt ?? null;
+
+  // Re-signs and swaps the URL in, or leaves things as they are when no
+  // source was given. Never throws: a refresh that fails leaves the
+  // existing credential to be tried, which may still work.
+  const refresh = async (): Promise<boolean> => {
+    if (!options.refreshUrl) return false;
+
+    try {
+      const fresh = await options.refreshUrl();
+
+      if (!fresh) return false;
+
+      currentUrl = fresh;
+      // The server signs for the same window every time, so the new expiry
+      // is simply now plus that window. Kept approximate deliberately - it
+      // is a margin, not a deadline.
+      expiresAt = new Date(Date.now() + SAS_LIFETIME_GUESS_MS);
+
+      return true;
+    } catch (error) {
+      console.warn("[upload] could not refresh the upload URL", error);
+
+      return false;
+    }
+  };
+
   for (let start = 0, index = 0; start < media.size; start += BLOCK_BYTES, index += 1) {
     const block = media.slice(start, Math.min(start + BLOCK_BYTES, media.size));
     const blockId = blockIdFor(index);
 
     blockIds.push(blockId);
 
-    // The SAS URL already carries a query string, so every extra parameter
-    // is appended with & rather than ?.
-    await putWithRetry(
-      `${uploadUrl}&comp=block&blockid=${encodeURIComponent(blockId)}`,
-      block,
-      {},
-      (loaded) => {
-        // Bytes finished in earlier blocks, plus progress through this one.
-        const total = completedBytes + loaded;
+    // Refreshed BEFORE the block rather than after a failure, because a
+    // block that dies on an expired credential is eight megabytes of
+    // somebody's upload spent for nothing.
+    if (expiresAt && expiresAt.getTime() - Date.now() < SAS_REFRESH_MARGIN_MS) await refresh();
 
-        shownPercent = Math.max(shownPercent, Math.min(99, Math.round((total / media.size) * 100)));
-
+    try {
+      await sendBlock(currentUrl, blockId, block, media.size, completedBytes, (percent) => {
+        shownPercent = Math.max(shownPercent, percent);
         onProgress(shownPercent);
-      },
-    );
+      });
+    } catch (error) {
+      // A 403 here is an expired or revoked credential. It is not retried
+      // by putWithRetry - correctly, because the same URL will be refused
+      // again - but a DIFFERENT URL is a different question, so this is the
+      // one place a 403 gets a second chance.
+      const expired = error instanceof UploadRequestError && error.status === 403;
+
+      if (!expired || !(await refresh())) throw error;
+
+      await sendBlock(currentUrl, blockId, block, media.size, completedBytes, (percent) => {
+        shownPercent = Math.max(shownPercent, percent);
+        onProgress(shownPercent);
+      });
+    }
 
     completedBytes += block.size;
   }
@@ -349,19 +431,51 @@ export async function uploadInBlocks(
     blockIds.map((id) => `<Latest>${id}</Latest>`).join("") +
     `</BlockList>`;
 
-  await putWithRetry(
-    `${uploadUrl}&comp=blocklist`,
-    blockList,
-    {
-      "Content-Type": "application/xml",
-      // The type the SERVER derived from the filename, not one the browser
-      // guessed. Nothing serves these bytes back to a browser, so this is
-      // for tidiness in the container rather than for safety - but there is
-      // no reason to write a guess when the server has already decided.
-      "x-ms-blob-content-type": mediaType,
-    },
-    () => {},
-  );
+  const commit = (url: string) =>
+    putWithRetry(
+      `${url}&comp=blocklist`,
+      blockList,
+      {
+        "Content-Type": "application/xml",
+        // The type the SERVER derived from the filename, not one the browser
+        // guessed. Nothing serves these bytes back to a browser, so this is
+        // for tidiness in the container rather than for safety - but there is
+        // no reason to write a guess when the server has already decided.
+        "x-ms-blob-content-type": mediaType,
+      },
+      () => {},
+    );
+
+  try {
+    await commit(currentUrl);
+  } catch (error) {
+    // The worst possible moment to lose the credential: every block is
+    // already in Azure and only the commit is left.
+    const expired = error instanceof UploadRequestError && error.status === 403;
+
+    if (!expired || !(await refresh())) throw error;
+
+    await commit(currentUrl);
+  }
 
   onProgress(100);
+}
+
+/** One block, with progress reported across the whole file rather than the block. */
+function sendBlock(
+  url: string,
+  blockId: string,
+  block: Blob,
+  totalBytes: number,
+  completedBytes: number,
+  onPercent: (percent: number) => void,
+): Promise<void> {
+  // The SAS URL already carries a query string, so every extra parameter
+  // is appended with & rather than ?.
+  return putWithRetry(
+    `${url}&comp=block&blockid=${encodeURIComponent(blockId)}`,
+    block,
+    {},
+    (loaded) => onPercent(Math.min(99, Math.round(((completedBytes + loaded) / totalBytes) * 100))),
+  );
 }

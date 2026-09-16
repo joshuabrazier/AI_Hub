@@ -283,7 +283,17 @@ const serverEnvSchema = z.object({
   // The language spoken in recordings. Azure needs a specific locale, not
   // a language - "en-AU" transcribes Australian English noticeably better
   // than "en-US" on local place names and accents.
-  AZURE_SPEECH_LOCALE: z.string().min(2).default("en-AU"),
+  // -----------------------------------------------------------------
+  // A BCP-47 TAG, CHECKED AS ONE. "a string of at least 2 characters"
+  // accepted "english", "en_AU" and a trailing space - none of which the
+  // Speech service recognises, and none of which fails until a real
+  // meeting has been uploaded and refused. A typo here should cost a boot,
+  // not a recording.
+  // -----------------------------------------------------------------
+  AZURE_SPEECH_LOCALE: z
+    .string()
+    .regex(/^[a-z]{2,3}-[A-Za-z0-9]{2,8}$/, "AZURE_SPEECH_LOCALE must be a locale like en-AU")
+    .default("en-AU"),
 
   // How long a transcription and its media are kept, in days. Recordings
   // of meetings are the most sensitive thing this app stores, and they are

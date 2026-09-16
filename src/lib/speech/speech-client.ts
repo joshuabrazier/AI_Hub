@@ -30,6 +30,17 @@ import type { TranscriptionSegment } from "@/lib/data/kysely-database-types";
 // and the parsing below assumes this one.
 const SPEECH_API_VERSION = "v3.2";
 
+// -------------------------------------------------------------------
+// The most voices the service will separate in one meeting.
+//
+// 36 is its documented maximum. The number matters less than what happens
+// past it: Azure does not refuse a busier meeting, it MERGES two people
+// into one speaker label - so a transcript attributes one person's words to
+// another, silently, and nobody reading it can tell. A crowded transcript
+// with an extra label is a far smaller problem than a misattributed quote.
+// -------------------------------------------------------------------
+const MAX_DIARIZED_SPEAKERS = 36;
+
 export function isSpeechConfigured(): boolean {
   return Boolean(envServer.AZURE_SPEECH_KEY && envServer.AZURE_SPEECH_REGION);
 }
@@ -40,32 +51,225 @@ function speechEndpoint(path: string): string {
   return `https://${region}.api.cognitive.microsoft.com/speechtotext/${SPEECH_API_VERSION}/${path}`;
 }
 
-async function speechFetch(path: string, init?: RequestInit): Promise<Response> {
+// -------------------------------------------------------------------
+// ===================================================================
+// A FAILURE FROM THE SPEECH API, WITH ITS PARTS STILL SEPARATE
+// ===================================================================
+//
+// Every non-2xx used to become one string - `Speech API 401: {"error"...}`
+// - and the status code, which had been read a line earlier, was discarded
+// into the middle of it. Two live paths were wrong in opposite directions
+// as a result: a status poll swallowed EVERY failure and polled again
+// forever, which is right for a 429 and leaves a row saying "Transcribing"
+// for eternity when a Speech key is rotated; and a job creation failed the
+// row on everything, which is right for a 400 and throws away a recording
+// on a transient 503.
+//
+// Neither could be fixed without the status, so the status is kept.
+//
+// THE CODES ARE KEPT SEPARATE FROM THE PROSE for the same reason. Azure
+// nests a machine-readable `error.code` and a more specific
+// `error.innerError.code` inside the body; flattening them into a sentence
+// means the only way to tell two faults apart afterwards is to match on
+// English, which changes without warning and is not a contract.
+// -------------------------------------------------------------------
+export class SpeechApiError extends Error {
+  readonly status: number;
+  /** Azure's ErrorCode enum value, e.g. "InvalidRequest". */
+  readonly code: string | null;
+  /** Azure's more specific DetailedErrorCode, e.g. "InvalidRecordingsUri". */
+  readonly innerCode: string | null;
+  /** From the Retry-After header, which Azure documents on these endpoints. */
+  readonly retryAfterSeconds: number | null;
+
+  constructor(options: {
+    status: number;
+    code: string | null;
+    innerCode: string | null;
+    message: string;
+    retryAfterSeconds: number | null;
+  }) {
+    super(options.message);
+    this.name = "SpeechApiError";
+    this.status = options.status;
+    this.code = options.code;
+    this.innerCode = options.innerCode;
+    this.retryAfterSeconds = options.retryAfterSeconds;
+  }
+
+  // -----------------------------------------------------------------
+  // Whether asking again could plausibly end differently.
+  //
+  // A 401 or 403 is a key that has been rotated or a resource that has been
+  // locked down, and it will answer identically in ten minutes and in ten
+  // days. Polling through one is how a row sits on "Transcribing" until
+  // somebody notices weeks later. A 429 or a 5xx is the opposite: the
+  // service is busy or briefly unwell, and failing the row would throw away
+  // a recording over something that fixes itself.
+  // -----------------------------------------------------------------
+  get isTransient(): boolean {
+    return this.status === 408 || this.status === 429 || this.status >= 500 || this.status === 0;
+  }
+
+  /** One greppable fragment: the status and both codes, without the prose. */
+  get summary(): string {
+    return [`status=${this.status}`, this.code ? `code=${this.code}` : null, this.innerCode ? `inner=${this.innerCode}` : null]
+      .filter(Boolean)
+      .join(" ");
+  }
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
+// EVERY CALL IS BOUNDED, AND THE ONES WORTH REPEATING ARE REPEATED
+// ===================================================================
+//
+// There was no timeout on any Speech call and no retry on any of them. Both
+// halves cost something real.
+//
+// NO TIMEOUT means a fetch that never answers hangs the whole sweep behind
+// it - and the sweep is sequential and oldest-first, so one wedged request
+// stops every other transcription that person owns from advancing at all.
+// The row just says "Transcribing" while nothing anywhere is transcribing.
+//
+// NO RETRY means a 429 fails whatever it was doing. Azure documents 429 on
+// batch as a normal consequence of autoscaling rather than a fault, and
+// documents Retry-After alongside it, so the service is asking to be asked
+// again and this was treating the request as refused.
+//
+// RETRIED ONLY WHERE REPEATING IS SAFE AND CAN HELP. Every call this client
+// makes is a GET except one - creating a job - and that one is deliberately
+// excluded: a POST that timed out may well have created a job whose id came
+// back on a response nobody read, and retrying it would leave a second job
+// transcribing the same meeting at full price. A duplicate charge is worse
+// than a failure somebody can retry by hand.
+// -------------------------------------------------------------------
+
+/** One call's ceiling. Generous - these are small JSON documents, not media. */
+const SPEECH_REQUEST_TIMEOUT_MS = 20_000;
+
+/** Attempts for a call that is safe to repeat. */
+const SPEECH_ATTEMPTS = 3;
+
+/** The floor when Azure asks for a wait but names no figure. */
+const SPEECH_RETRY_BASE_MS = 1_000;
+
+/** Never wait longer than this on one Retry-After, whatever Azure asks for. */
+const SPEECH_MAX_RETRY_WAIT_MS = 10_000;
+
+async function speechFetch(
+  path: string,
+  init?: RequestInit,
+  // POSTs opt out. See the note above on why a retried job creation is
+  // worse than a failed one.
+  options: { retry?: boolean } = {},
+): Promise<Response> {
   const key = envServer.AZURE_SPEECH_KEY;
 
   if (!key) throw new Error("AZURE_SPEECH_KEY is not set");
 
-  const response = await fetch(speechEndpoint(path), {
-    ...init,
-    headers: {
-      "Ocp-Apim-Subscription-Key": key,
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    // Never cache a job status.
-    cache: "no-store",
-  });
+  const retry = options.retry ?? init?.method === undefined;
 
-  if (!response.ok) {
-    // The body carries the real reason - an unsupported codec, a blob the
-    // service cannot reach - and without it the caller only sees a status
-    // code, which is not enough to tell a user anything useful.
-    const detail = await response.text().catch(() => "");
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const response = await fetch(speechEndpoint(path), {
+        ...init,
+        headers: {
+          "Ocp-Apim-Subscription-Key": key,
+          "Content-Type": "application/json",
+          ...(init?.headers ?? {}),
+        },
+        // Never cache a job status.
+        cache: "no-store",
+        // A request that never answers would otherwise hold the whole
+        // sweep, which is sequential, behind it indefinitely.
+        signal: AbortSignal.timeout(SPEECH_REQUEST_TIMEOUT_MS),
+      });
 
-    throw new Error(`Speech API ${response.status}: ${detail.slice(0, 500)}`);
+      if (response.ok) return response;
+
+      // The body carries the real reason - an unsupported codec, a blob the
+      // service cannot reach - and without it the caller only sees a status
+      // code, which is not enough to tell a user anything useful.
+      const detail = await response.text().catch(() => "");
+
+      const error = toSpeechApiError(response, detail);
+
+      if (!retry || attempt >= SPEECH_ATTEMPTS || !error.isTransient) throw error;
+
+      // Azure's own figure where it gave one, capped so a service asking
+      // for five minutes does not become five minutes of somebody's page
+      // load. Past the cap the next attempt will simply be refused again,
+      // which is a faster and more honest answer than waiting.
+      await delay(
+        Math.min(
+          error.retryAfterSeconds ? error.retryAfterSeconds * 1000 : SPEECH_RETRY_BASE_MS * attempt,
+          SPEECH_MAX_RETRY_WAIT_MS,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof SpeechApiError) throw error;
+
+      // A timeout or a dropped connection. Named as status 0 so it travels
+      // as the same shape as everything else and the caller has one type to
+      // reason about rather than two.
+      const wrapped = new SpeechApiError({
+        status: 0,
+        code: error instanceof Error ? error.name : null,
+        innerCode: null,
+        message:
+          error instanceof Error && error.name === "TimeoutError"
+            ? `The transcription service did not answer within ${SPEECH_REQUEST_TIMEOUT_MS / 1000} seconds.`
+            : `The transcription service could not be reached: ${error instanceof Error ? error.message : String(error)}`,
+        retryAfterSeconds: null,
+      });
+
+      if (!retry || attempt >= SPEECH_ATTEMPTS) throw wrapped;
+
+      await delay(SPEECH_RETRY_BASE_MS * attempt);
+    }
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// -------------------------------------------------------------------
+// The body is JSON when Azure's own API layer answers and plain text when
+// the gateway in front of it does - and the gateway's version puts a
+// NUMERIC STRING in `code`, so "401" and "InvalidRequest" both legitimately
+// appear in the same field. Parsed leniently for that reason, and never
+// allowed to throw: a malformed error body must not replace the error.
+// -------------------------------------------------------------------
+function toSpeechApiError(response: Response, body: string): SpeechApiError {
+  let code: string | null = null;
+  let innerCode: string | null = null;
+  let message = body.slice(0, 400);
+
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { code?: string; message?: string; innerError?: { code?: string; message?: string } };
+    };
+
+    if (parsed.error) {
+      code = parsed.error.code ?? null;
+      innerCode = parsed.error.innerError?.code ?? null;
+      message = parsed.error.message ?? parsed.error.innerError?.message ?? message;
+    }
+  } catch {
+    // Not JSON. The text is the message, which is what it already is.
   }
 
-  return response;
+  const retryAfter = Number(response.headers.get("Retry-After"));
+
+  return new SpeechApiError({
+    status: response.status,
+    code,
+    innerCode,
+    message: `Speech API ${response.status}${code ? ` (${code})` : ""}: ${message}`,
+    retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
+  });
 }
 
 // -------------------------------------------------------------------
@@ -84,29 +288,48 @@ export async function startTranscription(options: {
   displayName: string;
   locale: string;
 }): Promise<string> {
-  const response = await speechFetch("transcriptions", {
-    method: "POST",
-    body: JSON.stringify({
-      contentUrls: [options.contentUrl],
-      locale: options.locale,
-      displayName: options.displayName,
-      properties: {
-        // Speaker separation. The service tells voices apart and numbers
-        // them; it has no idea who they are, so the UI says "Speaker 1".
-        diarizationEnabled: true,
-        diarization: {
-          speakers: { minCount: 1, maxCount: 10 },
+  // NOT RETRIED. A POST that timed out may have created a job whose id came
+  // back on a response nobody read, and a second attempt would leave two
+  // jobs transcribing the same meeting at full price.
+  const response = await speechFetch(
+    "transcriptions",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        contentUrls: [options.contentUrl],
+        locale: options.locale,
+        displayName: options.displayName,
+        properties: {
+          // Speaker separation. The service tells voices apart and numbers
+          // them; it has no idea who they are, so the UI says "Speaker 1".
+          diarizationEnabled: true,
+          diarization: {
+            // -----------------------------------------------------------
+            // THE CAP IS WHAT HAPPENS WHEN IT IS EXCEEDED, not the number.
+            // Azure does not fail a meeting with more voices than this - it
+            // merges two people into one label, silently, and the
+            // transcript then attributes somebody's words to somebody else.
+            // That is a worse outcome than a crowded transcript, and it is
+            // invisible to whoever reads it.
+            //
+            // Raised to the service's documented maximum. The cost of a
+            // high cap is only that a quiet participant may get a label of
+            // their own; the cost of a low one is a misattributed quote.
+            // -----------------------------------------------------------
+            speakers: { minCount: 1, maxCount: MAX_DIARIZED_SPEAKERS },
+          },
+          // Punctuation and capitalisation, without which an hour of
+          // transcript is one unbroken sentence.
+          punctuationMode: "DictatedAndAutomatic",
+          // Leave profanity as spoken. This is a record of a meeting, and
+          // masking words would make the transcript a less accurate one.
+          profanityFilterMode: "None",
+          wordLevelTimestampsEnabled: false,
         },
-        // Punctuation and capitalisation, without which an hour of
-        // transcript is one unbroken sentence.
-        punctuationMode: "DictatedAndAutomatic",
-        // Leave profanity as spoken. This is a record of a meeting, and
-        // masking words would make the transcript a less accurate one.
-        profanityFilterMode: "None",
-        wordLevelTimestampsEnabled: false,
-      },
-    }),
-  });
+      }),
+    },
+    { retry: false },
+  );
 
   const created = (await response.json()) as { self?: string };
 
@@ -122,9 +345,25 @@ export async function startTranscription(options: {
 
 export type SpeechJobState = "Running" | "Succeeded" | "Failed" | "NotStarted";
 
+/**
+ * Why a job failed, with the machine-readable half kept separate from the
+ * English half. Both are reported; only the codes are ever matched on.
+ */
+export type SpeechJobError = {
+  code: string | null;
+  message: string | null;
+};
+
 export type SpeechJobStatus = {
   state: SpeechJobState;
-  error: string | null;
+  error: SpeechJobError | null;
+  /**
+   * When the job ENTERED its current state, which Azure documents and which
+   * is the authoritative version of the "how long has this been running"
+   * question. The row's own updatedAt is a heuristic for the same thing and
+   * has already lost meetings by drifting from it.
+   */
+  lastActionAt: Date | null;
 };
 
 // -------------------------------------------------------------------
@@ -135,14 +374,17 @@ export async function getTranscriptionStatus(jobId: string): Promise<SpeechJobSt
 
   const job = (await response.json()) as {
     status?: SpeechJobState;
+    lastActionDateTime?: string;
     properties?: { error?: { code?: string; message?: string } };
   };
 
   const failure = job.properties?.error;
+  const lastAction = job.lastActionDateTime ? new Date(job.lastActionDateTime) : null;
 
   return {
     state: job.status ?? "Running",
-    error: failure ? `${failure.code ?? "Error"}: ${failure.message ?? "unknown"}` : null,
+    error: failure ? { code: failure.code ?? null, message: failure.message ?? null } : null,
+    lastActionAt: lastAction && !Number.isNaN(lastAction.getTime()) ? lastAction : null,
   };
 }
 
@@ -248,12 +490,37 @@ export function segmentsToText(segments: TranscriptionSegment[]): string {
 // failure, so the detail is attached to the row rather than sitting in a
 // query nobody runs.
 //
+// THE COUNTS ARE WORTH AS MUCH AS THE DETAILS, and were being parsed and
+// thrown away. A Failed job whose report says nothing failed is a JOB-level
+// fault - a quota, a bad request, the service itself - rather than anything
+// about the recording, and those two need opposite responses. Without the
+// counts they are indistinguishable.
+//
+// `errorKind` IS NOT A DOCUMENTED ENUM. The report is a blob artifact
+// rather than a REST response type, so it appears in no swagger and the
+// published example shows none of its values. It is reported and logged as
+// the service's own word, and anything matched on it is a guess about a
+// string - which is why the classifier treats it as the weakest of its
+// signals rather than as a contract.
+//
 // BEST EFFORT, ALWAYS. This runs while a job is already failing. If the
 // report cannot be listed, downloaded or parsed, the caller keeps the
 // job-level error it already had - a diagnostic that throws would turn a
 // transcription failure into a transcription CRASH, which is strictly worse.
 // -------------------------------------------------------------------
-export async function getTranscriptionFailureDetail(jobId: string): Promise<string | null> {
+export type SpeechFailureReport = {
+  /** Null when the report did not carry the count at all. */
+  failedCount: number | null;
+  successCount: number | null;
+  failures: {
+    /** The input blob URL. SAFE TO LOG, never to show: it names the storage account and container. */
+    source: string | null;
+    errorKind: string | null;
+    errorMessage: string | null;
+  }[];
+};
+
+export async function getTranscriptionFailureDetail(jobId: string): Promise<SpeechFailureReport | null> {
   try {
     const filesResponse = await speechFetch(`transcriptions/${encodeURIComponent(jobId)}/files`);
 
@@ -273,24 +540,25 @@ export async function getTranscriptionFailureDetail(jobId: string): Promise<stri
     if (!response.ok) return null;
 
     const report = (await response.json()) as {
+      successfulTranscriptionsCount?: number;
       failedTranscriptionsCount?: number;
-      details?: { status?: string; errorKind?: string; errorMessage?: string }[];
+      details?: { source?: string; status?: string; errorKind?: string; errorMessage?: string }[];
     };
 
     const failures = (report.details ?? []).filter((detail) => detail.status !== "Succeeded");
 
-    if (failures.length === 0) return null;
-
-    // One line per failed source. In practice there is exactly one, because
-    // every job this app creates carries a single contentUrl - but the shape
-    // is a list and reading only the first would quietly hide the rest if
-    // that ever changed.
-    return failures
-      .map((failure) =>
-        [failure.errorKind, failure.errorMessage].filter(Boolean).join(": "),
-      )
-      .filter((line) => line.length > 0)
-      .join(" | ");
+    return {
+      failedCount: report.failedTranscriptionsCount ?? null,
+      successCount: report.successfulTranscriptionsCount ?? null,
+      // In practice there is exactly one, because every job this app creates
+      // carries a single contentUrl - but the shape is a list and reading
+      // only the first would quietly hide the rest if that ever changed.
+      failures: failures.map((failure) => ({
+        source: failure.source ?? null,
+        errorKind: failure.errorKind ?? null,
+        errorMessage: failure.errorMessage ?? null,
+      })),
+    };
   } catch (error) {
     // Deliberately swallowed. See the note above: the caller is already
     // reporting a failure and this is extra detail, not the answer.
@@ -298,6 +566,29 @@ export async function getTranscriptionFailureDetail(jobId: string): Promise<stri
 
     return null;
   }
+}
+
+/**
+ * The report as a sentence for the person waiting.
+ *
+ * The blob URL is deliberately NOT included: it names the storage account
+ * and container, and this text is rendered on a screen.
+ */
+export function describeFailureReport(report: SpeechFailureReport | null): string | null {
+  if (!report) return null;
+
+  if (report.failures.length === 0) {
+    // A failed job whose report blames no file. Worth saying plainly,
+    // because it redirects the reader away from their recording.
+    return report.failedCount === 0
+      ? "The transcription service reported no problem with the file itself, so the job failed for a reason of its own rather than because of this recording."
+      : null;
+  }
+
+  return report.failures
+    .map((failure) => [failure.errorKind, failure.errorMessage].filter(Boolean).join(": "))
+    .filter((line) => line.length > 0)
+    .join(" | ");
 }
 
 // -------------------------------------------------------------------

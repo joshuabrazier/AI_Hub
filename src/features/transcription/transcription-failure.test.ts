@@ -81,3 +81,98 @@ describe("canRetryByReencoding", () => {
     expect(canRetryByReencoding(TRANSCRIPTION_FAILURE_KINDS.OTHER)).toBe(false);
   });
 });
+
+describe("classifyTranscriptionFailure - the kinds added after reading Azure's schemas", () => {
+  it("recognises the DOCUMENTED detailed codes, which are a contract where prose is not", () => {
+    expect(classifyTranscriptionFailure("InvalidAudioFormat: could not decode")).toBe(
+      TRANSCRIPTION_FAILURE_KINDS.UNDECODABLE,
+    );
+    expect(classifyTranscriptionFailure("InvalidRecordingsUri")).toBe(
+      TRANSCRIPTION_FAILURE_KINDS.UNREACHABLE,
+    );
+    expect(classifyTranscriptionFailure("AudioLengthLimitExceeded")).toBe(
+      TRANSCRIPTION_FAILURE_KINDS.TOO_LARGE,
+    );
+  });
+
+  it("separates a file with nothing in it from a file that cannot be read", () => {
+    // Converting a video with no sound produces a smaller file with no
+    // sound. The screen must not offer it, so this cannot be undecodable.
+    const message =
+      "This file contains video and no audio track, so there is no speech in it to transcribe.";
+
+    expect(classifyTranscriptionFailure(message)).toBe(TRANSCRIPTION_FAILURE_KINDS.UNUSABLE);
+    expect(canRetryByReencoding(classifyTranscriptionFailure(message))).toBe(false);
+  });
+
+  it("reads an encrypted recording as unusable rather than as a decode failure", () => {
+    expect(classifyTranscriptionFailure("This recording is encrypted (DRM)")).toBe(
+      TRANSCRIPTION_FAILURE_KINDS.UNUSABLE,
+    );
+  });
+
+  it("reads a rotated Speech key as a SERVICE credentials fault, not a storage one", () => {
+    // Both are "Azure will not let us at something" and both are unfixable
+    // from a browser, which is why they were one kind at first. They are
+    // two because the advice differs: one is the Speech resource's key,
+    // the other is a Storage Blob Data Reader role assignment, and they
+    // live in different parts of the portal.
+    expect(
+      classifyTranscriptionFailure("This is a credentials problem on the transcription service"),
+    ).toBe(TRANSCRIPTION_FAILURE_KINDS.SERVICE_CREDENTIALS);
+  });
+
+  it("still classifies the full paragraph a failure now produces", () => {
+    // Azure's headline, its report, and this app's reading of the bytes,
+    // joined. The kind has to survive the extra prose around it.
+    const paragraph = [
+      "InvalidData: The audio format is invalid or cannot be detected.",
+      "The stored file is WebM (DocType webm), Opus, mono, 48,000 Hz, about 23 seconds, 99.2 MB.",
+    ].join(" ");
+
+    expect(classifyTranscriptionFailure(paragraph)).toBe(TRANSCRIPTION_FAILURE_KINDS.UNDECODABLE);
+  });
+});
+
+describe("classifyTranscriptionFailure - the app's OWN refusals", () => {
+  // -----------------------------------------------------------------
+  // A message this app writes and a classifier this app owns can drift
+  // apart without anything failing, and the symptom is not an error: the
+  // screen simply offers two buttons for a dead end. So the literal
+  // sentences are pinned here rather than paraphrased.
+  // -----------------------------------------------------------------
+  it("classifies the over-length refusal it writes itself", () => {
+    const tooLong =
+      "That recording is 310 minutes long, and the transcription service accepts up to 240 minutes in one file when it is separating speakers. Split it and upload the parts, or record longer meetings in sections.";
+
+    expect(classifyTranscriptionFailure(tooLong)).toBe(TRANSCRIPTION_FAILURE_KINDS.TOO_LARGE);
+    expect(canRetryByReencoding(classifyTranscriptionFailure(tooLong))).toBe(false);
+  });
+
+  it("classifies the over-size refusal it writes itself", () => {
+    const tooBig = "That file is larger than the 1024 MB the transcription service accepts.";
+
+    expect(classifyTranscriptionFailure(tooBig)).toBe(TRANSCRIPTION_FAILURE_KINDS.TOO_LARGE);
+  });
+
+  it("sends a rotated Speech key to the Speech resource, not to a storage role", () => {
+    // Two different blades of the Azure portal. Naming the wrong one costs
+    // whoever can fix it an afternoon.
+    const refused =
+      "The transcription service refused to say how this job is going, and it will keep refusing. This is a credentials problem on the transcription service rather than anything wrong with your recording.";
+
+    expect(classifyTranscriptionFailure(refused)).toBe(TRANSCRIPTION_FAILURE_KINDS.SERVICE_CREDENTIALS);
+  });
+
+  it("still sends an unreadable blob to the storage role", () => {
+    expect(classifyTranscriptionFailure("InvalidUri: the recordings URI is invalid")).toBe(
+      TRANSCRIPTION_FAILURE_KINDS.UNREACHABLE,
+    );
+  });
+
+  it("offers a re-encode for no kind but a decode failure", () => {
+    for (const kind of Object.values(TRANSCRIPTION_FAILURE_KINDS)) {
+      expect(canRetryByReencoding(kind)).toBe(kind === TRANSCRIPTION_FAILURE_KINDS.UNDECODABLE);
+    }
+  });
+});

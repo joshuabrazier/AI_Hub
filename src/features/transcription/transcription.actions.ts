@@ -15,6 +15,7 @@ import {
   getTranscriptTextService,
   importTeamsMeetingService,
   listTeamsMeetingsService,
+  refreshTranscriptionUploadUrlService,
   renameTranscriptionService,
   replaceTranscriptionMediaService,
   retryTranscriptionSummaryService,
@@ -107,6 +108,30 @@ export async function startTranscriptionAction(
     return { success: true, data: transcription } satisfies ServerApiResponse<TranscriptionDetailDTO>;
   } catch (error) {
     return handleServerApiError("startTranscriptionAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Keep a long upload alive.
+//
+// The SAS lasts an hour and a big recording on a slow connection does not.
+// Staged blocks survive seven days, so a refreshed URL resumes from the
+// block that failed rather than starting again - see the service.
+// -------------------------------------------------------------------
+export async function refreshTranscriptionUploadUrlAction(
+  requestDTO: TranscriptionIdRequestDTO,
+): Promise<ServerApiResponse<TranscriptionUploadTicketDTO>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(TranscriptionIdSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const ticket = await refreshTranscriptionUploadUrlService(validatedRequest.data);
+
+    return { success: true, data: ticket } satisfies ServerApiResponse<TranscriptionUploadTicketDTO>;
+  } catch (error) {
+    return handleServerApiError("refreshTranscriptionUploadUrlAction", error);
   }
 }
 

@@ -29,6 +29,23 @@ const transcriptionIdSchema = z.string().min(TABLE_ID_LENGTH);
 export const MAX_MEDIA_BYTES = 1024 * 1024 * 1024;
 
 // -------------------------------------------------------------------
+// AND THE SERVICE'S OTHER CEILING, WHICH IS A LENGTH.
+//
+// Azure documents 240 minutes per file WHEN DIARIZATION IS ENABLED, and
+// this app always enables it - speaker separation is most of the value of
+// a meeting transcript. The two limits are independent: a five hour
+// recording at a modest bitrate sits comfortably under a gigabyte and is
+// refused anyway, after the upload and after the wait, with a message
+// about the audio being invalid.
+//
+// Checked against the DURATION THE FILE DECLARES rather than a guess from
+// its size, which is why it could not be checked before the probe existed.
+// A container that declares no duration is not refused: an unknown length
+// is not a long one, and guessing would reject recordings that work.
+// -------------------------------------------------------------------
+export const MAX_MEDIA_MINUTES = 240;
+
+// -------------------------------------------------------------------
 // AND A SECOND, SMALLER CEILING THAT THE UPLOAD ACTUALLY HAS.
 //
 // The browser sends the media as ONE `PUT Blob` with x-ms-blob-type:
@@ -609,6 +626,16 @@ export type TranscriptionUploadTicketDTO = {
   transcriptionId: string;
   uploadUrl: string;
   mediaType: string;
+  // -----------------------------------------------------------------
+  // WHEN THE URL STOPS WORKING.
+  //
+  // Carried because the browser is the only party that knows how far
+  // through a transfer it is, and an hour is comfortably less than a large
+  // recording takes on a client site's broadband. Without it the upload
+  // simply met a 403 part way through a meeting it could not re-record,
+  // with nothing able to tell that from a permissions problem.
+  // -----------------------------------------------------------------
+  expiresAt: Date;
 };
 
 // -------------------------------------------------------------------
