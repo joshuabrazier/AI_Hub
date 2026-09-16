@@ -31,7 +31,7 @@ function phase(name: string): PhaseDTO {
 
 describe("describeTeam", () => {
   it("invites somebody to start when the project is empty", () => {
-    expect(describeTeam([])).toEqual({ summary: "Nobody on it yet", isComplete: false });
+    expect(describeTeam([])).toEqual({ summary: "Nobody on it yet", isComplete: false, missing: "a lead" });
   });
 
   it("is NOT complete without a lead, however many people are on it", () => {
@@ -55,7 +55,11 @@ describe("describeTeam", () => {
       member({ userId: "c", name: "Sam" }),
     ]);
 
-    expect(result).toEqual({ summary: "Louis leading, and 2 others", isComplete: true });
+    expect(result).toEqual({
+      summary: "Louis leading, and 2 others",
+      isComplete: true,
+      missing: null,
+    });
   });
 
   it("says one OTHER, not one others", () => {
@@ -67,19 +71,47 @@ describe("describeTeam", () => {
     expect(result.summary).toBe("Louis leading, and 1 other");
   });
 
-  it("has a sentence for a lead working alone", () => {
-    // "Louis leading, and 0 others" is what a count gets you here.
-    expect(describeTeam([member({ isLead: true })]).summary).toBe("Louis, leading and working alone");
+  // -----------------------------------------------------------------
+  // ONE PERSON IS NOT A SETTLED TEAM.
+  //
+  // Creating a project now puts the creator on it as lead, so every new
+  // project arrives with exactly one member that nobody chose. When a lone
+  // lead counted as done, a brand new project showed its People step ticked
+  // and collapsed, and the page opened on Phases instead - skipping the one
+  // question nobody had answered.
+  // -----------------------------------------------------------------
+  it("does NOT count a lone lead as a settled team", () => {
+    const result = describeTeam([member({ isLead: true })]);
+
+    expect(result.isComplete).toBe(false);
+    expect(result.summary).toBe("Louis leading, nobody else on it yet");
+  });
+
+  it("still leaves the BOARD ready with a lone lead", () => {
+    // The step is unticked because nobody has confirmed who else is on the
+    // project, which is a different question from whether the board works.
+    // Somebody genuinely working alone must not be told their board is
+    // incomplete for ever - and must never be told it is missing "a lead"
+    // while looking at themselves listed as the lead.
+    expect(describeTeam([member({ isLead: true })]).missing).toBeNull();
   });
 
   it("copes with a lead whose account was de-identified", () => {
     // De-identifying a dormant account keeps its project membership and
-    // drops its name, so a real lead can have none. The step is still
-    // complete - somebody IS leading.
+    // drops its name, so a real lead can have none.
     const result = describeTeam([member({ name: null, email: null, isLead: true })]);
 
+    expect(result.summary).toBe("Somebody leading, nobody else on it yet");
+  });
+
+  it("names a lead with no name once there are others too", () => {
+    const result = describeTeam([
+      member({ userId: "a", name: null, email: null, isLead: true }),
+      member({ userId: "b", name: "Josh" }),
+    ]);
+
     expect(result.isComplete).toBe(true);
-    expect(result.summary).toBe("Somebody, leading and working alone");
+    expect(result.summary).toBe("Somebody leading, and 1 other");
   });
 });
 
@@ -96,7 +128,7 @@ describe("describePhases", () => {
   it("names the phases rather than counting them", () => {
     const result = describePhases([phase("Discovery"), phase("Build"), phase("Handover")]);
 
-    expect(result).toEqual({ summary: "Discovery, Build, Handover", isComplete: true });
+    expect(result).toEqual({ summary: "Discovery, Build, Handover", isComplete: true, missing: null });
   });
 
   it("keeps the line readable when a project has many phases", () => {
@@ -129,23 +161,31 @@ describe("describeBudgetPools", () => {
 });
 
 describe("missingForBoard", () => {
-  it("names nothing when both steps are done", () => {
-    expect(missingForBoard({ summary: "", isComplete: true }, { summary: "", isComplete: true })).toEqual(
-      [],
-    );
+  const step = (missing: string | null, isComplete = missing === null) => ({
+    summary: "",
+    isComplete,
+    missing,
   });
 
-  it("names both when neither is", () => {
+  it("names nothing when the board has what it needs", () => {
+    expect(missingForBoard(step(null), step(null))).toEqual([]);
+  });
+
+  it("names both when neither is there", () => {
     // Named rather than "setup is incomplete", which sends somebody back
     // through all of it to find out which half.
-    expect(
-      missingForBoard({ summary: "", isComplete: false }, { summary: "", isComplete: false }),
-    ).toEqual(["a lead", "a phase"]);
+    expect(missingForBoard(step("a lead"), step("a phase"))).toEqual(["a lead", "a phase"]);
   });
 
   it("names only the one that is missing", () => {
-    expect(
-      missingForBoard({ summary: "", isComplete: true }, { summary: "", isComplete: false }),
-    ).toEqual(["a phase"]);
+    expect(missingForBoard(step(null), step("a phase"))).toEqual(["a phase"]);
+  });
+
+  it("reads `missing` and NOT `isComplete`", () => {
+    // The case the split exists for: a lone lead leaves the People step
+    // unticked while the board has everything it needs. Reading the
+    // completeness flag here would tell somebody working alone that their
+    // project was missing a lead, with their own name on the lead row.
+    expect(missingForBoard(step(null, false), step(null))).toEqual([]);
   });
 });

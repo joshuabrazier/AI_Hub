@@ -9,6 +9,7 @@ import { converseCeilingFor, converseText } from "@/lib/ai/converse";
 import {
   AI_CHAT_REQUEST_KINDS,
   TRANSCRIPTION_FILING_STATUSES,
+  TRANSCRIPTION_SOURCES,
   TRANSCRIPTION_SOURCE_DESCRIPTIONS,
   TRANSCRIPTION_STATUSES,
   type Transcription,
@@ -21,6 +22,7 @@ import { listSharepointFoldersRepo } from "@/lib/data/repositories/sharepoint-it
 import {
   claimTranscriptionFilingRepo,
   getPendingTranscriptionFilingsRepo,
+  findFiledCopyByTranscriptIdRepo,
   getTranscriptionFilingRepo,
   markTranscriptionFilingAttemptRepo,
   updateTranscriptionFilingRepo,
@@ -48,6 +50,7 @@ import {
   resolveFilingSubfolder,
   subfolderPath,
 } from "@/lib/sharepoint/filing-subfolder";
+import { transcriptIdFromSourceRef } from "@/lib/graph/teams-transcript";
 import { ensureChildFolder, ensureFolderPath, uploadTextFile } from "@/lib/sharepoint/sharepoint-write";
 import { dateInAppZone } from "@/lib/timezone";
 
@@ -675,6 +678,74 @@ export async function confirmTranscriptionFilingService(
       title: transcription.title,
       extension: NOTES_EXTENSION,
     });
+
+    // -----------------------------------------------------------------
+    // HAS A COLLEAGUE ALREADY FILED THIS MEETING?
+    //
+    // Several of our people sit in the same meeting and each imports it, so
+    // each ends up with their own transcription. That is right and stays -
+    // a transcription is somebody's own record, with their own summary, and
+    // the whole feature is built on that boundary.
+    //
+    // SHAREPOINT IS THE PART THAT IS SHARED. Uploading per attendee puts one
+    // meeting into a client's library as many times as people were in the
+    // room, and every copy looks legitimate: SharePoint takes a second
+    // upload of the same name as a new VERSION, not an error, so nothing
+    // downstream notices either.
+    //
+    // MATCHED ON THE TRANSCRIPT ID, never on the source ref, because an
+    // event id is per mailbox - see transcriptIdFromSourceRef. A ref with no
+    // transcript half yields an empty string and the lookup is skipped, so
+    // an older row files normally rather than matching something it should
+    // not.
+    //
+    // AND IT LINKS RATHER THAN REFUSING. The second person's notes ARE
+    // filed - the file is there and they can open it - so the row goes to
+    // FILED pointing at the existing item, with `decidedVia` recording that
+    // it was linked rather than uploaded and the reason naming who put it
+    // there. Refusing would leave them with a row that says nothing happened
+    // about a meeting whose notes are sitting in SharePoint.
+    // -----------------------------------------------------------------
+    const transcriptId = transcription.sourceRef
+      ? transcriptIdFromSourceRef(transcription.sourceRef)
+      : "";
+
+    const alreadyFiled =
+      transcription.source === TRANSCRIPTION_SOURCES.TEAMS && transcriptId.length > 0
+        ? await findFiledCopyByTranscriptIdRepo(transcriptId, user.id)
+        : null;
+
+    if (alreadyFiled) {
+      const who = alreadyFiled.userName ?? "somebody else who was in the meeting";
+
+      await updateTranscriptionFilingRepo(filing.id, {
+        status: TRANSCRIPTION_FILING_STATUSES.FILED,
+        // The EXISTING file's location, copied across, so this row answers
+        // "where did these notes go" with the place they actually went.
+        driveId: alreadyFiled.driveId,
+        folderItemId: alreadyFiled.folderItemId,
+        folderPath: alreadyFiled.folderPath,
+        fileItemId: alreadyFiled.fileItemId,
+        fileWebUrl: alreadyFiled.fileWebUrl,
+        fileName: alreadyFiled.fileName,
+        // Its own value, so the request log and the filing list can tell a
+        // linked row from one this person actually uploaded. Anything that
+        // counts uploads would otherwise count these too.
+        decidedVia: "existing",
+        reason: joinNotes(
+          filing.reason,
+          `${who} filed these notes already, so this links to their copy rather than adding a second one.`,
+        ),
+        // The moment the link was made, not the moment of the original
+        // upload: this row is about what happened to THIS person's filing.
+        filedAt: new Date(),
+        error: null,
+      });
+
+      revalidateTranscriptionViews();
+
+      return TRANSCRIPTION_FILING_STATUSES.FILED;
+    }
 
     try {
       const uploaded = await uploadTextFile({

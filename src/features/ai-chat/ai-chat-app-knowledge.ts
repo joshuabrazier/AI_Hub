@@ -55,6 +55,16 @@ export function appKnowledgePrompt(role: UserRole, userName: string | null): str
   for (const group of groups) {
     for (const entry of group.items) {
       if (isCollapsible(entry)) {
+        // A group that is ALSO A PLACE names itself first. Most are not -
+        // "AI" and "Reports" are categories with no screen behind them - but
+        // Projects has a page of its own, and listing only its children would
+        // leave the assistant unable to point anybody at the list. It was
+        // reachable here as a separate "All projects" link until that row and
+        // this group were merged into one.
+        if (entry.href) {
+          screens.push(`${entry.label} (${entry.href}) - ${entry.tooltip}`);
+        }
+
         for (const child of entry.children) {
           screens.push(`${entry.label} > ${child.label} (${child.href}) - ${child.tooltip}`);
         }

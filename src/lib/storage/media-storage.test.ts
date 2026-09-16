@@ -75,7 +75,7 @@ describeStorage("media storage", () => {
     // from a broken feature, and the failure appears only in the browser.
     const key = testKey("upload-round-trip");
 
-    const response = await putThroughSas(await createUploadUrl(key));
+    const response = await putThroughSas((await createUploadUrl(key)).url);
 
     expect(response.status).toBe(201);
 
@@ -91,9 +91,9 @@ describeStorage("media storage", () => {
     // fetch somebody's meeting recording.
     const key = testKey("write-only");
 
-    await putThroughSas(await createUploadUrl(key));
+    await putThroughSas((await createUploadUrl(key)).url);
 
-    const read = await fetch(await createUploadUrl(key));
+    const read = await fetch((await createUploadUrl(key)).url);
 
     expect(read.ok).toBe(false);
   });
@@ -123,7 +123,7 @@ describeStorage("media storage", () => {
     // and the retention sweep can reach the same key afterwards.
     const key = testKey("delete-twice");
 
-    await putThroughSas(await createUploadUrl(key));
+    await putThroughSas((await createUploadUrl(key)).url);
 
     await deleteMedia(key);
     await deleteMedia(key);
@@ -136,7 +136,7 @@ describeStorage("media storage", () => {
     // must appear here or a live recording would be deleted as an orphan.
     const key = testKey("reconciliation");
 
-    await putThroughSas(await createUploadUrl(key));
+    await putThroughSas((await createUploadUrl(key)).url);
 
     expect(await listAllMediaKeys()).toContain(key);
   });

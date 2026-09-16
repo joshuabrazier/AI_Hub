@@ -1,7 +1,7 @@
 import "server-only";
 
 import { requireUserRole } from "@/lib/auth/session-auth-server";
-import { PROJECT_STATUSES, USER_ROLES } from "@/lib/data/kysely-database-types";
+import { PROJECT_KINDS, PROJECT_STATUSES, USER_ROLES } from "@/lib/data/kysely-database-types";
 import { getAllProjectsRepo } from "@/lib/data/repositories/projects.repository";
 import { getActiveStaffUsersRepo, getMemberUsersRepo } from "@/lib/data/repositories/users.repository";
 import { handleError } from "@/lib/handle-errors";
@@ -49,7 +49,14 @@ export async function getAdminDashboardService(): Promise<AdminDashboardDTO> {
         activeMembers: members.filter((member) => member.isActive && member.deidentifiedAt === null).length,
         activeStaff: staff.length,
         // On hold and completed are live rows and neither is work in flight.
-        activeProjects: projects.filter((project) => project.status === PROJECT_STATUSES.ACTIVE).length,
+        // Ongoing projects are excluded too, and for a different reason: a
+        // standing bucket of time codes is permanently active by definition,
+        // so counting it would add a constant to a figure meant to say how
+        // much delivery work is on.
+        activeProjects: projects.filter(
+          (project) =>
+            project.status === PROJECT_STATUSES.ACTIVE && project.kind !== PROJECT_KINDS.ONGOING,
+        ).length,
       },
     };
   } catch (error) {

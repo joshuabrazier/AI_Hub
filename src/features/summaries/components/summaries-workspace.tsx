@@ -75,6 +75,29 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
   const tooLong = characters > MAX_INPUT_CHARS;
   const canSubmit = page.isConfigured && !isStreaming && characters >= MIN_INPUT_CHARS && !tooLong;
 
+  // -------------------------------------------------------------------
+  // HOW MUCH SHORTER, which is the only thing this screen is about.
+  //
+  // Everything else on the page is machinery. A long thing became a short
+  // thing and the screen never said by how much, so the result read as
+  // "some text arrived" rather than as the thing somebody came for.
+  //
+  // Arithmetic on two character counts, done here, so it is exact rather
+  // than a model's guess at its own output. The reading figure is the one
+  // ESTIMATE - five characters a word and 240 words a minute are the
+  // conventional numbers - which is why the copy says "about", and why it is
+  // shown only from a minute up. "About 0 minutes saved" is worse than
+  // silence.
+  // -------------------------------------------------------------------
+  const summaryCharacters = summary.trim().length;
+  const percentOfSource =
+    characters > 0 && summaryCharacters > 0
+      ? Math.max(1, Math.round((summaryCharacters / characters) * 100))
+      : 0;
+  const minutesOfReading = (count: number) => count / 5 / 240;
+  const minutesSaved = Math.round(minutesOfReading(characters) - minutesOfReading(summaryCharacters));
+  const hasResult = summaryCharacters > 0;
+
   const stop = () => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -190,7 +213,9 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
     return (
       <div
         role="status"
-        className="flex flex-col items-center justify-center rounded-xl border border-border bg-muted/40 px-6 py-16 text-center"
+        // h-full so it centres in the filled page rather than sitting at the
+        // top of it with the rest of the window empty underneath.
+        className="flex h-full flex-col items-center justify-center rounded-xl border border-border bg-muted/40 px-6 py-16 text-center"
       >
         <span className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
           <Sparkles size={22} aria-hidden="true" />
@@ -205,40 +230,55 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      {/* What goes in */}
-      <section className="flex min-w-0 flex-col gap-4">
-        <div className="grid gap-2">
-          <Label htmlFor="summary-source">Text to summarise</Label>
-          <Textarea
-            id="summary-source"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            disabled={isStreaming}
-            rows={16}
-            placeholder="Paste a document, a transcript, an email thread - anything you would rather not read in full."
-            className="resize-y font-normal"
-          />
-          <p
-            className={cn(
-              "text-xs",
-              tooShort || tooLong ? "text-destructive" : "text-muted-foreground",
-            )}
-          >
-            {tooLong
-              ? `${characters.toLocaleString()} characters - too long to do in one pass. Split it and summarise the parts.`
-              : tooShort
-                ? `${characters.toLocaleString()} characters - paste at least ${MIN_INPUT_CHARS} to summarise.`
-                : `${characters.toLocaleString()} characters`}
-          </p>
+    // ===================================================================
+    // THE ANSWER IS THE COLOURED HALF.
+    //
+    // This page was two white rectangles: the box you paste into and the box
+    // you read out of were the same object twice, so nothing on the screen
+    // said which one you came for. It had no focal point, and it sat in the
+    // top-left of an empty window.
+    //
+    // So the result gets --spotlight and the input does not. The raw material
+    // recedes, the thing the machine produced comes forward, and the page has
+    // colour in it from the moment it loads rather than only after somebody
+    // has used it - which is the part that matters, because a screen that is
+    // only interesting once you have done something is a screen that looks
+    // dead on arrival.
+    //
+    // ONE spotlight per screen. Two would be the same flatness with more
+    // colour in it.
+    // ===================================================================
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      {/* -----------------------------------------------------------------
+          THE DEPTH CHOICE, STILL THREE CARDS WITH THEIR DESCRIPTIONS - but
+          across rather than down.
+          A previous pass collapsed these into a segmented control, which was
+          wrong twice: it was a generic control, and the descriptions ARE the
+          point. "Detailed", "Summary" and "Executive" are three words that
+          leave somebody guessing, and the sentence under each is what stops
+          the guessing. Three across keeps every description on screen and
+          still costs one row instead of three.
+          ----------------------------------------------------------------- */}
+      <fieldset className="shrink-0" disabled={isStreaming}>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <legend className="text-sm font-medium text-foreground">Style</legend>
+
+          <div className="flex items-center gap-2">
+            {isStreaming ? (
+              <Button type="button" variant="outline" size="sm" onClick={stop}>
+                <StopCircle size={16} aria-hidden="true" />
+                Stop
+              </Button>
+            ) : null}
+
+            <Button type="button" onClick={submit} disabled={!canSubmit} loading={isStreaming}>
+              <Sparkles size={16} aria-hidden="true" />
+              {isStreaming ? "Summarising…" : "Summarise"}
+            </Button>
+          </div>
         </div>
 
-        {/* Style. Radio behaviour rather than a select, because the
-            descriptions are the point - a three-word label alone would have
-            people guessing which one they want. */}
-        <fieldset className="grid gap-2" disabled={isStreaming}>
-          <legend className="mb-1 text-sm font-medium text-foreground">Style</legend>
-
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
           {STYLE_ORDER.map((option) => {
             const isSelected = style === option;
 
@@ -246,8 +286,10 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
               <label
                 key={option}
                 className={cn(
-                  "flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors",
-                  isSelected ? "border-primary bg-primary/5" : "border-border hover:bg-muted",
+                  "flex min-w-0 cursor-pointer gap-2.5 rounded-lg border p-3 transition-colors",
+                  isSelected
+                    ? "border-primary bg-primary/5 ring-1 ring-primary"
+                    : "border-border hover:bg-muted",
                   isStreaming && "cursor-not-allowed opacity-60",
                 )}
               >
@@ -258,45 +300,70 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
                   checked={isSelected}
                   disabled={isStreaming}
                   onChange={() => setStyle(option)}
-                  className="mt-1 size-4 shrink-0 accent-primary"
+                  className="mt-0.5 size-4 shrink-0 accent-primary"
                 />
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-foreground">
                     {SUMMARY_STYLE_LABELS[option]}
                   </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                  <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
                     {SUMMARY_STYLE_DESCRIPTIONS[option]}
                   </span>
                 </span>
               </label>
             );
           })}
-        </fieldset>
-
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" onClick={submit} disabled={!canSubmit} loading={isStreaming}>
-            <Sparkles size={16} aria-hidden="true" />
-            {isStreaming ? "Summarising…" : "Summarise"}
-          </Button>
-
-          {isStreaming ? (
-            <Button type="button" variant="outline" onClick={stop}>
-              <StopCircle size={16} aria-hidden="true" />
-              Stop
-            </Button>
-          ) : null}
         </div>
-      </section>
+      </fieldset>
 
-      {/* What comes out */}
-      <section className="min-w-0">
-        <div className="flex min-h-64 flex-col rounded-xl border border-border">
-          <div className="flex items-center justify-between gap-3 border-b border-border p-4">
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
+        {/* ---------------------------------------------------------------
+            WHAT GOES IN. Deliberately plain: it is raw material, and giving
+            it equal weight to the answer is what made the page read as two
+            empty boxes.
+            --------------------------------------------------------------- */}
+        <section className="flex min-h-0 min-w-0 flex-col gap-2">
+          <div className="flex min-h-7 shrink-0 items-center justify-between gap-3">
+            <Label htmlFor="summary-source">Text to summarise</Label>
+
+            <span
+              className={cn(
+                "text-xs tabular-nums",
+                tooShort || tooLong ? "text-destructive" : "text-muted-foreground",
+              )}
+            >
+              {characters.toLocaleString()} characters
+            </span>
+          </div>
+
+          <Textarea
+            id="summary-source"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            disabled={isStreaming}
+            placeholder="Paste a document, a transcript, an email thread - anything you would rather not read in full."
+            className="min-h-56 flex-1 resize-none font-normal"
+          />
+
+          {tooLong || tooShort ? (
+            <p className="shrink-0 text-xs text-destructive">
+              {tooLong
+                ? "Too long to do in one pass. Split it and summarise the parts."
+                : `Paste at least ${MIN_INPUT_CHARS.toLocaleString()} characters to summarise.`}
+            </p>
+          ) : null}
+        </section>
+
+        {/* ---------------------------------------------------------------
+            WHAT COMES OUT. The spotlight.
+            --------------------------------------------------------------- */}
+        <section className="flex min-h-0 min-w-0 flex-col gap-2">
+          <div className="flex min-h-7 shrink-0 items-center justify-between gap-3">
             <p className="text-sm font-medium text-foreground">
               {SUMMARY_STYLE_RESULT_HEADINGS[style]}
             </p>
 
-            {summary && !isStreaming ? (
+            {hasResult && !isStreaming ? (
               <Button type="button" variant="outline" size="sm" onClick={copy}>
                 <Copy size={14} aria-hidden="true" />
                 Copy
@@ -304,51 +371,133 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
             ) : null}
           </div>
 
-          {streamError !== null && (
-            <div
-              className="border-b border-destructive/30 bg-destructive/5 px-4 py-3"
-              // Announced, because it can arrive a minute after the send
-              // while the reader is looking at the source text.
-              role="alert"
-            >
-              <p className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <TriangleAlert size={14} className="text-destructive" aria-hidden="true" />
-                {summary ? "The summary did not finish" : "The summary could not be produced"}
-              </p>
-              {/* Selectable and wrapped. A diagnosis somebody has to retype
-                  is one they will not pass on. */}
-              <p className="mt-1.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
-                {streamError}
-              </p>
-              {summary ? (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  What is shown below stops where it stopped. Nothing is saved either way, so treat it as
-                  incomplete rather than short.
-                </p>
-              ) : null}
-            </div>
-          )}
+          {/* -------------------------------------------------------------
+              A TEAL FRAME AROUND A WHITE SHEET, rather than prose printed
+              straight onto the colour.
+              The frame is what makes this the answer half of the page. The
+              sheet is where the words go, and it is white for two reasons
+              that both matter more than the extra boldness would be worth:
+              several paragraphs of prose on a saturated ground is harder to
+              read, on a screen whose entire job is reading; and ModelMarkdown
+              paints with the PAGE's tokens - text-foreground, bg-muted,
+              text-primary links - so on teal its body text would be near-
+              black on dark teal. That is the same mistake the rail made with
+              its rows, and the fix there was to restate the ink. Here the
+              better answer is to give the ink the surface it was measured
+              against.
+              ------------------------------------------------------------- */}
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-xl bg-spotlight p-2 text-spotlight-foreground shadow-lg">
+            {/* -----------------------------------------------------------
+                THE READOUT, and it is the one loud thing on the page.
+                A percentage at display size is not decoration here: it is
+                the single fact the whole screen exists to produce. It earns
+                the room by only being there once there is a result - before
+                that the header carries the invitation instead, so the panel
+                is never a big empty box with a zero in it.
+                ----------------------------------------------------------- */}
+            <div className="flex shrink-0 items-end justify-between gap-4 px-3 pt-2 pb-1">
+              {hasResult ? (
+                <>
+                  <div className="min-w-0">
+                    <p className="font-heading text-4xl leading-none font-bold tracking-tight text-spotlight-accent tabular-nums">
+                      {percentOfSource}%
+                    </p>
+                    <p className="mt-1.5 text-xs text-spotlight-muted">
+                      {summaryCharacters.toLocaleString()} of {characters.toLocaleString()} characters
+                      {minutesSaved >= 1 ? `, about ${minutesSaved} min of reading saved` : ""}
+                    </p>
+                  </div>
 
-          <div className="min-w-0 flex-1 p-4">
-            {summary ? (
-              // Model output, so it goes through the same renderer as a chat
-              // reply - React elements, never an HTML string. The source text
-              // was somebody else's document and a model repeats back what it
-              // was given, which is exactly the case that renderer exists for.
-              <ModelMarkdown content={summary} />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center py-10 text-center">
-                <span className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <FileText size={22} aria-hidden="true" />
-                </span>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  {isStreaming ? "Reading it now…" : "The summary will appear here."}
+                  {/* The proportion, drawn. Vertical so it reads as a level
+                      rather than as a progress bar, which is a different
+                      promise. One transition, and it is skipped for anybody
+                      who has asked for less motion. */}
+                  <div
+                    className="flex h-12 w-2 shrink-0 items-end overflow-hidden rounded-full bg-spotlight-foreground/15"
+                    role="img"
+                    aria-label={`The summary is ${percentOfSource}% the length of your text`}
+                  >
+                    <div
+                      className="w-full rounded-full bg-spotlight-accent transition-[height] duration-700 ease-out motion-reduce:transition-none"
+                      style={{ height: `${percentOfSource}%` }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-spotlight-muted">
+                  {isStreaming ? "Reading it now…" : "Your summary will land here."}
                 </p>
+              )}
+            </div>
+
+            {streamError !== null && (
+              <div
+                className="shrink-0 rounded-lg bg-destructive/25 px-3 py-2.5"
+                // Announced, because it can arrive a minute after the send
+                // while the reader is looking at the source text.
+                role="alert"
+              >
+                <p className="flex items-center gap-2 text-sm font-medium text-spotlight-foreground">
+                  <TriangleAlert size={14} aria-hidden="true" />
+                  {hasResult ? "The summary did not finish" : "The summary could not be produced"}
+                </p>
+                {/* Selectable and wrapped. A diagnosis somebody has to retype
+                    is one they will not pass on. */}
+                <p className="mt-1.5 break-words whitespace-pre-wrap text-xs leading-relaxed text-spotlight-muted">
+                  {streamError}
+                </p>
+                {hasResult ? (
+                  <p className="mt-2 text-xs text-spotlight-muted">
+                    What is shown below stops where it stopped. Nothing is saved either way, so treat it
+                    as incomplete rather than short.
+                  </p>
+                ) : null}
               </div>
             )}
+
+            {/* The panel scrolls, not the page. A detailed summary of a long
+                report is taller than the window, and with the page filling
+                the viewport there is nowhere else for it to go. */}
+            {/* The sheet. It scrolls, not the page - a detailed summary of a
+                long report is taller than the window, and with the page
+                filling the viewport there is nowhere else for it to go. */}
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-lg bg-card px-4 py-3.5 text-card-foreground">
+              {hasResult ? (
+                // Model output, so it goes through the same renderer as a chat
+                // reply - React elements, never an HTML string. The source text
+                // was somebody else's document and a model repeats back what it
+                // was given, which is exactly the case that renderer exists for.
+                <ModelMarkdown content={summary} />
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                  <span className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <FileText size={24} aria-hidden="true" />
+                  </span>
+                  {/* AN EMPTY SCREEN IS AN INVITATION. "The summary will
+                      appear here" tells somebody looking at an empty box that
+                      the box is empty. */}
+                  <p className="max-w-56 text-sm text-muted-foreground">
+                    {isStreaming
+                      ? "Reading your text and writing it back shorter."
+                      : canSubmit
+                        ? "Ready when you are. Press Summarise."
+                        : "Paste your text on the left to get started."}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* The retention warning where it can still be acted on: beside a
+                summary somebody is about to lose, rather than only in the page
+                description they read before they had one. */}
+            {hasResult && !isStreaming ? (
+              <p className="shrink-0 px-3 pb-1 text-xs text-spotlight-muted">
+                Not saved anywhere. Copy it before you leave this page.
+              </p>
+            ) : null}
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }

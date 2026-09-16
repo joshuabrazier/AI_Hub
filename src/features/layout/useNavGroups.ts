@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import { authClient } from "@/lib/auth/auth-client";
 import { type UserRole } from "@/lib/data/kysely-database-types";
 
-import { navGroupsForRole, projectsNavGroup, type NavGroup } from "./nav-items";
+import { navGroupsForRole, withMyProjects, type NavGroup } from "./nav-items";
 import { useMyProjects } from "./my-projects-context";
 
 // -------------------------------------------------------------------
@@ -38,20 +38,22 @@ export function useNavGroups(): NavGroup[] {
     const groups = navGroupsForRole(role as UserRole);
 
     // -----------------------------------------------------------------
-    // THE PERSON'S OWN PROJECTS, SPLICED IN AFTER DELIVERY.
+    // THE PERSON'S OWN PROJECTS, HUNG UNDER THE ROW THAT IS ALREADY THERE.
     //
-    // Placed there rather than appended, because it belongs beside the
-    // "All projects" link it overflows into - a group of boards at the very
-    // bottom, under the account and settings entries, would read as an
-    // afterthought.
+    // This used to splice in a whole second GROUP, which is how the rail
+    // ended up with a link called "All projects", a heading reading
+    // "Projects" and a disclosure also reading "Projects" - three rows over
+    // one list. The "Projects" entry now lives in the static tree with no
+    // children, and this fills them in.
     //
-    // ARRIVES LATE AND THAT IS FINE. The projects are fetched by
-    // MyProjectsProvider after the session resolves, so the sidebar renders
-    // its static entries first and this group appears underneath a moment
-    // later. Nothing moves that somebody was about to click: it is added
-    // below the existing items, never inserted above them.
+    // ARRIVES LATE, AND NOTHING MOVES WHEN IT DOES. The projects are fetched
+    // by MyProjectsProvider after the session resolves, so the sidebar paints
+    // its static entries first. Because the row already exists, the children
+    // unfold UNDERNEATH it rather than a new row appearing above whatever
+    // somebody was reaching for.
     // -----------------------------------------------------------------
-    const projectGroup = projectsNavGroup(
+    return withMyProjects(
+      groups,
       role as UserRole,
       projects.map((project) => ({
         id: project.id,
@@ -59,16 +61,5 @@ export function useNavGroups(): NavGroup[] {
         clientName: project.clientName,
       })),
     );
-
-    if (!projectGroup) return groups;
-
-    const deliveryAt = groups.findIndex((group) => group.label === "Delivery");
-
-    // Appended when there is no Delivery group to sit under, rather than
-    // dropped - a nav tree that gains one later should not silently lose the
-    // projects.
-    if (deliveryAt === -1) return [...groups, projectGroup];
-
-    return [...groups.slice(0, deliveryAt + 1), projectGroup, ...groups.slice(deliveryAt + 1)];
   }, [isPending, role, projects]);
 }

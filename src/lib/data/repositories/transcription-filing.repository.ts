@@ -1,10 +1,13 @@
 import "server-only";
 
+import { sql } from "kysely";
+
 import { database, DBClient } from "@/lib/data/kysely-database-client";
 import { handleError } from "@/lib/handle-errors";
 import {
   NewTranscriptionFiling,
   TRANSCRIPTION_FILING_STATUSES,
+  TRANSCRIPTION_SOURCES,
   TranscriptionFiling,
   TranscriptionFilingStatus,
   UpdateTranscriptionFiling,
@@ -234,5 +237,109 @@ export async function countTranscriptionFilingsByStatusRepo(
     return counts;
   } catch (error) {
     throw handleError("countTranscriptionFilingsByStatusRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
+// HAS SOMEBODY ELSE ALREADY FILED THIS MEETING?
+// ===================================================================
+//
+// THE ONE READ IN THIS FILE THAT CROSSES USERS, and it is deliberate rather
+// than an oversight in the rule above.
+//
+// Several of our people sit in the same meeting. Each imports it, so each
+// gets their own transcription row - that part is right and stays, because a
+// transcription is somebody's own private record with their own summary. But
+// SHAREPOINT IS SHARED. Filing the same meeting twice puts two copies of one
+// set of notes in a client's library, and on a big internal meeting it is
+// however many people were in the room.
+//
+// WHY A CROSS-USER LOOKUP IS SAFE HERE, which is the question worth
+// answering before adding one:
+//
+//   The key is the TRANSCRIPT ID, and Graph only hands that to somebody it
+//   has already decided may read the transcript - every call in this feature
+//   is delegated, so attendance is enforced by Microsoft and not by us. A
+//   caller therefore cannot ask about a meeting they were not in: they would
+//   have no transcript id to ask with. What comes back is that a colleague
+//   filed a meeting THIS PERSON also attended, and a link to a file they can
+//   already open.
+//
+//   It returns no transcript, no summary and no content. Only where the
+//   notes went, who put them there, and when.
+//
+// WHY THE TRANSCRIPT HALF AND NOT THE WHOLE source_ref. A source ref is
+// `eventId|transcriptId`, and an EVENT ID IS PER MAILBOX - each attendee
+// holds their own copy of the calendar item with its own id, so two people
+// in one meeting have two different source refs. The transcript half is a
+// property of the online meeting itself, resolved from the join URL everyone
+// shares, so it is the same for all of them. It is the only part of the ref
+// that identifies the MEETING rather than somebody's view of it.
+//
+// split_part rather than LIKE, because a LIKE pattern would have to escape
+// whatever Graph put in the id and a wildcard match could hit an event id
+// that merely ends the same way.
+// -------------------------------------------------------------------
+export type FiledElsewhere = {
+  filingId: string;
+  userId: string;
+  /** Who filed it, for the sentence shown to the second person. */
+  userName: string | null;
+  filedAt: Date | null;
+  driveId: string | null;
+  folderItemId: string | null;
+  folderPath: string | null;
+  fileItemId: string | null;
+  fileWebUrl: string | null;
+  fileName: string | null;
+};
+
+export async function findFiledCopyByTranscriptIdRepo(
+  transcriptId: string,
+  excludeUserId: string,
+  db: DBClient = database,
+): Promise<FiledElsewhere | null> {
+  try {
+    // An empty id would match every row whose source ref has no second half.
+    // Refused here rather than trusted to the caller, because the cost of
+    // getting it wrong is linking somebody's notes to an unrelated file.
+    if (transcriptId.trim().length === 0) return null;
+
+    const row = await db
+      .selectFrom("transcriptionFiling as f")
+      .innerJoin("transcriptions as t", "t.id", "f.transcriptionId")
+      .leftJoin("users as u", "u.id", "f.userId")
+      .select([
+        "f.id as filingId",
+        "f.userId as userId",
+        "u.name as userName",
+        "f.filedAt as filedAt",
+        "f.driveId as driveId",
+        "f.folderItemId as folderItemId",
+        "f.folderPath as folderPath",
+        "f.fileItemId as fileItemId",
+        "f.fileWebUrl as fileWebUrl",
+        "f.fileName as fileName",
+      ])
+      .where("f.status", "=", TRANSCRIPTION_FILING_STATUSES.FILED)
+      // Somebody else's. This person's own row is handled by the
+      // already-filed refusal in the service and says something different.
+      .where("f.userId", "!=", excludeUserId)
+      .where("t.source", "=", TRANSCRIPTION_SOURCES.TEAMS)
+      .where(sql<string>`split_part(${sql.ref("t.sourceRef")}, '|', 2)`, "=", transcriptId)
+      // A file item id is what makes the copy LINKABLE. A filed row without
+      // one cannot be offered to the second person, so it is not a copy for
+      // this purpose.
+      .where("f.fileItemId", "is not", null)
+      // The earliest, so repeated runs name the same person rather than
+      // whichever row the planner happened to return.
+      .orderBy("f.filedAt")
+      .orderBy("f.id")
+      .executeTakeFirst();
+
+    return row ?? null;
+  } catch (error) {
+    throw handleError("findFiledCopyByTranscriptIdRepo", error);
   }
 }

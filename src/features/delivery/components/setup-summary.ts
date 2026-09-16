@@ -18,30 +18,58 @@ import type { PhaseDTO, ProjectMemberDTO } from "../delivery.types";
 // impossible to notice.
 // ===================================================================
 
+// ===================================================================
+// TWO DIFFERENT QUESTIONS, AND THEY USED TO SHARE ONE FLAG.
+//
+//   isComplete  has somebody SETTLED this step? It ticks the step, and it
+//               decides which step the page opens on.
+//   missing     what does the BOARD still lack? It feeds the "not ready
+//               yet" line, and a project can be perfectly usable with a
+//               step nobody has settled.
+//
+// They were the same boolean until the creator started being added to their
+// own project automatically. That one row made a brand new project look like
+// its People step was finished - ticked, collapsed, and the page skipping
+// straight past it to Phases - when nobody had chosen a team at all.
+// ===================================================================
 export type SetupStepSummary = {
   summary: string;
   isComplete: boolean;
+  /** What the BOARD still lacks because of this step, or null if nothing. */
+  missing: string | null;
 };
 
 // -------------------------------------------------------------------
 // People.
 //
-// A LEAD IS PART OF BEING DONE, and this is the only place that says so.
+// A LEAD IS PART OF BEING USABLE, and this is the only place that says so.
 // canEditProjectTasks turns on being an admin or being the lead, so a
 // project with four people and nobody leading has a board only an admin can
 // change - while a member list with four rows in it looks entirely finished.
+//
+// ONE PERSON IS NOT A SETTLED TEAM. Creating a project puts the creator on
+// it as lead, so every new project arrives here with exactly one member that
+// nobody chose. Treating that as done ticked the step before anybody had
+// looked at it. So one member leaves the step OPEN and UNTICKED - "there
+// could be more people on this" is the whole point of the step.
+//
+// It does NOT make the board unready, which is the reason `missing` is its
+// own field. A project with one lead and some phases works perfectly well;
+// somebody genuinely working alone should not be told their board is
+// incomplete for ever, they should just see a step they have not ticked off.
 // -------------------------------------------------------------------
 export function describeTeam(members: readonly ProjectMemberDTO[]): SetupStepSummary {
   const lead = members.find((member) => member.isLead);
 
   if (members.length === 0) {
-    return { summary: "Nobody on it yet", isComplete: false };
+    return { summary: "Nobody on it yet", isComplete: false, missing: "a lead" };
   }
 
   if (!lead) {
     return {
       summary: `${members.length} ${members.length === 1 ? "person" : "people"}, but nobody leading yet`,
       isComplete: false,
+      missing: "a lead",
     };
   }
 
@@ -50,12 +78,20 @@ export function describeTeam(members: readonly ProjectMemberDTO[]): SetupStepSum
   const leadName = userDisplayName(lead) ?? "Somebody";
   const others = members.length - 1;
 
+  if (others === 0) {
+    return {
+      // Phrased as a position rather than a verdict. "Working alone" read as
+      // a settled answer, which is exactly what it is not yet.
+      summary: `${leadName} leading, nobody else on it yet`,
+      isComplete: false,
+      missing: null,
+    };
+  }
+
   return {
-    summary:
-      others === 0
-        ? `${leadName}, leading and working alone`
-        : `${leadName} leading, and ${others} ${others === 1 ? "other" : "others"}`,
+    summary: `${leadName} leading, and ${others} ${others === 1 ? "other" : "others"}`,
     isComplete: true,
+    missing: null,
   };
 }
 
@@ -73,13 +109,13 @@ const MAX_NAMED_PHASES = 4;
 // -------------------------------------------------------------------
 export function describePhases(phases: readonly PhaseDTO[]): SetupStepSummary {
   if (phases.length === 0) {
-    return { summary: "No phases yet, so the board has nowhere to put a task", isComplete: false };
+    return { summary: "No phases yet, so the board has nowhere to put a task", isComplete: false, missing: "a phase" };
   }
 
   const names = phases.map((phase) => phase.name);
 
   if (names.length <= MAX_NAMED_PHASES) {
-    return { summary: names.join(", "), isComplete: true };
+    return { summary: names.join(", "), isComplete: true, missing: null };
   }
 
   const shown = names.slice(0, MAX_NAMED_PHASES - 1);
@@ -87,6 +123,7 @@ export function describePhases(phases: readonly PhaseDTO[]): SetupStepSummary {
   return {
     summary: `${shown.join(", ")} and ${names.length - shown.length} more`,
     isComplete: true,
+    missing: null,
   };
 }
 
@@ -109,9 +146,15 @@ export function describeBudgetPools(pools: readonly { name: string }[]): string 
 //
 // "Setup is incomplete" sends somebody back through all of it. Naming the
 // two things means they can go straight to the one that is not done.
+//
+// IT READS `missing` RATHER THAN `isComplete`, and the difference is the
+// whole reason that field exists. An unticked step is not automatically a
+// broken board: a project with one lead and some phases is usable, and its
+// People step is unticked only because nobody has confirmed who else is on
+// it. Asking the completeness flag here would have told somebody working
+// alone that their board needed "a lead" while they were looking at
+// themselves listed as the lead.
 // -------------------------------------------------------------------
 export function missingForBoard(team: SetupStepSummary, phases: SetupStepSummary): string[] {
-  return [team.isComplete ? null : "a lead", phases.isComplete ? null : "a phase"].filter(
-    (item): item is string => item !== null,
-  );
+  return [team.missing, phases.missing].filter((item): item is string => item !== null);
 }

@@ -53,6 +53,12 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-panel-foreground: var(--panel-foreground);
+  --color-panel: var(--panel);
+  --color-spotlight-accent: var(--spotlight-accent);
+  --color-spotlight-muted: var(--spotlight-muted);
+  --color-spotlight-foreground: var(--spotlight-foreground);
+  --color-spotlight: var(--spotlight);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -122,6 +128,54 @@
   --card-foreground: #0f1a1c;
   --popover: #ffffff;
   --popover-foreground: #0f1a1c;
+
+  /* -----------------------------------------------------------------
+     AN INNER LIST PANEL, AND IT EXISTS BECAUSE SHARING --sidebar BROKE.
+     A feature that puts its own "pick one of these" column beside the app
+     rail - AI chat's conversations, and anything that copies it - paints
+     that column with this.
+     It used to use --sidebar, and the reasoning was sound at the time: both
+     are navigation columns, the rail was then near-white, and two different
+     near-white tints side by side read as a mistake rather than a design.
+     When the rail became the brand teal that reasoning inverted in one step -
+     the chat screen showed TWO TEAL COLUMNS against each other, with the
+     list's page-coloured text stranded on a surface it was never measured
+     against. The rail's own note had predicted exactly this failure three
+     moves earlier.
+     So the inner panel gets a token of its own. The relationship is what
+     matters and it holds in both themes: the rail sits furthest from the
+     thread, this sits between them. Light runs 46 / 92 / 100 in L*, dark runs
+     23 / 14 / 6 - inverted in direction, identical in structure.
+     NOT --muted AND NOT --secondary, both of which are the obvious reach and
+     both of which fail: --muted is #f2f7f8 here, a step off white nobody can
+     see, and in dark it is #131f22, the SAME VALUE as --card. --secondary
+     carries badges and buttons, so tuning it for a column would move those
+     with it.
+     ----------------------------------------------------------------- */
+  --panel: #dceaed;
+  --panel-foreground: #0f1a1c;
+
+  /* -----------------------------------------------------------------
+     THE ONE SURFACE ON A SCREEN THAT CARRIES ITS PAYOFF.
+     Deliberately domain-neutral: it is not "the summary panel", it is the
+     place a screen puts the thing somebody came for. Summaries uses it for
+     the model's answer. Anything with a clear before-and-after can.
+     It exists because every surface in this app was white or a tint of
+     white, so a screen had no focal point - the box you type into and the
+     box you read the answer out of were the same object twice, and the page
+     read as two empty rectangles. A screen is allowed ONE of these. Two
+     would be the same problem with more colour.
+     Deeper than --sidebar rather than equal to it, so a page carrying both
+     does not read as two slabs of the same thing. The accent is for the
+     single figure worth reading across the room; at 7.95:1 on the fill it
+     can be as large and as bright as it likes.
+     ----------------------------------------------------------------- */
+  --spotlight: #0f3d47;
+  /* 11.8:1 on the fill. */
+  --spotlight-foreground: #eaf6f8;
+  /* 5.9:1 - real headroom for a secondary tone, unlike the rail. */
+  --spotlight-muted: #9fc4cd;
+  --spotlight-accent: #7fe3f0;
   /* Deep teal. Carries white text at 6.2:1, so it is safe for filled
      buttons, the sidebar's active state and any teal that must be read. */
   --primary: #1b7789;
@@ -271,6 +325,10 @@
   /* The chrome's geometry. Not themed - these are the same in light and
      dark, and live here because :root is where the tokens are. */
   --nav-h: 3.5rem;
+  /* 15rem. Widening it to 17 to stop project names truncating was tried and
+     reverted - it bought two characters on a name that was going to truncate
+     anyway, and cost a rail that felt heavy against the content. A long
+     project name is a tooltip problem, not a width problem. */
   --rail-w: 15rem;
   --rail-collapsed-w: 3.5rem;
 
@@ -309,25 +367,78 @@
      shouting over the page. A soft teal-grey panel is a coloured surface
      without being a block of brand: the rail reads as chrome, the canvas
      beside it reads as paper, and the tint is where the difference lives
-     instead of a border doing all the work. */
-  --sidebar: #e9f2f4;
-  --sidebar-foreground: #0f1a1c;
-  /* The idle row. The same value as --muted-foreground, so a nav label and a
-     description elsewhere on the page read as the same kind of text. */
-  --sidebar-muted-foreground: #41565a;
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: #ffffff;
-  /* Hover and the current page. Two steps deeper than the rail, because a
-     tint on a tint has to clear the surface it sits on - the value tuned
-     against white would be invisible here. */
-  --sidebar-accent: #d3e6ea;
-  --sidebar-accent-foreground: #0f1a1c;
-  --sidebar-border: #c3d9dd;
-  /* The "you are here" mark. --signal is exactly this: the palette
-     documents it as the brighter teal for "the active nav item", chosen to
-     clear 3:1 on white as a graphical mark. */
-  --sidebar-mark: var(--signal);
-  --sidebar-ring: var(--primary);
+     instead of a border doing all the work.
+
+     -----------------------------------------------------------------
+     MOVE FOUR, AND IT IS A DEPTH RATHER THAN A DIRECTION. #e9f2f4 was the
+     right IDEA executed too faintly: the tint was there, and it was not doing
+     the job the note above claims for it. The border was still carrying the
+     boundary on its own.
+
+     MEASURED IN L*, NOT IN CONTRAST RATIO, because a contrast ratio between
+     two near-white surfaces is a useless number - #e9f2f4 on white is 1.12:1,
+     and so is every other pale tint anybody would consider. Perceptual
+     lightness separates them: on a 0-100 scale the rail was 94.9 against a
+     canvas of 100, a difference of FIVE POINTS. A surface boundary needs
+     about 8-12 to read as two surfaces; below 6 the eye takes it as one sheet
+     of paper with a line drawn on it.
+
+     Every light value considered sat in the top fifth of the scale, and none
+     of them was what was wanted.
+
+     -----------------------------------------------------------------
+     MOVE FIVE, AND IT ENDS THE ARGUMENT: THE RAIL IS THE BRAND TEAL.
+
+     #1b7789, sampled from the mark in public/logo.png rather than picked -
+     it is the same value --primary already carries, so the rail is now the
+     one surface in the app that IS the brand rather than a tint derived
+     from it.
+
+     This is where attempt 1 was, and it is worth being exact about what was
+     wrong with that: the COLOUR was never the defect. `bg-primary` was
+     hardcoded in sidebar.tsx with `text-white/85` rows, so these tokens were
+     dead in light mode and the rail's ink was a literal - which breaks the
+     moment a deployment's brand colour is a light one. The fill returns; the
+     hardcoding does not. Every value below is stated here, per theme, and the
+     component names tokens.
+
+     WHAT A MID-TONE SLAB COSTS, stated because it constrains anybody editing
+     this block later. White on #1b7789 is 5.19:1, comfortably AA. But the
+     rail now has almost no room for a DIMMER tone: anything under about
+     L* 94 falls below 4.5:1 against this fill, so "muted" text on the rail
+     is near-white and reads as white. The group headings therefore separate
+     themselves by size, weight and letter-spacing rather than by colour.
+     Do not solve a hierarchy problem here by dimming a label - it will fail
+     contrast before it looks different.
+     ----------------------------------------------------------------- */
+  --sidebar: #1b7789;
+  /* 5.19:1 on the fill. */
+  --sidebar-foreground: #ffffff;
+  /* 4.59:1 - the DIMMEST value that still clears AA on this fill. See the
+     note above: this is near-white by necessity, not by preference. */
+  --sidebar-muted-foreground: #e8f3f5;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #1b7789;
+  /* Hover and the current page, DARKER than the rail rather than lighter.
+     Going lighter would wash toward the white text sitting on it; going
+     darker deepens it, and white on this is 7.16:1 - the current row is the
+     most legible thing in the rail, which is what it should be. */
+  --sidebar-accent: #14606f;
+  --sidebar-accent-foreground: #ffffff;
+  /* LIGHTER than the rail, which is an inversion and a necessary one. Three
+     of this token's four uses are hairlines INSIDE the rail - the rule under
+     a collapsed group, the divider above the footer, the line the nested
+     children hang off - and a darker line on a mid teal disappears. On the
+     outer edge it reads as a soft lip against the white canvas. */
+  --sidebar-border: #3d8fa0;
+  /* The "you are here" mark. NOT --signal any more: #0e9aab against this
+     fill is 1.54:1, which is invisible. A graphical mark needs 3:1, and this
+     pale cyan is 3.64:1 while still reading as the brand's own hue rather
+     than as a white tick. */
+  --sidebar-mark: #8ee6f2;
+  /* Was --primary, which is now the rail itself - a focus ring the same
+     colour as the thing it rings. */
+  --sidebar-ring: #bfe9f2;
 }
 
 /* Dark theme: designed, not inverted. The teals lighten so they stay legible
@@ -341,6 +452,23 @@
   --card-foreground: #e6eff0;
   --popover: #131f22;
   --popover-foreground: #e6eff0;
+
+  /* The inner list panel - see the light theme's note. It sits BETWEEN the
+     rail and the thread here as it does there: L* 14.0, against a rail of
+     23.3 and a canvas of 5.7. Deliberately not --card (#131f22), so a card
+     dropped into this column still reads as a card on top of it. */
+  --panel: #16262a;
+  --panel-foreground: #e6eff0;
+
+  /* LIGHTER than the rail here, where in light it is darker. Same decision
+     both times: the payoff surface has to be distinguishable from the chrome,
+     and on a dark canvas the way to stand out is to come forward. Matching
+     the rail's #0f3d47 would have put two identical slabs on the chat and
+     summaries screens, which is the mistake --panel exists to have fixed. */
+  --spotlight: #165a68;
+  --spotlight-foreground: #eaf6f8;
+  --spotlight-muted: #a9ccd4;
+  --spotlight-accent: #7fe3f0;
   --primary: #3fbece;
   --primary-foreground: #05171a;
   --signal: #4fd6e6;
@@ -386,16 +514,33 @@
   /* A step darker than --card, so the rail sits BEHIND the page rather than
      on it - the same relationship the light theme draws with #fcfdfd against
      #ffffff, with the values the other way up. */
-  --sidebar: #0f1a1c;
+  /* TEAL HERE TOO, so the rail is the same DECISION in both themes rather
+     than brand chrome in one and grey chrome in the other. Not the same
+     value: #1b7789 on a #0b1416 canvas is a lit panel in a dark room, and
+     the point of the rail is to be the frame rather than the brightest
+     thing on screen.
+
+     #0f3d47 is the brand hue held at L* 23.3 against a canvas of 5.7 - a
+     gap of 17.6, where the old #0f1a1c managed 2.7 and was effectively
+     invisible. Dark hides a weak boundary better than light does, which is
+     why nobody had reported it; it was still one surface. White on this is
+     11.8:1, so the ink has room here that it does not have in light. */
+  --sidebar: #0f3d47;
   --sidebar-foreground: #e6eff0;
-  --sidebar-muted-foreground: #93a7ab;
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: #05171a;
-  --sidebar-accent: #1b2b2f;
-  --sidebar-accent-foreground: #e6eff0;
-  --sidebar-border: #243437;
+  /* Real headroom in this theme, unlike light - #9fc4cd is 5.9:1 on the
+     fill, so a dim tone is actually dim rather than near-white. */
+  --sidebar-muted-foreground: #9fc4cd;
+  --sidebar-primary: #e6eff0;
+  --sidebar-primary-foreground: #0f3d47;
+  /* Lighter than the rail here. In light the accent goes darker to stay clear
+     of white text; on a dark rail the same reasoning points the other way. */
+  --sidebar-accent: #17545f;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #2a6875;
+  /* --signal (#4fd6e6 in dark) clears 3:1 on this fill, so unlike light the
+     mark can stay the palette's own. */
   --sidebar-mark: var(--signal);
-  --sidebar-ring: var(--primary);
+  --sidebar-ring: #7fd4e2;
 }
 
 /* -------------------------------------------------------------------

@@ -8,6 +8,8 @@ import { requireUser } from "@/lib/auth/session-auth-server";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
 import {
   PROJECT_STATUSES,
+  PROJECT_KINDS,
+  PROJECT_KIND_LABELS,
   PROJECT_STATUS_LABELS,
   TASK_COLUMN_LABELS,
 } from "@/lib/data/kysely-database-types";
@@ -51,6 +53,24 @@ export default async function DeliveryProjectsPage({ eyebrow }: { eyebrow: strin
 
   const [projects, myWork] = await Promise.all([getMyProjectsService(), getMyWorkService()]);
 
+  // -----------------------------------------------------------------
+  // DELIVERY WORK FIRST, STANDING BUCKETS AFTER, IN ONE LIST.
+  //
+  // One grid rather than two sections, so the "Projects you are on" tile on
+  // the landing page keeps counting exactly what this page shows - the two
+  // come from the same service for that reason. What changes is the ORDER
+  // and a badge: a standing bucket of time codes interleaved alphabetically
+  // between two client projects reads as a third client project.
+  //
+  // A stable partition rather than a sort, so the alphabetical order the
+  // repository already applied survives inside each half. The nav reads the
+  // same rows, which is why this is done here and not in the query.
+  // -----------------------------------------------------------------
+  const ordered = [
+    ...projects.filter((project) => project.kind !== PROJECT_KINDS.ONGOING),
+    ...projects.filter((project) => project.kind === PROJECT_KINDS.ONGOING),
+  ];
+
   return (
     <PortalPage
       eyebrow={eyebrow}
@@ -78,7 +98,7 @@ export default async function DeliveryProjectsPage({ eyebrow }: { eyebrow: strin
             </h2>
 
             <ul className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {projects.map((project) => (
+              {ordered.map((project) => (
                 <li key={project.id}>
                   <Link
                     href={projectBoardForRole(user.role, project.id)}
@@ -94,6 +114,14 @@ export default async function DeliveryProjectsPage({ eyebrow }: { eyebrow: strin
                           {PROJECT_STATUS_LABELS[project.status]}
                         </Badge>
                       )}
+                      {/* Only the ongoing ones are labelled. Badging every
+                          card "Project" would be a word on every row that
+                          distinguishes nothing - the absence IS the ordinary
+                          case, which is the same reason an active project
+                          shows no status badge above. */}
+                      {project.kind === PROJECT_KINDS.ONGOING ? (
+                        <Badge variant="outline">{PROJECT_KIND_LABELS[project.kind]}</Badge>
+                      ) : null}
                     </span>
                   </Link>
                 </li>
@@ -106,7 +134,8 @@ export default async function DeliveryProjectsPage({ eyebrow }: { eyebrow: strin
               Assigned to you
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Open cards from every project you are on. Finished work drops off the list.
+              Open cards from every project you are on. Finished work drops off the list, and ongoing work is
+              left out: a standing time code is not a card waiting on anybody.
             </p>
 
             {myWork.length === 0 ? (

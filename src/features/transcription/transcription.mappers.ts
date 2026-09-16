@@ -1,5 +1,8 @@
+import { TRANSCRIPTION_STATUSES } from "@/lib/data/kysely-database-types";
 import type { Transcription, TranscriptionFiling } from "@/lib/data/kysely-database-types";
+import { isReplacementMediaKey } from "@/lib/storage/media-keys";
 
+import { classifyTranscriptionFailure } from "./transcription-failure";
 import { TITLE_MAX_CHARS } from "./transcription.types";
 import type { TranscriptionDetailDTO, TranscriptionSummaryDTO } from "./transcription.types";
 
@@ -40,6 +43,10 @@ export function mapDBTranscriptionToSummaryDTO(
     createdAt: row.createdAt,
     completedAt: row.completedAt,
     filingStatus: filing?.status ?? null,
+    // Only on a row that actually failed. Classifying the leftover text on
+    // a row that has since been retried and completed would put a failure
+    // kind on a success.
+    failureKind: row.status === TRANSCRIPTION_STATUSES.FAILED ? classifyTranscriptionFailure(row.error) : null,
   };
 }
 
@@ -62,6 +69,11 @@ export function mapDBTranscriptionToDetailDTO(
   return {
     ...mapDBTranscriptionToSummaryDTO(row),
     transcript: row.transcript,
+    // Read as a boolean rather than a count: one conversion either worked
+    // or proved the file itself is the problem, and a second changes
+    // nothing. The suffix rule is media-keys.ts's, shared rather than
+    // copied, so the screen and the server cannot disagree about it.
+    mediaWasReencoded: isReplacementMediaKey(row.storageKey),
     // JSONB, so this is already parsed. Null on a row whose job has not
     // finished, and on one the service could not separate speakers in.
     segments: row.segments ?? [],

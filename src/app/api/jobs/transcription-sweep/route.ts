@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { sweepTranscriptionFilingService } from "@/features/transcription/filing.service";
+import { sweepMeetingRecordingRemindersService } from "@/features/transcription/meeting-reminder.service";
 import {
   sweepAllTranscriptionsService,
   sweepTeamsAutoImportsService,
@@ -108,6 +109,38 @@ export async function POST(request: Request): Promise<Response> {
     console.error("[transcription-sweep] filing pass failed", error);
   }
 
+  // -----------------------------------------------------------------
+  // "Turn the recording on", and it runs FIRST among the passes that can be
+  // late, because it is the only one whose value expires.
+  //
+  // A transcription summarised a minute later is a transcription summarised.
+  // A nudge to press record arrives while somebody is joining a call or it
+  // arrives after the meeting, and the second one is worthless - so it is
+  // not left behind a Bedrock call that might take a minute.
+  //
+  // IT IS ON THIS TIMER RATHER THAN ITS OWN, so there is one thing to
+  // schedule rather than two. The cadence is the same and the domain is the
+  // same; a second cron entry would be a second thing to get wrong on every
+  // environment.
+  //
+  // Its failures are its own, like the two passes above. A Graph outage on
+  // one mailbox must not stop transcriptions being summarised.
+  // -----------------------------------------------------------------
+  let reminders = { subscribers: 0, considered: 0, sent: 0, failed: 0 };
+
+  try {
+    const swept = await sweepMeetingRecordingRemindersService();
+
+    reminders = {
+      subscribers: swept.subscribers,
+      considered: swept.considered,
+      sent: swept.sent,
+      failed: swept.failed,
+    };
+  } catch (error) {
+    console.error("[transcription-sweep] meeting reminder pass failed", error);
+  }
+
   const result = await sweepAllTranscriptionsService();
 
   // Counts only - no ids, no titles, no owners - so a scheduler's logs do
@@ -115,7 +148,14 @@ export async function POST(request: Request): Promise<Response> {
   console.info(
     `[transcription-sweep] examined=${result.examined} advanced=${result.advanced}` +
       ` autoImportDue=${autoImport.examined} imported=${autoImport.imported} gaveUp=${autoImport.gaveUp}` +
-      ` filingDue=${filing.examined} filingProposed=${filing.proposed}`,
+      ` filingDue=${filing.examined} filingProposed=${filing.proposed}` +
+      // Subscribers and considered travel with `sent`, because zero sent is
+      // the ordinary state and the other two are what tell a healthy quiet
+      // sweep from a broken one: no subscribers means nobody ever granted
+      // permission, and considered with nothing sent means the calendars
+      // were read and held nothing due.
+      ` reminderSubscribers=${reminders.subscribers} reminderConsidered=${reminders.considered}` +
+      ` reminderSent=${reminders.sent} reminderFailed=${reminders.failed}`,
   );
 
   return NextResponse.json({ ok: true, ...result });

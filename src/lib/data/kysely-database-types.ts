@@ -1173,6 +1173,31 @@ export type NewPushSubscription = Insertable<PushSubscriptions>;
 export type UpdatePushSubscription = Updateable<PushSubscriptions>;
 
 // -------------------------------------------------------------------
+// One row per person per meeting they have been nudged about.
+//
+// It exists to make the send happen ONCE. The sweep looks backwards over a
+// window wider than its own interval, so the same meeting is in range on
+// several consecutive runs - see migration 031. The unique constraint on
+// (userId, eventId) is the claim that turns that into one notification.
+//
+// eventId is the calendar event's IMMUTABLE id as THIS person's mailbox
+// holds it. An event id is per mailbox rather than per meeting, which is
+// right here - everybody in the meeting gets their own nudge - and is
+// exactly why filing matches on a transcript id instead.
+// -------------------------------------------------------------------
+export interface MeetingRecordingReminders {
+  id: string;
+  userId: string;
+  eventId: string;
+  subject: string | null;
+  startsAt: Date;
+  sentAt: Generated<Date>;
+}
+
+export type MeetingRecordingReminder = Selectable<MeetingRecordingReminders>;
+export type NewMeetingRecordingReminder = Insertable<MeetingRecordingReminders>;
+
+// -------------------------------------------------------------------
 // Session Two Factor Table
 //
 // Whether a given SESSION has cleared the second factor. Keyed on the
@@ -1379,6 +1404,51 @@ export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
 };
 
 // -------------------------------------------------------------------
+// WHETHER THE WORK HAS AN END.
+//
+// A third axis, and it is neither of the two that look like it:
+//
+//   isBillable         whether the time can go on an invoice
+//   clients.category   whose work it is, ours or somebody else's
+//   kind               whether it FINISHES
+//
+// An internal project can be a real project with a budget and a delivery
+// date, and an external client's project can be non-billable. What neither
+// expresses is a STANDING BUCKET OF TIME CODES - internal meetings, staff
+// reviews, leave - which never finishes, is never quoted, and has no plan to
+// measure against. Do not infer any one of the three from another.
+//
+// IT IS NOT A STATUS. `completed` is a project_status, and an ongoing
+// project is never completed and never on hold. Folding the two would add a
+// status no project ever leaves, and every status filter would then have to
+// remember to exclude it.
+//
+// 'delivery' rather than 'project', because `kind === 'project'` on the
+// projects table says nothing at all.
+// -------------------------------------------------------------------
+export const PROJECT_KINDS = {
+  DELIVERY: "delivery",
+  ONGOING: "ongoing",
+} as const;
+
+export type ProjectKind = (typeof PROJECT_KINDS)[keyof typeof PROJECT_KINDS];
+
+export const PROJECT_KIND_LABELS: Record<ProjectKind, string> = {
+  [PROJECT_KINDS.DELIVERY]: "Project",
+  [PROJECT_KINDS.ONGOING]: "Ongoing",
+};
+
+// What the choice MEANS, for the control that offers it. A select showing
+// two words and no explanation is a question somebody has to guess at.
+//
+// It describes BOTH options rather than whichever is currently selected,
+// which is what somebody deciding between them needs - and it is a constant
+// rather than a lookup on the live form value, because reading that value
+// needs react-hook-form's watch(), which cannot be memoized safely.
+export const PROJECT_KIND_HELP =
+  "A project has an end: phases, a board and time budgeted against it. Ongoing is a standing set of time codes that never finishes - admin, leave, internal meetings - with no budget and one list instead of four columns.";
+
+// -------------------------------------------------------------------
 // Whose work it is: a client's, or our own.
 //
 // It is NOT the same question as `isBillable`, which is why both exist. An
@@ -1556,6 +1626,12 @@ export interface Projects {
    * about the CLIENT and lives on `clients.category`. See migration 029.
    */
   rndClass: RndClassValue | null;
+  /**
+   * Whether this work ENDS. 'delivery' is a project with a plan; 'ongoing' is
+   * a standing bucket of time codes. Independent of `isBillable` and of the
+   * client's category - see PROJECT_KINDS.
+   */
+  kind: Generated<ProjectKind>;
   /** Whether charged hours are recorded here or on each phase. */
   budgetScope: Generated<BudgetScope>;
   /**
@@ -1847,6 +1923,7 @@ export interface Database {
   transcriptions: Transcriptions;
   transcriptionFiling: TranscriptionFilings;
   pushSubscriptions: PushSubscriptions;
+  meetingRecordingReminders: MeetingRecordingReminders;
   personalAccessTokens: PersonalAccessTokens;
   sessionTwoFactor: SessionTwoFactors;
   auditLogs: AuditLogs;

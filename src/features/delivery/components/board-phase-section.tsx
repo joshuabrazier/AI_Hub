@@ -10,7 +10,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { TASK_COLUMNS, type TaskColumn } from "@/lib/data/kysely-database-types";
+import { TASK_COLUMN_LABELS, type TaskColumn } from "@/lib/data/kysely-database-types";
+import { cn } from "@/lib/utils";
 
 import {
   describeTaskEffort,
@@ -58,6 +59,7 @@ export function BoardPhaseSection({
   onDeleteTask,
   onAssignTask,
   members,
+  defaultColumn,
   onMoveTask,
   onAddTask,
   onRenamePhase,
@@ -82,6 +84,12 @@ export function BoardPhaseSection({
   onDeleteTask: (task: TaskCardDTO) => void;
   onAssignTask: (task: TaskCardDTO, assigneeId: string | null) => void;
   members: readonly ProjectMemberDTO[];
+  /**
+   * Where a new card lands, off the board rather than written here. To do on
+   * a delivery board, In progress on an ongoing one - creating into a column
+   * the board does not draw would make the card invisible.
+   */
+  defaultColumn: TaskColumn;
   onMoveTask: MoveTaskHandler;
   onAddTask: (phaseId: string, boardColumn: TaskColumn) => void;
   onRenamePhase: (phase: BoardPhaseDTO) => void;
@@ -120,7 +128,7 @@ export function BoardPhaseSection({
 
         {canEditTasks ? (
           <div className="flex items-center gap-1">
-            <Button type="button" variant="outline" size="sm" onClick={() => onAddTask(phase.phaseId, TASK_COLUMNS.TODO)}>
+            <Button type="button" variant="outline" size="sm" onClick={() => onAddTask(phase.phaseId, defaultColumn)}>
               <Plus size={14} aria-hidden="true" />
               Add task
             </Button>
@@ -173,7 +181,7 @@ export function BoardPhaseSection({
           title="No tasks in this phase yet"
           detail={
             canEditTasks
-              ? "Add the first task and it will appear in To do. The four columns below take it from there."
+              ? `Add the first task and it will appear in ${TASK_COLUMN_LABELS[defaultColumn]}.`
               : // Phrased as a fact rather than as instructions for somebody
                 // else, because this is also what a lead sees on an archived
                 // project, where the banner above has already said why the
@@ -182,7 +190,7 @@ export function BoardPhaseSection({
           }
           action={
             canEditTasks ? (
-              <Button type="button" variant="outline" size="sm" onClick={() => onAddTask(phase.phaseId, TASK_COLUMNS.TODO)}>
+              <Button type="button" variant="outline" size="sm" onClick={() => onAddTask(phase.phaseId, defaultColumn)}>
                 <Plus size={14} aria-hidden="true" />
                 Add the first task
               </Button>
@@ -191,10 +199,19 @@ export function BoardPhaseSection({
         />
       ) : null}
 
-      {/* The four columns are rendered whether or not the phase has cards:
-          an empty column is a drop target, and a phase somebody is about to
-          drag work into needs all four. */}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {/* Rendered whether or not the phase has cards: an empty column is a
+          drop target, and a phase somebody is about to drag work into needs
+          every column the board draws.
+          WHICH columns those are is the board's decision - all four on a
+          delivery project, In progress plus anything still occupied on an
+          ongoing one. A single column renders as a plain list rather than a
+          quarter-width cell stranded beside three gaps. */}
+      <div
+        className={cn(
+          "mt-4 grid gap-3",
+          phase.columns.length > 1 && "sm:grid-cols-2 xl:grid-cols-4",
+        )}
+      >
         {phase.columns.map((column) => (
           <BoardColumn
             key={column.column}

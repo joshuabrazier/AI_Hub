@@ -291,3 +291,32 @@ export function eventIdFromSourceRef(sourceRef: string): string {
 
   return separator === -1 ? sourceRef : sourceRef.slice(0, separator);
 }
+
+// -------------------------------------------------------------------
+// THE TRANSCRIPT HALF, WHICH IS THE ONLY PART THAT IDENTIFIES THE MEETING
+// RATHER THAN SOMEBODY'S VIEW OF IT.
+//
+// An EVENT ID IS PER MAILBOX. Every attendee holds their own copy of the
+// calendar item with its own id, so two of our people in one meeting produce
+// two different source refs and nothing lines them up. The transcript id is a
+// property of the online meeting itself - resolved from the join URL they all
+// share - so it is identical for all of them.
+//
+// That makes this the key for "has anybody already filed these notes", which
+// is what stops one meeting arriving in a client's SharePoint once per
+// attendee. Verified against a real two-attendee meeting before it was built
+// on: the halves after the separator matched while the halves before it
+// differed.
+//
+// EMPTY FOR A REF WITH NO SEPARATOR, which is the opposite of the function
+// above and is the safe direction for each. A ref written before this format
+// existed is all event and no transcript, so returning the whole thing here
+// would hand a cross-user lookup an event id to match on - and an event id
+// is exactly the thing that is NOT shared. The caller treats empty as "no
+// meeting identity", which means no dedup rather than a wrong one.
+// -------------------------------------------------------------------
+export function transcriptIdFromSourceRef(sourceRef: string): string {
+  const separator = sourceRef.indexOf(SOURCE_REF_SEPARATOR);
+
+  return separator === -1 ? "" : sourceRef.slice(separator + SOURCE_REF_SEPARATOR.length);
+}

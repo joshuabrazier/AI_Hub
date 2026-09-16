@@ -8,6 +8,8 @@ import type {
   TranscriptionStatus,
 } from "@/lib/data/kysely-database-types";
 
+import type { TranscriptionFailureKind } from "./transcription-failure";
+
 const transcriptionIdSchema = z.string().min(TABLE_ID_LENGTH);
 
 // -------------------------------------------------------------------
@@ -25,6 +27,49 @@ const transcriptionIdSchema = z.string().min(TABLE_ID_LENGTH);
 // minutes, so anything still running at this point is not running.
 // -------------------------------------------------------------------
 export const MAX_MEDIA_BYTES = 1024 * 1024 * 1024;
+
+// -------------------------------------------------------------------
+// AND THE SERVICE'S OTHER CEILING, WHICH IS A LENGTH.
+//
+// Azure documents 240 minutes per file WHEN DIARIZATION IS ENABLED, and
+// this app always enables it - speaker separation is most of the value of
+// a meeting transcript. The two limits are independent: a five hour
+// recording at a modest bitrate sits comfortably under a gigabyte and is
+// refused anyway, after the upload and after the wait, with a message
+// about the audio being invalid.
+//
+// Checked against the DURATION THE FILE DECLARES rather than a guess from
+// its size, which is why it could not be checked before the probe existed.
+// A container that declares no duration is not refused: an unknown length
+// is not a long one, and guessing would reject recordings that work.
+// -------------------------------------------------------------------
+export const MAX_MEDIA_MINUTES = 240;
+
+// -------------------------------------------------------------------
+// AND A SECOND, SMALLER CEILING THAT THE UPLOAD ACTUALLY HAS.
+//
+// The browser sends the media as ONE `PUT Blob` with x-ms-blob-type:
+// BlockBlob. Azure caps a single Put Blob at 256 MiB; past that the only way
+// in is Put Block plus Put Block List, which this app does not implement.
+//
+// So the two limits are different and both are real: Speech would accept a
+// gigabyte, and our upload path cannot deliver one. Before this existed the
+// app advertised the larger number and a file between the two failed at the
+// PUT with "The upload was rejected (413)" - a message about the wrong
+// thing, arriving after somebody had waited for the whole transfer.
+//
+// IT IS CHECKED IN THE BROWSER, because that is the only place the size is
+// known before the bytes move. The server checks MAX_MEDIA_BYTES after the
+// upload lands, which is the first moment IT knows - the two checks are at
+// different points for that reason and neither replaces the other.
+//
+// 256 MiB is about ten hours of WebM/Opus at the bitrate MediaRecorder
+// produces, so no meeting reaches it. It matters for an UPLOADED file: a
+// screen recording with video in it hits this quickly, and being told which
+// limit was hit is the difference between re-exporting the audio and giving
+// up.
+// -------------------------------------------------------------------
+export const MAX_SINGLE_PUT_BYTES = 256 * 1024 * 1024;
 export const TRANSCRIPTION_TIMEOUT_HOURS = 6;
 export const TITLE_MAX_CHARS = 120;
 
@@ -335,6 +380,19 @@ export type TranscriptionSummaryDTO = {
   // than an "unknown" that reads like a fault.
   // -----------------------------------------------------------------
   filingStatus: TranscriptionFilingStatus | null;
+  // -----------------------------------------------------------------
+  // What KIND of failure this was, when it failed.
+  //
+  // Null on everything that has not failed, so there is one value to test
+  // rather than a status and a string to read together.
+  //
+  // The screen needs this because the useful next move differs by kind and
+  // the message alone does not separate them - `InvalidUri` and
+  // `InvalidData` differ by three letters and by everything else. Decided
+  // on the SERVER, where the error was written, rather than by the browser
+  // matching on prose it was handed.
+  // -----------------------------------------------------------------
+  failureKind: TranscriptionFailureKind | null;
 };
 
 // -------------------------------------------------------------------
@@ -347,6 +405,19 @@ export type TranscriptionSummaryDTO = {
 // -------------------------------------------------------------------
 export type TranscriptionDetailDTO = TranscriptionSummaryDTO & {
   transcript: string | null;
+  // -----------------------------------------------------------------
+  // Whether this row's media has ALREADY been re-encoded and refused.
+  //
+  // The one fact the screen needs to avoid an expensive loop: a failed row
+  // whose file the service could not read is converted automatically, and
+  // without this it would be converted again every time anybody opened it -
+  // several minutes of a laptop decoding a meeting to reach the same
+  // refusal. Once this is true the answer is that the recording itself is
+  // damaged, and the screen says so instead of trying a third time.
+  //
+  // Derived from the storage key server-side. The key itself never travels.
+  // -----------------------------------------------------------------
+  mediaWasReencoded: boolean;
   segments: TranscriptionSegment[];
   summary: string | null;
   // Null when SharePoint filing is not set up, or when this row predates it.
@@ -555,6 +626,16 @@ export type TranscriptionUploadTicketDTO = {
   transcriptionId: string;
   uploadUrl: string;
   mediaType: string;
+  // -----------------------------------------------------------------
+  // WHEN THE URL STOPS WORKING.
+  //
+  // Carried because the browser is the only party that knows how far
+  // through a transfer it is, and an hour is comfortably less than a large
+  // recording takes on a client site's broadband. Without it the upload
+  // simply met a 403 part way through a meeting it could not re-record,
+  // with nothing able to tell that from a permissions problem.
+  // -----------------------------------------------------------------
+  expiresAt: Date;
 };
 
 // -------------------------------------------------------------------
@@ -577,6 +658,22 @@ export const CreateTranscriptionSchema = z.object({
 });
 
 export type CreateTranscriptionRequestDTO = z.infer<typeof CreateTranscriptionSchema>;
+
+// -------------------------------------------------------------------
+// Replacing the media on a row that failed, with a re-encoded copy.
+//
+// `fileName` is sent on BOTH steps - claiming the URL and handing the
+// result back - and on both the server derives the media type from it
+// rather than believing anything about it. It is never a destination: the
+// storage key is computed from the row the server already looked up, so
+// the browser cannot name where its bytes go.
+// -------------------------------------------------------------------
+export const ReplaceTranscriptionMediaSchema = z.object({
+  transcriptionId: transcriptionIdSchema,
+  fileName: z.string().trim().min(1).max(255),
+});
+
+export type ReplaceTranscriptionMediaRequestDTO = z.infer<typeof ReplaceTranscriptionMediaSchema>;
 
 export const TranscriptionIdSchema = z.object({
   transcriptionId: transcriptionIdSchema,
