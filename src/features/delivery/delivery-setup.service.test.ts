@@ -563,12 +563,6 @@ const ADMIN_ONLY_SURFACES: AdminOnlySurface[] = [
     expectUntouched: () => expect(mockGetClients).not.toHaveBeenCalled(),
   },
   {
-    what: "the client picker",
-    guard: "requireUserRole([ADMIN])",
-    run: () => getClientOptionsService(),
-    expectUntouched: () => expect(mockGetClients).not.toHaveBeenCalled(),
-  },
-  {
     what: "opening one client",
     guard: "requireUserRole([ADMIN])",
     run: () => getClientDetailService(CLIENT_ID),
@@ -596,18 +590,6 @@ const ADMIN_ONLY_SURFACES: AdminOnlySurface[] = [
     expectUntouched: () => expect(mockUpdateClient).not.toHaveBeenCalled(),
   },
   {
-    what: "creating a project",
-    guard: "requireUserRole([ADMIN])",
-    run: () => createProjectService({ ...CREATE_PROJECT }),
-    expectUntouched: () => {
-      expect(mockAddProject).not.toHaveBeenCalled();
-      // The client is resolved inside the same call and a typed name
-      // CREATES one, so a dropped guard here would let a member add a
-      // client as a side effect of a project that was never made.
-      expect(mockAddClient).not.toHaveBeenCalled();
-    },
-  },
-  {
     what: "editing a project",
     guard: "requireAdminProject -> requireUserRole([ADMIN])",
     run: () => updateProjectService({ ...UPDATE_PROJECT }),
@@ -621,67 +603,6 @@ const ADMIN_ONLY_SURFACES: AdminOnlySurface[] = [
     guard: "requireAdminProject -> requireUserRole([ADMIN])",
     run: () => archiveProjectService({ projectId: PROJECT_ID }),
     expectUntouched: () => expect(mockUpdateProject).not.toHaveBeenCalled(),
-  },
-  {
-    what: "stamping the budget as assigned",
-    guard: "requireAdminProject -> requireUserRole([ADMIN])",
-    run: () => markProjectBudgetAssignedService({ projectId: PROJECT_ID }),
-    expectUntouched: () => expect(mockMarkBudgetAssigned).not.toHaveBeenCalled(),
-  },
-  {
-    what: "replacing a project's whole member set",
-    guard: "requireAdminProject -> requireUserRole([ADMIN])",
-    run: () =>
-      setProjectMembersService({
-        projectId: PROJECT_ID,
-        members: [{ userId: MEMBER_ID, isLead: false, rateBand: RATE_BANDS.STANDARD }],
-      }),
-    expectUntouched: () => expect(mockSetProjectMembers).not.toHaveBeenCalled(),
-  },
-  {
-    what: "putting one person on a project",
-    guard: "requireAdminProject -> requireUserRole([ADMIN])",
-    run: () => addProjectMemberService({ ...MEMBER_REQUEST }),
-    expectUntouched: () => expect(mockAddProjectMember).not.toHaveBeenCalled(),
-  },
-  {
-    what: "changing somebody's lead flag or rate band",
-    guard: "requireAdminProject -> requireUserRole([ADMIN])",
-    run: () => updateProjectMemberService({ ...MEMBER_REQUEST }),
-    expectUntouched: () => expect(mockUpdateProjectMember).not.toHaveBeenCalled(),
-  },
-  {
-    what: "taking somebody off a project",
-    guard: "requireAdminProject -> requireUserRole([ADMIN])",
-    run: () => removeProjectMemberService({ projectId: PROJECT_ID, userId: MEMBER_ID }),
-    expectUntouched: () => expect(mockRemoveProjectMember).not.toHaveBeenCalled(),
-  },
-  {
-    what: "creating a budget group",
-    guard: "requireAdminProject -> requireUserRole([ADMIN])",
-    run: () => createBudgetGroupService({ projectId: PROJECT_ID, name: "Interns", budgetHours: 24_000 }),
-    expectUntouched: () => expect(mockAddBudgetGroup).not.toHaveBeenCalled(),
-  },
-  {
-    what: "renaming a budget group or changing its pool",
-    guard: "requireAdminBudgetGroup -> requireUserRole([ADMIN])",
-    run: () => updateBudgetGroupService({ groupId: GROUP_ID, name: "Interns", budgetHours: 24_000 }),
-    expectUntouched: () => {
-      expect(mockUpdateBudgetGroup).not.toHaveBeenCalled();
-      expect(mockGetBudgetGroup).not.toHaveBeenCalled();
-    },
-  },
-  {
-    what: "deleting a budget group",
-    guard: "requireAdminBudgetGroup -> requireUserRole([ADMIN])",
-    run: () => deleteBudgetGroupService({ groupId: GROUP_ID }),
-    expectUntouched: () => expect(mockDeleteBudgetGroup).not.toHaveBeenCalled(),
-  },
-  {
-    what: "setting who is in a budget group",
-    guard: "requireAdminBudgetGroup -> requireUserRole([ADMIN])",
-    run: () => setBudgetGroupMembersService({ groupId: GROUP_ID, userIds: [MEMBER_ID] }),
-    expectUntouched: () => expect(mockSetBudgetGroupMembers).not.toHaveBeenCalled(),
   },
 ];
 
@@ -756,7 +677,153 @@ const PHASE_MUTATIONS: PhaseMutation[] = [
     run: () => deletePhaseService({ phaseId: PHASE_ID }),
     expectUntouched: () => expect(mockDeletePhase).not.toHaveBeenCalled(),
   },
+
+  // -----------------------------------------------------------------
+  // SETTING A PROJECT UP MOVED ONTO THIS GATE, and these are the writes
+  // that moved. They were requireAdminProject - admin, full stop - and are
+  // now admin or the project's lead, the same rule the phases above have
+  // always had.
+  //
+  // The reason is managers creating projects: creating one makes you its
+  // lead, and a lead who cannot put anybody on the project they just made
+  // has been handed a shell. They are asserted HERE rather than in a suite
+  // of their own precisely because the rule is now one rule - a list that
+  // grows is the point, and a write added later inherits three assertions
+  // rather than having to remember them.
+  //
+  // What did NOT move stays in ADMIN_ONLY_SURFACES above and is worth
+  // knowing while reading this: renaming a project, archiving it, and every
+  // client write. Renaming carries `status`, and status is how an archive is
+  // undone, so a lead who could rename could un-archive.
+  // -----------------------------------------------------------------
+  {
+    what: "marking the budget as planned",
+    act: "marking its budget as planned",
+    run: () => markProjectBudgetAssignedService({ projectId: PROJECT_ID }),
+    expectUntouched: () => expect(mockMarkBudgetAssigned).not.toHaveBeenCalled(),
+  },
+  {
+    what: "replacing the whole member set",
+    act: "changing who is on it",
+    run: () =>
+      setProjectMembersService({
+        projectId: PROJECT_ID,
+        members: [{ userId: MEMBER_ID, isLead: false, rateBand: RATE_BANDS.STANDARD }],
+      }),
+    expectUntouched: () => expect(mockSetProjectMembers).not.toHaveBeenCalled(),
+  },
+  {
+    what: "putting one person on",
+    act: "putting somebody on it",
+    run: () => addProjectMemberService({ ...MEMBER_REQUEST }),
+    expectUntouched: () => expect(mockAddProjectMember).not.toHaveBeenCalled(),
+  },
+  {
+    what: "changing somebody's lead flag or rate band",
+    act: "changing somebody's place on it",
+    run: () => updateProjectMemberService({ ...MEMBER_REQUEST }),
+    expectUntouched: () => expect(mockUpdateProjectMember).not.toHaveBeenCalled(),
+  },
+  {
+    what: "taking somebody off",
+    act: "taking somebody off it",
+    run: () => removeProjectMemberService({ projectId: PROJECT_ID, userId: MEMBER_ID }),
+    expectUntouched: () => expect(mockRemoveProjectMember).not.toHaveBeenCalled(),
+  },
+  {
+    what: "creating a budget group",
+    act: "pooling time on it",
+    run: () => createBudgetGroupService({ projectId: PROJECT_ID, name: "Interns", budgetHours: 24_000 }),
+    expectUntouched: () => expect(mockAddBudgetGroup).not.toHaveBeenCalled(),
+  },
+  {
+    what: "renaming a budget group",
+    act: "changing how its time is pooled",
+    run: () => updateBudgetGroupService({ groupId: GROUP_ID, name: "Interns", budgetHours: 24_000 }),
+    expectUntouched: () => expect(mockUpdateBudgetGroup).not.toHaveBeenCalled(),
+  },
+  {
+    what: "deleting a budget group",
+    act: "changing how its time is pooled",
+    run: () => deleteBudgetGroupService({ groupId: GROUP_ID }),
+    expectUntouched: () => expect(mockDeleteBudgetGroup).not.toHaveBeenCalled(),
+  },
+  {
+    what: "setting who is in a budget group",
+    act: "changing how its time is pooled",
+    run: () => setBudgetGroupMembersService({ groupId: GROUP_ID, userIds: [MEMBER_ID] }),
+    expectUntouched: () => expect(mockSetBudgetGroupMembers).not.toHaveBeenCalled(),
+  },
 ];
+
+// ===================================================================
+// WHAT A MANAGER MAY DO WITHOUT A PROJECT TO STAND ON
+//
+// Two surfaces, and they are the entire role widening. Everything else a
+// manager gained is project-scoped and asserted with the phase mutations.
+//
+// A MEMBER MUST STILL BE REFUSED BOTH. That is the half worth testing:
+// widening a guard from [ADMIN] to [ADMIN, MANAGER] is one token away from
+// widening it to everybody, and the screen looks identical either way -
+// members would simply start being able to create projects, which is the
+// one thing the brief said they must not do.
+// ===================================================================
+const ADMIN_OR_MANAGER_SURFACES = [
+  {
+    what: "the client picker",
+    run: () => getClientOptionsService(),
+    expectUntouched: () => expect(mockGetClients).not.toHaveBeenCalled(),
+  },
+  {
+    what: "creating a project",
+    run: () => createProjectService({ ...CREATE_PROJECT }),
+    expectUntouched: () => {
+      expect(mockAddProject).not.toHaveBeenCalled();
+      // A typed client name CREATES one, so a dropped guard here would let a
+      // member add a client as a side effect of a project never made.
+      expect(mockAddClient).not.toHaveBeenCalled();
+    },
+  },
+];
+
+describe("the surfaces a manager gained", () => {
+  for (const surface of ADMIN_OR_MANAGER_SURFACES) {
+    it(`refuses a MEMBER: ${surface.what}`, async () => {
+      signedInAs(USER_ROLES.MEMBER);
+
+      await expect(surface.run()).rejects.toThrow(FORBIDDEN);
+      surface.expectUntouched();
+    });
+
+    it(`lets a MANAGER through: ${surface.what}`, async () => {
+      signedInAs(USER_ROLES.MANAGER);
+
+      await expect(surface.run()).resolves.not.toThrow();
+    });
+
+    it(`lets an ADMIN through: ${surface.what}`, async () => {
+      // The pair. A guard asserted only by its refusals is satisfied by one
+      // that refuses everybody.
+      signedInAsAdmin();
+
+      await expect(surface.run()).resolves.not.toThrow();
+    });
+  }
+
+  it("puts the MANAGER who created a project on it as its lead", async () => {
+    // The join between the two halves of this change. A manager gains
+    // nothing project-scoped from their role - the gate is membership and
+    // lead - so creating a project has to be what makes them its lead, or
+    // they cannot staff the thing they just made.
+    signedInAs(USER_ROLES.MANAGER);
+
+    await createProjectService({ ...CREATE_PROJECT });
+
+    expect(mockAddProjectMember).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: MEMBER_ID, isLead: true }),
+    );
+  });
+});
 
 describe("the phase mutations, gated by requireProjectStructureAccess", () => {
   for (const mutation of PHASE_MUTATIONS) {

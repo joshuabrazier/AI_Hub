@@ -320,8 +320,34 @@ async function requireAdminProject(projectId: string): Promise<{ user: SessionUs
 }
 
 // -------------------------------------------------------------------
-// Resolve a project for a write only an ADMIN OR ITS LEAD may make - the
-// phase mutations, and nothing else in this file.
+// Resolve a project for a write only an ADMIN OR ITS LEAD may make.
+//
+// -------------------------------------------------------------------
+// IT USED TO COVER THE PHASE MUTATIONS AND NOTHING ELSE. It now covers
+// SETTING A PROJECT UP: its phases, who is on it, and how their time is
+// pooled. That widening is the whole of the managers change.
+//
+// Managers can create projects. A project nobody can staff is not a project,
+// so whoever leads one has to be able to put people on it - and creating a
+// project makes you its lead, so a manager can set up what they made and
+// nothing else. Everything here already asked "admin or lead" through
+// canEditProjectTasks; the member and budget-group writes were the ones
+// asking "admin" instead, which made a manager's own project read-only to
+// them the moment it existed.
+//
+// WHAT DELIBERATELY DID NOT MOVE, and why:
+//
+//   updateProjectService   it sets `status`, and setting status back to
+//                          active is how an archived project is restored.
+//                          A lead who could call it could undo an admin's
+//                          archive, so the archive gate would be decorative.
+//   archiveProjectService  the soft delete. Reversing it is admin-only, so
+//                          performing it is too.
+//   the rate services      charge and cost rates are money and a pay proxy.
+//                          Out of this module entirely.
+//
+// So a manager leading a project can shape it and cannot rename it, archive
+// it, or see what anybody costs.
 //
 // A non-member gets notFound() from requireProjectAccess, so this only has
 // to refuse the ordinary member who IS on the project. That is a scope
@@ -354,7 +380,7 @@ async function requireProjectStructureAccess(
   const access = await requireProjectAccess(projectId, sessionUser);
 
   if (!access.canEditTasks) {
-    throw new DisplayErrorMessage("Only a project lead or an administrator can change a project's phases.");
+    throw new DisplayErrorMessage("Only a project lead or an administrator can set a project up.");
   }
 
   if (access.project.status === PROJECT_STATUSES.ARCHIVED) {
@@ -471,10 +497,17 @@ export async function getClientsService(): Promise<ClientSummaryDTO[]> {
 // project ends up attached to a client somebody deliberately took out of
 // circulation. Typing the name of a retired client is refused with a
 // sentence rather than silently reusing it - see resolveProjectClient.
+//
+// MANAGERS READ THIS, AND ONLY THIS, OUT OF THE CLIENT SERVICES. They can
+// create projects, so they need the list to attach one to. It is deliberately
+// the NARROW read: active clients with an id and a name, which is what the
+// picker draws. getClientsService and getClientDetailService stay admin-only
+// - those carry the notes, the retired ones and the project counts, which is
+// the client ADMIN screen rather than a dropdown.
 // -------------------------------------------------------------------
 export async function getClientOptionsService(): Promise<ClientOptionDTO[]> {
   try {
-    await requireUserRole([USER_ROLES.ADMIN]);
+    await requireUserRole([USER_ROLES.ADMIN, USER_ROLES.MANAGER]);
 
     const clients = await getClientsRepo();
 
@@ -1101,7 +1134,12 @@ export async function getProjectDetailService(projectId: string): Promise<Projec
 // -------------------------------------------------------------------
 export async function createProjectService(requestDTO: CreateProjectRequestDTO): Promise<string> {
   try {
-    const user = await requireUserRole([USER_ROLES.ADMIN]);
+    // MANAGERS TOO. A manager runs projects, so making one is theirs to do -
+    // and because creating a project makes you its lead, the thing they get
+    // is one project they can staff, phase and pool, not a wider reach into
+    // anybody else's. Members are excluded: they work on projects, they do
+    // not start them.
+    const user = await requireUserRole([USER_ROLES.ADMIN, USER_ROLES.MANAGER]);
 
     const client = await resolveProjectClient(requestDTO.client, user.id);
 
@@ -1288,7 +1326,7 @@ export async function markProjectBudgetAssignedService(
   requestDTO: MarkProjectBudgetAssignedRequestDTO,
 ): Promise<void> {
   try {
-    await requireAdminProject(requestDTO.projectId);
+    await requireProjectStructureAccess(requestDTO.projectId, "marking its budget as planned");
 
     const stamped = await markProjectBudgetAssignedRepo(requestDTO.projectId);
 
@@ -1367,7 +1405,10 @@ async function resolveAssignableUsers(userIds: string[]): Promise<Map<string, Us
 // -------------------------------------------------------------------
 export async function setProjectMembersService(requestDTO: SetProjectMembersRequestDTO): Promise<void> {
   try {
-    const { project } = await requireAdminProject(requestDTO.projectId);
+    const { project } = await requireProjectStructureAccess(
+      requestDTO.projectId,
+      "changing who is on it",
+    );
 
     const usersById = await resolveAssignableUsers(requestDTO.members.map((member) => member.userId));
 
@@ -1434,7 +1475,7 @@ function nameOf(usersById: Map<string, User>, userId: string): string {
 // -------------------------------------------------------------------
 export async function addProjectMemberService(requestDTO: AddProjectMemberRequest): Promise<void> {
   try {
-    const { project } = await requireAdminProject(requestDTO.projectId);
+    const { project } = await requireProjectStructureAccess(requestDTO.projectId, "putting somebody on it");
 
     const usersById = await resolveAssignableUsers([requestDTO.userId]);
 
@@ -1475,7 +1516,7 @@ export async function addProjectMemberService(requestDTO: AddProjectMemberReques
 // -------------------------------------------------------------------
 export async function updateProjectMemberService(requestDTO: UpdateProjectMemberRequest): Promise<void> {
   try {
-    const { project } = await requireAdminProject(requestDTO.projectId);
+    const { project } = await requireProjectStructureAccess(requestDTO.projectId, "changing somebody's place on it");
 
     const members = await getProjectMembersRepo(project.id);
     const before = members.find((member) => member.userId === requestDTO.userId);
@@ -1536,7 +1577,7 @@ export async function updateProjectMemberService(requestDTO: UpdateProjectMember
 // -------------------------------------------------------------------
 export async function removeProjectMemberService(requestDTO: RemoveProjectMemberRequest): Promise<void> {
   try {
-    const { project } = await requireAdminProject(requestDTO.projectId);
+    const { project } = await requireProjectStructureAccess(requestDTO.projectId, "taking somebody off it");
 
     const members = await getProjectMembersRepo(project.id);
     const before = members.find((member) => member.userId === requestDTO.userId);
@@ -1585,19 +1626,38 @@ export async function removeProjectMemberService(requestDTO: RemoveProjectMember
 async function requireAdminBudgetGroup(
   groupId: string,
 ): Promise<{ user: SessionUser; project: ProjectWithClient; group: ProjectBudgetGroup }> {
-  const user = await requireUserRole([USER_ROLES.ADMIN]);
-
+  // THE GROUP IS RESOLVED FIRST AND THE PROJECT IS AUTHORISED SECOND, and the
+  // order is the security property rather than a convenience. A budget group
+  // id is the only thing the caller supplies, so the project it belongs to
+  // has to be read from the GROUP before anybody is asked whether they may
+  // touch it - authorising the projectId in the request would let somebody
+  // name their own project and edit a group belonging to another.
   const group = await getProjectBudgetGroupRepo(groupId);
 
   if (!group) {
     throw new DisplayErrorMessage("That budget group no longer exists.");
   }
 
+  // READ BEFORE AUTHORISING, and it costs one extra query on purpose. The
+  // gate below answers a missing project with notFound() - a 404 page - which
+  // is right when somebody typed a project id and wrong here, where they are
+  // holding a group whose project has gone out from under it. That is a
+  // sentence worth saying, so it is said before the gate can turn it into a
+  // blank page.
   const project = await getProjectByIdRepo(group.projectId);
 
   if (!project) {
     throw new DisplayErrorMessage("That project no longer exists.");
   }
+
+  // Admin or the project's lead, and not archived - the same gate the rest of
+  // setting a project up goes through, because pooling time is part of that.
+  // Rates are the thing that stayed admin-only: a pool says whose time is
+  // counted together, never what an hour of it costs.
+  const { user } = await requireProjectStructureAccess(
+    group.projectId,
+    "changing how its time is pooled",
+  );
 
   return { user, project, group };
 }
@@ -1665,7 +1725,7 @@ export async function getProjectBudgetGroupsService(projectId: string): Promise<
 // -------------------------------------------------------------------
 export async function createBudgetGroupService(requestDTO: CreateBudgetGroupRequestDTO): Promise<string> {
   try {
-    const { project } = await requireAdminProject(requestDTO.projectId);
+    const { project } = await requireProjectStructureAccess(requestDTO.projectId, "pooling time on it");
 
     const now = new Date();
 
