@@ -405,7 +405,12 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
           if (!open) setDeleting(null);
         }}
         title="Delete this transcription?"
-        description={`"${deleting?.title ?? ""}", its transcript and its summary will be permanently deleted. This cannot be undone.`}
+        // NAMES THE RECORDING, because deleting takes the audio as well and
+        // the old wording listed only the transcript and the summary. On a
+        // row that failed, the blob is frequently the ONLY copy left - the
+        // device copy is discarded once a job starts - so somebody tidying
+        // up a failed row was destroying the meeting without being told.
+        description={`"${deleting?.title ?? ""}", its recording, its transcript and its summary will be permanently deleted. This cannot be undone.`}
         confirmLabel="Delete"
         pendingLabel="Deleting…"
         isPending={isPending}

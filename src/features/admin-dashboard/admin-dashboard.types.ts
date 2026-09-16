@@ -30,6 +30,10 @@ export type DashboardStatsDTO = {
   // 'active' specifically, not "not archived": on hold and completed are
   // both live rows and neither is work in flight. Archived is the module's
   // soft delete.
+  //
+  // ONGOING PROJECTS ARE LEFT OUT as well. One is permanently active by
+  // definition, so counting it would add a constant to a figure whose job is
+  // to say how much delivery work is on.
   // -----------------------------------------------------------------
   activeProjects: number;
 };

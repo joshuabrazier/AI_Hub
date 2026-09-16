@@ -197,9 +197,11 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
                 description: detail.description,
                 isBillable: detail.project.isBillable,
                 status: detail.project.status,
+                kind: detail.project.kind,
               }}
             />
           ) : null}
+
           {/* "Open the board" is deliberately NOT here any more. It was in
               this header AND at the foot of the page, and the one at the
               foot is the real end of the job - the header is where somebody

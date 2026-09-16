@@ -112,3 +112,36 @@ export async function touchPushSubscriptionRepo(id: string, db: DBClient = datab
     throw handleError("touchPushSubscriptionRepo", error);
   }
 }
+
+// -------------------------------------------------------------------
+// Everybody with at least one device registered for push.
+//
+// THE SUBSCRIPTION LIST IS THE OPT-IN, and that is the whole access model
+// for a job that nudges people about their own calendar. A browser push
+// subscription only exists because somebody granted notification permission
+// on a device and this app stored what came back - so this read returns
+// exactly the people who asked to be notified, and nobody else. A sweep over
+// all users would be a sweep over people who never agreed to any of it.
+//
+// DISTINCT, because one person has a phone and a laptop and would otherwise
+// appear twice - and the sweep does a Graph call per row it gets back.
+//
+// No ordering is imposed. The caller processes every row, so the order buys
+// nothing, and an ORDER BY on a table with no index for it is a sort for
+// nobody.
+// -------------------------------------------------------------------
+export async function getUserIdsWithPushSubscriptionsRepo(
+  db: DBClient = database,
+): Promise<string[]> {
+  try {
+    const rows = await db
+      .selectFrom("pushSubscriptions")
+      .select("userId")
+      .distinct()
+      .execute();
+
+    return rows.map((row) => row.userId);
+  } catch (error) {
+    throw handleError("getUserIdsWithPushSubscriptionsRepo", error);
+  }
+}

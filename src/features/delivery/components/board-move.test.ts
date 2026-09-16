@@ -39,6 +39,11 @@ const phase = (phaseId: string, phaseName: string, cards: Partial<Record<TaskCol
 const board: BoardDTO = {
   projectId: "project-1",
   canEditTasks: true,
+  // A delivery board: all four columns, which is what makes an empty one a
+  // drop target. The move arithmetic below is column-set agnostic, so an
+  // ongoing board needs no second fixture here.
+  columns: TASK_COLUMN_ORDER,
+  defaultColumn: TASK_COLUMNS.TODO,
   phases: [
     phase("phase-1", "Discovery", {
       [TASK_COLUMNS.TODO]: [card("task-a", "phase-1"), card("task-b", "phase-1")],

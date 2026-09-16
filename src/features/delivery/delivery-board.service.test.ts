@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  PROJECT_KINDS,
   PROJECT_STATUSES,
   TASK_COLUMNS,
   TASK_COLUMN_ORDER,
@@ -225,6 +226,7 @@ function project(overrides: Record<string, unknown> = {}) {
     title: "Data platform",
     clientName: "Perks",
     isLead: false,
+    kind: PROJECT_KINDS.DELIVERY,
     ...overrides,
   } as Unsafe as NonNullable<Awaited<ReturnType<typeof getProjectForMemberRepo>>>;
 }
@@ -395,6 +397,66 @@ describe("getProjectBoardService", () => {
     for (const boardPhase of board.phases) {
       expect(boardPhase.columns.map((column) => column.column)).toEqual([...TASK_COLUMN_ORDER]);
     }
+  });
+
+  // -----------------------------------------------------------------
+  // AN ONGOING PROJECT DRAWS FEWER COLUMNS, and the rule is a SUBSET rather
+  // than a filter. The difference is the whole safety of it: a column that
+  // holds cards always renders, so flipping a project to ongoing can never
+  // hide work that is already there.
+  // -----------------------------------------------------------------
+  it("gives an ongoing project one column when nothing is anywhere else", async () => {
+    mockRequireUser.mockResolvedValue(sessionUser(USER_ROLES.MEMBER));
+    mockGetProjectForMember.mockResolvedValue(project({ kind: PROJECT_KINDS.ONGOING }));
+    mockGetPhases.mockResolvedValue([phase()]);
+    mockBoardTasks.mockResolvedValue([card({ boardColumn: TASK_COLUMNS.IN_PROGRESS })]);
+
+    const board = await getProjectBoardService(PROJECT_ID);
+
+    expect(board.columns).toEqual([TASK_COLUMNS.IN_PROGRESS]);
+    expect(board.phases[0].columns.map((column) => column.column)).toEqual([TASK_COLUMNS.IN_PROGRESS]);
+  });
+
+  it("KEEPS a column on an ongoing project when it still holds a card", async () => {
+    // The failure this exists for: a project flipped to ongoing while cards
+    // sit in To do, where a naive "only In progress" rule would make them
+    // vanish with no way to reach them.
+    mockRequireUser.mockResolvedValue(sessionUser(USER_ROLES.MEMBER));
+    mockGetProjectForMember.mockResolvedValue(project({ kind: PROJECT_KINDS.ONGOING }));
+    mockGetPhases.mockResolvedValue([phase()]);
+    mockBoardTasks.mockResolvedValue([
+      card({ boardColumn: TASK_COLUMNS.TODO }),
+      card({ id: "task-2", boardColumn: TASK_COLUMNS.DONE, position: 0 }),
+    ]);
+
+    const board = await getProjectBoardService(PROJECT_ID);
+
+    // In board order, and In progress is present even though it is empty -
+    // it is where a new card lands.
+    expect(board.columns).toEqual([TASK_COLUMNS.TODO, TASK_COLUMNS.IN_PROGRESS, TASK_COLUMNS.DONE]);
+  });
+
+  it("lands a new card in In progress on an ongoing project and To do otherwise", async () => {
+    // defaultColumn is what the Add task buttons use. Pointing it at a column
+    // the board does not draw would create invisible work.
+    mockRequireUser.mockResolvedValue(sessionUser(USER_ROLES.MEMBER));
+    mockGetPhases.mockResolvedValue([phase()]);
+
+    mockGetProjectForMember.mockResolvedValue(project({ kind: PROJECT_KINDS.ONGOING }));
+    expect((await getProjectBoardService(PROJECT_ID)).defaultColumn).toBe(TASK_COLUMNS.IN_PROGRESS);
+
+    mockGetProjectForMember.mockResolvedValue(project({ kind: PROJECT_KINDS.DELIVERY }));
+    expect((await getProjectBoardService(PROJECT_ID)).defaultColumn).toBe(TASK_COLUMNS.TODO);
+  });
+
+  it("leaves a DELIVERY project with all four columns whatever is on it", async () => {
+    signedInAsMember();
+    mockGetPhases.mockResolvedValue([phase()]);
+    mockBoardTasks.mockResolvedValue([card({ boardColumn: TASK_COLUMNS.IN_PROGRESS })]);
+
+    const board = await getProjectBoardService(PROJECT_ID);
+
+    expect(board.columns).toEqual([...TASK_COLUMN_ORDER]);
   });
 
   it("puts each card in its own phase and column with its batched totals", async () => {
