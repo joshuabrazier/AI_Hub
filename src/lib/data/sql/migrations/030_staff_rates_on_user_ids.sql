@@ -1,14 +1,25 @@
 ---------------------------------------------------------------------
 -- Staff rates move off Atlassian ids, like the targets did
 --
--- NUMBERED 034, NOT 030, AND THE GAP IS NOT AN ACCIDENT. It was written as
--- 030 before 030 and 031 were vacated by a collision renumber, and by the
--- time it merged, 032 and 033 had already been applied to the databases.
--- Leaving it at 030 would have put a file EARLIER in the directory than two
--- migrations that genuinely ran before it - so anybody reading the folder in
--- order would have the sequence wrong. Nothing here depends on 032 or 033
--- (they add a project kind and a recording reminder), so the renumber is
--- about the reading and not about the running.
+-- IT STAYS 030 EVEN THOUGH 032 AND 033 RAN BEFORE IT. Do not renumber this.
+--
+-- The sequence does read oddly: 030 and 031 were vacated by a collision
+-- renumber, this file sat on an unmerged branch while 032 and 033 were
+-- written and applied, so the directory order is not the order these ran in.
+-- Renumbering it to 034 to tidy that up was tried and reverted, because it is
+-- ALREADY APPLIED under this name - `schema_migrations` on the shared dev
+-- database holds '030_staff_rates_on_user_ids.sql'.
+--
+-- A renamed migration is a new migration to the runner. It would have run
+-- again everywhere it had already run, recorded a second row for one change,
+-- and left `db:check` reporting "applied but not in this repository: 030"
+-- for ever. The re-run happens to be harmless here - after the first pass
+-- `person_id` holds a users.id, which matches no atlassian_account_id, so the
+-- UPDATE touches nothing - but that is luck, and the next migration renamed
+-- on the same reasoning will not be so lucky.
+--
+-- Directory order is cosmetic. Agreement between the repository and every
+-- database that has run this is not.
 --
 -- 028 re-keyed `staff_target.person_id` from an Atlassian accountId to
 -- `users.id`, because the reports identify a person that way now. It missed
@@ -46,6 +57,6 @@ SET person_id = u.id,
 FROM users AS u
 WHERE u.atlassian_account_id = r.person_id;
 
-INSERT INTO schema_migrations (filename) VALUES ('034_staff_rates_on_user_ids.sql');
+INSERT INTO schema_migrations (filename) VALUES ('030_staff_rates_on_user_ids.sql');
 
 COMMIT;
