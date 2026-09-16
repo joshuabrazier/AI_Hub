@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, USER_ROLES } from "@/lib/data/kysely-database-types";
-import { ROUTES, projectBoardForRole, projectSetupForRole } from "@/lib/routes";
+import { projectBoardForRole } from "@/lib/routes";
 
 
 import { SetupBudgetGroupsPanel } from "./components/setup-budget-groups-panel";
@@ -103,13 +103,16 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
             Collapsed until asked for, so it is an offer rather than a
             detour.
             ----------------------------------------------------------- */}
-        <SetupPlanWithAi />
+        {/* ADMIN ONLY, and hidden rather than shown-then-refused. Both of
+            its actions guard on [ADMIN] and project-plan.service re-checks
+            the role in three more places, so for a manager every button in
+            this panel is a refusal waiting to happen. Widening it is real
+            work - it drafts and then APPLIES a whole project, its phases and
+            its tasks - and it is not what "managers can create projects"
+            asked for. A manager fills the form in. */}
+        {isAdmin ? <SetupPlanWithAi /> : null}
 
-        <SetupProjectCreateForm
-          clients={clients}
-          setupHref={(newProjectId) => projectSetupForRole(user.role, newProjectId)}
-          projectsHref={isAdmin ? ROUTES.ADMIN_PROJECTS : ROUTES.MANAGE_PROJECTS}
-        />
+        <SetupProjectCreateForm clients={clients} role={user.role} />
       </PortalPage>
     );
   }

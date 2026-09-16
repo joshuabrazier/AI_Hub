@@ -15,6 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
+import { projectHomeForRole, projectSetupForRole } from "@/lib/routes";
 
 import { createProjectAction } from "../delivery-setup.actions";
 import {
@@ -57,18 +58,24 @@ const CLIENT_DESCRIPTION_ID = "project-client-description";
 
 export function SetupProjectCreateForm({
   clients,
-  // The caller's area, resolved by the page from the session role. Passed in
-  // rather than read here because this is a client component: it would have
-  // to fetch the session to learn the role, and the server already knows.
-  // Both routes exist twice - /admin and /manage - and a manager pushed to
-  // an /admin one is redirected home by the proxy, which reads as the app
-  // losing your place rather than as a refusal.
-  setupHref,
-  projectsHref,
+  // -----------------------------------------------------------------
+  // THE ROLE, NOT TWO FUNCTIONS, and the first version of this crashed.
+  //
+  // It took `setupHref` and `projectsHref` as callbacks so the server page
+  // could hand down routes it had already resolved. A FUNCTION CANNOT CROSS
+  // THE SERVER-CLIENT BOUNDARY: React refuses to serialise one, so every
+  // render of /manage/projects/new answered a server error before any of this
+  // ran. It was invisible to tsc, to eslint and to the build, because all
+  // three see a perfectly ordinary prop.
+  //
+  // A role is a string, which serialises, and routes.ts is pure so the
+  // helpers are callable from here. The page still decides nothing about
+  // where these go - the helper does, in one place, for all three areas.
+  // -----------------------------------------------------------------
+  role,
 }: {
   clients: ClientOptionDTO[];
-  setupHref: (projectId: string) => string;
-  projectsHref: string;
+  role: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -122,7 +129,7 @@ export function SetupProjectCreateForm({
         // Straight into setup: the project exists with exactly one member -
         // whoever made it, as its lead - and nothing else, so this is where
         // it becomes workable.
-        router.push(setupHref(response.data));
+        router.push(projectSetupForRole(role, response.data));
       } catch (error) {
         handleFrontendErrorWithToast(error);
       }
@@ -194,7 +201,7 @@ export function SetupProjectCreateForm({
           />
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={() => router.push(projectsHref)}>
+            <Button type="button" variant="outline" onClick={() => router.push(projectHomeForRole(role))}>
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || !form.formState.isValid} loading={isPending}>

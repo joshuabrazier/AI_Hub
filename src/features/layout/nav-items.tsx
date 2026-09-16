@@ -452,6 +452,12 @@ const MANAGER_NAV: NavGroup[] = [
   {
     label: "Overview",
     items: [
+      // A MANAGER HAD NO HOME ROW, and an admin and a member both did. It was
+      // not an oversight in this file so much as an honest reflection of
+      // /manage, which redirected to Projects - there was nothing to point
+      // at. That page now renders the same "your week, and what is waiting"
+      // summary the other two areas open with, so there is.
+      { label: "Home", href: ROUTES.MANAGE, icon: House, tooltip: "Home" },
       aiTools({
         chat: ROUTES.MANAGE_AI_CHAT,
         transcription: ROUTES.MANAGE_TRANSCRIPTION,

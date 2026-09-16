@@ -352,6 +352,19 @@ describe("one way to the projects", () => {
     expect(labels).toContain("New project");
   });
 
+  it.each(ALL_ROLES)("gives %s a Home row", (role) => {
+    // The manager tree had none while the other two did, and nothing caught
+    // it: a missing nav row is not a broken page, it is a door somebody
+    // cannot find. It went unnoticed because /manage only redirected to
+    // Projects, so there was genuinely nothing to point at until the manager
+    // landing was built.
+    const labels = navGroupsForRole(role)
+      .flatMap((group) => group.items)
+      .map((entry) => entry.label);
+
+    expect(labels).toContain("Home");
+  });
+
   it("offers a MEMBER no way to start a project", () => {
     const labels = navGroupsForRole(USER_ROLES.MEMBER)
       .flatMap((group) => group.items)
