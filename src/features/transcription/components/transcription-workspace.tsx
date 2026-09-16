@@ -34,6 +34,7 @@ import {
   type TranscriptionPageDTO,
   type TranscriptionSummaryDTO,
 } from "../transcription.types";
+import { listPendingRecordings } from "./recording-store";
 import { TranscriptionComposer } from "./transcription-composer";
 import { TranscriptionDetail } from "./transcription-detail";
 
@@ -94,6 +95,40 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
   // Opens on the composer when there is nothing to show, which is what a
   // first visit looks like.
   const [isCreating, setIsCreating] = useState(page.transcriptions.length === 0);
+
+  // -------------------------------------------------------------------
+  // ===================================================================
+  // A RECORDING STILL ON THIS DEVICE OUTRANKS WHATEVER WAS LAST FINISHED
+  // ===================================================================
+  //
+  // The recovery panel is the net under this whole feature, and it was
+  // invisible to exactly the people standing in it. It lives inside the
+  // composer, and the composer only renders when `isCreating` - which is
+  // seeded from "this person has no transcriptions at all". So anybody who
+  // had ever recorded anything before, whose tab then died mid-meeting,
+  // reloaded to find their last transcript on screen and NOTHING anywhere
+  // saying an unsent recording was sitting in IndexedDB. They would
+  // reasonably conclude the meeting was gone.
+  //
+  // The store is asked on mount and the answer wins: a meeting that has not
+  // reached the server is more urgent than one that finished days ago.
+  //
+  // Asked here rather than in the composer because the composer is the very
+  // thing that is not mounted in the case that matters.
+  // -------------------------------------------------------------------
+  useEffect(() => {
+    let cancelled = false;
+
+    listPendingRecordings()
+      .then((held) => {
+        if (!cancelled && held.length > 0) setIsCreating(true);
+      })
+      .catch((error) => console.warn("[workspace] could not read the local recording store", error));
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [renaming, setRenaming] = useState<TranscriptionSummaryDTO | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [deleting, setDeleting] = useState<TranscriptionSummaryDTO | null>(null);
