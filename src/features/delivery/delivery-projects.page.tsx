@@ -16,7 +16,7 @@ import {
 import { projectBoardForRole } from "@/lib/routes";
 
 import { getMyWorkService } from "./delivery-board.service";
-import { getMyProjectsService } from "./delivery-setup.service";
+import { getAllProjectsForAdminService, getMyProjectsService } from "./delivery-setup.service";
 import { formatMinutesAsClock } from "./delivery.types";
 import { BoardEmptyState } from "./components/board-empty-state";
 
@@ -25,10 +25,37 @@ import { BoardEmptyState } from "./components/board-empty-state";
 // what somebody sees here, not their role, so there is nothing for an area
 // to change and the three routes under app/ are thin wrappers around this.
 //
-// `getMyProjectsService` is "my projects", and that includes for an admin:
-// it reads the caller's own memberships, so an admin who administers forty
-// projects and is on two sees the two. The service says why at length. An
-// admin reaches any other project through the admin screens.
+// -------------------------------------------------------------------
+// AN ADMIN SEES EVERY PROJECT HERE. EVERYBODY ELSE SEES THEIRS.
+//
+// This page used to call getMyProjectsService for all three roles, and said
+// so deliberately: "an admin who administers forty projects and is on two
+// sees the two ... an admin reaches any other project through the admin
+// screens". That was a real position and it was the wrong one. There is no
+// admin screen that lists projects - the budget report has a picker, which is
+// not the same thing - so a project created by somebody else was reachable
+// only by knowing its id. An admin looking at the app's list of projects and
+// not finding the one a colleague made has no way to tell whether it exists.
+//
+// The two services are unchanged and both still correct. getMyProjectsService
+// means MY projects and answers that for an admin too - the sidebar rail
+// still calls it, which is right: the rail is a jump list of the work you are
+// actually on, and it would be useless with forty rows in it.
+//
+// So the rail and this page now show different sets for an admin, and that is
+// the point rather than a wrinkle: the rail is your shortcuts, the page is
+// the directory.
+//
+// ARCHIVED ARE EXCLUDED even for an admin. Archiving is this module's soft
+// delete, and a directory that keeps everything anybody ever finished buries
+// what is live. The budget report still includes them, because a finished
+// project is exactly what somebody asks that report about.
+//
+// THE LANDING PAGE'S TILE STILL COUNTS MEMBERSHIPS, so for an admin it can
+// read 2 while this page lists 40. Both labels are honest - the tile says
+// "projects you are on" - but they no longer answer the same question, and
+// the comment below that used to promise they did has gone with this change.
+// -------------------------------------------------------------------
 //
 // THE WORK LIST IS THE SESSION'S OWN. There is no parameter for whose work
 // to show, and a list of somebody else's is a different screen with a
@@ -51,14 +78,18 @@ export default async function DeliveryProjectsPage({ eyebrow }: { eyebrow: strin
   // themselves.
   const isAdmin = user.role === USER_ROLES.ADMIN;
 
-  const [projects, myWork] = await Promise.all([getMyProjectsService(), getMyWorkService()]);
+  const [projects, myWork] = await Promise.all([
+    isAdmin ? getAllProjectsForAdminService({ includeArchived: false }) : getMyProjectsService(),
+    getMyWorkService(),
+  ]);
 
   // -----------------------------------------------------------------
   // DELIVERY WORK FIRST, STANDING BUCKETS AFTER, IN ONE LIST.
   //
-  // One grid rather than two sections, so the "Projects you are on" tile on
-  // the landing page keeps counting exactly what this page shows - the two
-  // come from the same service for that reason. What changes is the ORDER
+  // One grid rather than two sections. For everybody but an admin this list
+  // and the landing page's "Projects you are on" tile still come from the
+  // same service and therefore agree; for an admin they no longer do, and the
+  // note at the top of this file says why. What changes here is the ORDER
   // and a badge: a standing bucket of time codes interleaved alphabetically
   // between two client projects reads as a third client project.
   //
@@ -75,7 +106,11 @@ export default async function DeliveryProjectsPage({ eyebrow }: { eyebrow: strin
     <PortalPage
       eyebrow={eyebrow}
       title="Projects"
-      description="The projects you are a member of, and the cards assigned to you across all of them."
+      description={
+        isAdmin
+          ? "Every project in the app, and the cards assigned to you across the ones you are on."
+          : "The projects you are a member of, and the cards assigned to you across all of them."
+      }
     >
       {projects.length === 0 ? (
         // The third of this feature's three empty screens, and the only one
@@ -83,18 +118,22 @@ export default async function DeliveryProjectsPage({ eyebrow }: { eyebrow: strin
         // an administrator is who grants it.
         <BoardEmptyState
           icon={<FolderKanban size={18} aria-hidden="true" />}
-          title="You are not on any projects yet"
+          title={isAdmin ? "No projects yet" : "You are not on any projects yet"}
           detail={
             isAdmin
-              ? "This lists the projects you are a member of, which is the working set rather than everything. Create one, or add yourself to an existing project from its setup screen."
+              ? "Nothing has been created in the app yet. This lists every project rather than only the ones you are on, so an empty screen here means an empty app. Start one and it appears."
               : "Projects appear here once an administrator adds you to one. From there you get its board, and you can log your time against its tasks."
           }
         />
       ) : (
         <div className="space-y-8">
           <section aria-labelledby="your-projects">
+            {/* The heading names what was actually read, which differs by
+                role. "Your projects" over a list of every project in the app
+                would be wrong in the one way an admin could not detect: it
+                would look right. */}
             <h2 id="your-projects" className="text-base font-semibold text-foreground">
-              Your projects
+              {isAdmin ? "All projects" : "Your projects"}
             </h2>
 
             <ul className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
