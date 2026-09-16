@@ -225,9 +225,21 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
 
   return (
     <>
-      <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
-        {/* Transcriptions */}
-        <aside className="flex min-w-0 flex-col gap-3">
+      {/* ===================================================================
+          ON A PHONE THE PRIMARY ACTION COMES FIRST.
+          Stacked, this used to put the list of past transcriptions above
+          any way of starting a new one - so somebody opening the app to
+          record a meeting that was about to begin had to scroll past
+          everything they had ever recorded to find the button.
+          The three children are in DOM order "start, work, history", which
+          is the order a phone shows them and therefore the order a screen
+          reader and the tab key follow. The two-column desktop layout is
+          restored by explicit grid placement rather than by `order`, so the
+          markup does not have to lie about its own sequence to get it.
+          =================================================================== */}
+      <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:gap-y-3">
+        {/* Start a new one. Column one, top, on a wide screen. */}
+        <div className="lg:col-start-1 lg:row-start-1">
           <Button
             onClick={() => setIsCreating(true)}
             disabled={!isReady || isCreating}
@@ -236,7 +248,24 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
             <Plus size={16} aria-hidden="true" />
             New transcription
           </Button>
+        </div>
 
+        {/* The open transcription, or a new one. Column two, full height. */}
+        <section className="min-w-0 lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          {!isReady ? (
+            <NotConfigured page={page} />
+          ) : isCreating || page.active === null ? (
+            <TranscriptionComposer page={page} onStarted={openTranscription} />
+          ) : (
+            // Keyed on the row so opening a different one remounts and
+            // resets the polling and the open tab. Without the key React
+            // would keep the previous transcription's local state.
+            <TranscriptionDetail key={page.active.id} detail={page.active} />
+          )}
+        </section>
+
+        {/* What has been recorded before. Column one, under the button. */}
+        <aside className="flex min-w-0 flex-col gap-3 lg:col-start-1 lg:row-start-2">
           {page.transcriptions.length === 0 ? (
             <p className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
               Nothing yet. Record a meeting, upload one, or import one from Teams to see it here.
@@ -343,20 +372,6 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
             </nav>
           )}
         </aside>
-
-        {/* The open transcription, or a new one */}
-        <section className="min-w-0">
-          {!isReady ? (
-            <NotConfigured page={page} />
-          ) : isCreating || page.active === null ? (
-            <TranscriptionComposer page={page} onStarted={openTranscription} />
-          ) : (
-            // Keyed on the row so opening a different one remounts and
-            // resets the polling and the open tab. Without the key React
-            // would keep the previous transcription's local state.
-            <TranscriptionDetail key={page.active.id} detail={page.active} />
-          )}
-        </section>
       </div>
 
       {/* Rename. AppDialog rather than ConfirmDialog because this needs a
