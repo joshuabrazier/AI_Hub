@@ -325,7 +325,21 @@
   /* The chrome's geometry. Not themed - these are the same in light and
      dark, and live here because :root is where the tokens are. */
   --nav-h: 3.5rem;
-  --rail-w: 15rem;
+  /* -----------------------------------------------------------------
+     17rem RATHER THAN 15, and the extra 32px is bought for a reason:
+     project names. They are the only nav labels this app does not write
+     itself - staff type them - so they are the only ones that routinely
+     run past the rail and truncate, and "Trainer Suzie Swim Sc..." is not
+     a label anybody can pick out of a list at a glance.
+     It also matches the AI chat conversation list, which is already 17rem.
+     A nested column 2rem narrower than the one it sits beside reads as a
+     near miss; the same width reads as a decision.
+     The whole rail moves off this one value - `w-rail` on the rail itself
+     and `pl-rail` on the shell - so there is no second place to keep in
+     step. Anything wider starts eating the content on a 1280px laptop,
+     where this plus the chat list is already 34rem of chrome.
+     ----------------------------------------------------------------- */
+  --rail-w: 17rem;
   --rail-collapsed-w: 3.5rem;
 
   /* -----------------------------------------------------------------
