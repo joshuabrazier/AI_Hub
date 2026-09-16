@@ -15,7 +15,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
-import { ROUTES } from "@/lib/routes";
 
 import { createProjectAction } from "../delivery-setup.actions";
 import {
@@ -56,7 +55,21 @@ type ProjectFormValues = z.infer<typeof ProjectFormSchema>;
 const CLIENT_FIELD_ID = "project-client";
 const CLIENT_DESCRIPTION_ID = "project-client-description";
 
-export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[] }) {
+export function SetupProjectCreateForm({
+  clients,
+  // The caller's area, resolved by the page from the session role. Passed in
+  // rather than read here because this is a client component: it would have
+  // to fetch the session to learn the role, and the server already knows.
+  // Both routes exist twice - /admin and /manage - and a manager pushed to
+  // an /admin one is redirected home by the proxy, which reads as the app
+  // losing your place rather than as a refusal.
+  setupHref,
+  projectsHref,
+}: {
+  clients: ClientOptionDTO[];
+  setupHref: (projectId: string) => string;
+  projectsHref: string;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -106,9 +119,10 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
 
         toast.success("Project created. Now add its people, budget and phases.");
 
-        // Straight into setup, because a project with no members is
-        // invisible to everybody except an admin until membership is set.
-        router.push(ROUTES.adminProjectSetup(response.data));
+        // Straight into setup: the project exists with exactly one member -
+        // whoever made it, as its lead - and nothing else, so this is where
+        // it becomes workable.
+        router.push(setupHref(response.data));
       } catch (error) {
         handleFrontendErrorWithToast(error);
       }
@@ -180,7 +194,7 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
           />
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={() => router.push(ROUTES.ADMIN_PROJECTS)}>
+            <Button type="button" variant="outline" onClick={() => router.push(projectsHref)}>
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || !form.formState.isValid} loading={isPending}>

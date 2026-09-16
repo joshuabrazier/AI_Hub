@@ -74,7 +74,7 @@ import {
   getLoggedMinutesByProjectRepo,
   getLoggedMinutesByUserForProjectRepo,
 } from "@/lib/data/repositories/time-entries.repository";
-import { getUsersByIdsRepo } from "@/lib/data/repositories/users.repository";
+import { getAssignableUsersRepo, getUsersByIdsRepo } from "@/lib/data/repositories/users.repository";
 import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
 import { ROUTES } from "@/lib/routes";
@@ -514,6 +514,47 @@ export async function getClientOptionsService(): Promise<ClientOptionDTO[]> {
     return clients.map((client) => ({ id: client.id, name: client.name }));
   } catch (error) {
     throw handleError("getClientOptionsService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The people a project may be staffed from: id, name, email, nothing else.
+//
+// IT EXISTS BECAUSE THE SETUP SCREEN USED TO CALL getAdminUsersService, and
+// that read cannot be opened to managers. It returns the admin Users screen:
+// every account AND every pending invitation, with roles, activity, sign-in
+// state and who has a second factor enrolled. A manager needs none of it to
+// put somebody on a project, and handing them all of it to get three fields
+// would be the widest thing in this change by a distance.
+//
+// So this is the narrow read, and it is narrow in both directions: the
+// repository already excludes deactivated and de-identified accounts, and
+// the shape carries no role, no status and no invitation. A pending
+// invitation is deliberately absent - its id is an invitation and not a
+// user, so offering one would post an id that resolves to nobody.
+//
+// PRESENTATION ONLY, like every other list in this file. setProjectMembers
+// and addProjectMember re-resolve each account server-side through
+// resolveAssignableUsers and refuse anything unassignable, so this deciding
+// wrongly shows a name, it does not grant anything.
+// -------------------------------------------------------------------
+export async function getAssignablePeopleService(): Promise<
+  { userId: string; name: string; email: string }[]
+> {
+  try {
+    await requireUserRole([USER_ROLES.ADMIN, USER_ROLES.MANAGER]);
+
+    const users = await getAssignableUsersRepo();
+
+    return users.map((user) => ({
+      userId: user.id,
+      // Both are NOT NULL for an account that reaches here - the repository
+      // excludes the de-identified, which is the only way they go null.
+      name: userDisplayName(user),
+      email: user.email,
+    }));
+  } catch (error) {
+    throw handleError("getAssignablePeopleService", error);
   }
 }
 

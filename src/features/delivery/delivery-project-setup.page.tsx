@@ -1,17 +1,15 @@
 import Link from "next/link";
 
-import { getAdminUsersService } from "@/features/admin-users/admin-users.service";
-import { ADMIN_USER_DISPLAY_STATUS, USER_OR_INVITATION } from "@/features/admin-users/admin-users.types";
 import PortalPage from "@/features/layout/portal-page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { requireUserRole } from "@/lib/auth/session-auth-server";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, USER_ROLES } from "@/lib/data/kysely-database-types";
-import { ROUTES } from "@/lib/routes";
+import { ROUTES, projectBoardForRole, projectSetupForRole } from "@/lib/routes";
 
 
 import { SetupBudgetGroupsPanel } from "./components/setup-budget-groups-panel";
-import { SetupMembersPanel, type SetupAssignablePerson } from "./components/setup-members-panel";
+import { SetupMembersPanel } from "./components/setup-members-panel";
 import { SetupPhasesPanel } from "./components/setup-phases-panel";
 import { SetupProjectArchiveButton } from "./components/setup-project-archive-button";
 import { SetupProjectEditDialog } from "./components/setup-project-edit-dialog";
@@ -25,6 +23,7 @@ import {
   missingForBoard,
 } from "./components/setup-summary";
 import {
+  getAssignablePeopleService,
   getClientOptionsService,
   getProjectBudgetGroupsService,
   getProjectDetailService,
@@ -35,8 +34,8 @@ import {
 //
 // ONE PAGE FOR TWO ROUTES, and the id is what tells them apart:
 //
-//   /admin/projects/new                 no id  - create the project
-//   /admin/projects/<id>/setup          an id  - its members, its budget
+//   /{admin,manage}/projects/new        no id  - create the project
+//   /{admin,manage}/projects/<id>/setup an id  - its members, its budget
 //                                                groups and its phases
 //
 // They are one component because they are one job done in order. A project
@@ -45,11 +44,22 @@ import {
 // own write, so the second half of this screen is where a project becomes
 // workable at all.
 //
-// ADMIN ONLY, both halves. A lead runs the board; who is ON a project, what
-// their band is and how the budget is pooled are admin decisions, and every
-// service behind this guards on that independently. The guard is repeated
-// here rather than left to the area layout for the reason the layout itself
-// gives - it is one matcher change away from being the only gate.
+// ADMINS AND MANAGERS, and it is FOUR routes now rather than two - the same
+// pair under /manage. Managers can create projects, so they need both halves:
+// the create form, and the setup screen for the project that creating one
+// made them the lead of.
+//
+// THE ROLE GETS YOU HERE AND DECIDES NOTHING ELSE. Who is on a project and
+// how its budget is pooled are gated by requireProjectStructureAccess - admin
+// or this project's LEAD - so a manager can set up what they lead and nothing
+// else, and a manager who is not on a project at all gets notFound() rather
+// than a refusal confirming it exists. The two things that stayed admin-only
+// are renaming and archiving, and both are hidden below rather than left to
+// fail: renaming carries `status`, and status is how an archive is undone.
+//
+// The guard is repeated here rather than left to the area layout for the
+// reason the layout itself gives - it is one matcher change away from being
+// the only gate.
 //
 // NO MONEY ON THIS SCREEN. It deals in minutes and in rate BANDS, never
 // cents: naming which of three tiers applies to somebody says nothing about
@@ -57,7 +67,20 @@ import {
 // report's, under its own guard.
 // -------------------------------------------------------------------
 export default async function DeliveryProjectSetupPage({ projectId }: { projectId?: string }) {
-  await requireUserRole([USER_ROLES.ADMIN]);
+  // MANAGERS TOO, and the role is kept because this page has to build links
+  // into the caller's OWN area. A manager sent to an /admin/... href is
+  // redirected home by the proxy, which does not look like an error - it
+  // looks like the app losing your place halfway through setting a project
+  // up. Every route below goes through a *ForRole helper for that reason.
+  //
+  // THE ROLE IS NOT THE PROJECT AUTHORITY, though, and nothing here should
+  // read as if it were: being a manager gets you to this screen, and the
+  // services decide what you may do once you are on it. A manager who does
+  // not lead this project is refused by requireProjectStructureAccess, and
+  // one who is not on it at all gets notFound() rather than a message
+  // confirming it exists.
+  const user = await requireUserRole([USER_ROLES.ADMIN, USER_ROLES.MANAGER]);
+  const isAdmin = user.role === USER_ROLES.ADMIN;
 
   // -----------------------------------------------------------------
   // CREATE. Only ACTIVE clients are offered: putting a retired one in the
@@ -82,7 +105,11 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
             ----------------------------------------------------------- */}
         <SetupPlanWithAi />
 
-        <SetupProjectCreateForm clients={clients} />
+        <SetupProjectCreateForm
+          clients={clients}
+          setupHref={(newProjectId) => projectSetupForRole(user.role, newProjectId)}
+          projectsHref={isAdmin ? ROUTES.ADMIN_PROJECTS : ROUTES.MANAGE_PROJECTS}
+        />
       </PortalPage>
     );
   }
@@ -92,29 +119,21 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
   // project's own detail, its budget groups, and the accounts that may be
   // put on it.
   //
-  // THE PEOPLE LIST COMES FROM THE ADMIN USERS SERVICE, which is another
-  // feature's read and is used here because this module has none of its
-  // own - see the note returned with this work. It guards on ADMIN itself,
-  // the same role this page and every membership write require, so nothing
-  // is widened by borrowing it. Its rows are filtered to real ACCOUNTS that
-  // are active: a pending invitation's id is an invitation, not a user, and
-  // offering one would post an id that resolves to nobody. That filter is
-  // presentation only - setProjectMembers and addProjectMember re-resolve
-  // every account server-side and refuse anything that is not assignable.
-  // -----------------------------------------------------------------
-  const [detail, groups, accounts] = await Promise.all([
+  // getAssignablePeopleService RATHER THAN getAdminUsersService, and the swap
+  // is the whole reason a manager can be on this page at all. That read is
+  // the admin Users SCREEN - every account and every pending invitation, with
+  // roles, activity, sign-in state and who has enrolled a second factor - and
+  // it could not be opened to managers to get three fields out of it.
+  //
+  // The filtering that used to be here went with it. Excluding deactivated
+  // and de-identified accounts is a rule about who may be staffed, so it
+  // belongs beside the other one (`isAssignable`) in the service rather than
+  // in a page that happened to have a list in its hands.
+  const [detail, groups, people] = await Promise.all([
     getProjectDetailService(projectId),
     getProjectBudgetGroupsService(projectId),
-    getAdminUsersService(),
+    getAssignablePeopleService(),
   ]);
-
-  const people: SetupAssignablePerson[] = accounts
-    .filter(
-      (account) =>
-        account.userOrInvitation === USER_OR_INVITATION.User &&
-        account.displayStatus === ADMIN_USER_DISPLAY_STATUS.Active,
-    )
-    .map((account) => ({ userId: account.id, name: account.name, email: account.email }));
 
   const isArchived = detail.project.status === PROJECT_STATUSES.ARCHIVED;
 
@@ -157,15 +176,27 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
               shape that did not carry it would post an empty box over
               whatever was written.
               ------------------------------------------------------------- */}
-          <SetupProjectEditDialog
-            project={{
-              id: detail.project.id,
-              title: detail.project.title,
-              description: detail.description,
-              isBillable: detail.project.isBillable,
-              status: detail.project.status,
-            }}
-          />
+          {/* ADMIN ONLY, BOTH OF THESE, and the page has to say so because
+              the services do. Renaming a project carries `status`, and
+              setting status back to active is how an archive is undone - so
+              a lead who could rename could un-archive, and updateProjectService
+              stayed on requireAdminProject for exactly that. Archiving is the
+              soft delete and went with it.
+
+              Hidden rather than disabled: a control a manager can see and
+              press, which then refuses them, teaches them the app is broken.
+              The refusal still exists in the service - this is display. */}
+          {isAdmin ? (
+            <SetupProjectEditDialog
+              project={{
+                id: detail.project.id,
+                title: detail.project.title,
+                description: detail.description,
+                isBillable: detail.project.isBillable,
+                status: detail.project.status,
+              }}
+            />
+          ) : null}
           {/* "Open the board" is deliberately NOT here any more. It was in
               this header AND at the foot of the page, and the one at the
               foot is the real end of the job - the header is where somebody
@@ -177,7 +208,7 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
               Budgets entry is the way in. */}
           {/* Only where there is something to do - restoring an archived
               project is an edit, and the dialog above owns it. */}
-          {isArchived ? null : (
+          {isArchived || !isAdmin ? null : (
             <SetupProjectArchiveButton
               projectId={detail.project.id}
               projectTitle={detail.project.title}
@@ -283,7 +314,7 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
             not ready would be a nag they can never clear. */}
         <SetupDone isReady={missing.length === 0} missing={missing}>
           <Button asChild>
-            <Link href={ROUTES.adminProject(detail.project.id)}>Open the board</Link>
+            <Link href={projectBoardForRole(user.role, detail.project.id)}>Open the board</Link>
           </Button>
         </SetupDone>
       </div>

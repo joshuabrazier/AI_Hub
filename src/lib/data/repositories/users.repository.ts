@@ -16,6 +16,34 @@ import { STAFF_ROLES, USER_ROLES, UpdateUser, User } from "../kysely-database-ty
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
+// Everybody who can be put on a project: any role, active, still identifiable.
+//
+// ANY ROLE, which is why this is not getActiveStaffUsersRepo. That one is
+// admins and managers - STAFF_ROLES - and members are most of who actually
+// works on a project. An admin can be a member of one too.
+//
+// DE-IDENTIFIED ACCOUNTS ARE EXCLUDED HERE rather than filtered by a caller.
+// De-identifying wipes the personal data and keeps the row, so one of these
+// in a picker is a blank where a person should be, and on a board it is an
+// assignee nobody can contact. The same rule is `isAssignable` in the
+// delivery setup service, which re-checks it server-side on every write -
+// this is the read half, so a screen never offers what a write would refuse.
+// -------------------------------------------------------------------
+export async function getAssignableUsersRepo(db: DBClient = database): Promise<User[]> {
+  try {
+    return await db
+      .selectFrom("users")
+      .selectAll()
+      .where("isActive", "=", true)
+      .where("deidentifiedAt", "is", null)
+      .orderBy("name")
+      .execute();
+  } catch (error) {
+    throw handleError("getAssignableUsersRepo", error);
+  }
+}
+
+// -------------------------------------------------------------------
 // All staff accounts (admins and managers), active first then by name, so
 // the admin list leads with the people still working in the product.
 // -------------------------------------------------------------------

@@ -459,13 +459,30 @@ const MANAGER_NAV: NavGroup[] = [
       }),
     ],
   },
-  // The same two entries as the admin tree, in a group with the same name,
-  // and nothing else in it. A manager is a member of projects like anybody
-  // else; managing a team grants nothing on a project board.
+  // -------------------------------------------------------------------
+  // THREE ENTRIES, AND "NEW PROJECT" IS THE ONE THAT IS NOT IN THE MEMBER
+  // TREE. Managers can create projects; members work on them.
+  //
+  // It is deliberately NOT a "Delivery admin" group like the admin tree's.
+  // That group holds clients, rates and budgets - the money and the client
+  // list - and a manager has none of them. One row in the group they already
+  // have says the true thing: starting a project is part of delivery for a
+  // manager, not a separate administrative area they have been let into.
+  //
+  // A MANAGER'S POWER OVER A PROJECT IS NOT IN THIS FILE, and the nav must
+  // not be read as if it were. Creating one makes them its lead, and being
+  // the lead is what the services check; this row is the way to the form.
+  // -------------------------------------------------------------------
   {
     label: "Delivery",
     items: [
       myProjects(ROUTES.MANAGE_PROJECTS),
+      {
+        label: "New project",
+        href: ROUTES.MANAGE_PROJECT_NEW,
+        icon: FolderPlus,
+        tooltip: "Start a project for a client, and lead it",
+      },
       {
         label: "Your timesheet",
         href: ROUTES.MANAGE_TIMESHEET,

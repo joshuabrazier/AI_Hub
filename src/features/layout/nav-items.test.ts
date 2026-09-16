@@ -322,12 +322,41 @@ describe("one way to the projects", () => {
     ).toHaveLength(0);
   });
 
-  it.each(ALL_ROLES)("keeps the projects above the timesheet for %s", (role) => {
-    // The entry lives in the static tree rather than arriving with the fetch,
-    // so it cannot appear ABOVE "Your timesheet" a moment after the sidebar
-    // paints and push it under somebody's cursor.
+  it.each(ALL_ROLES)("puts Projects FIRST in Delivery for %s", (role) => {
+    // The property, rather than the whole list: the entry lives in the static
+    // tree instead of arriving with the fetch, so it cannot appear a moment
+    // after the sidebar paints and push what was under somebody's cursor
+    // down. Asserting the exact contents made this break when managers gained
+    // a row, which is a change to the tree and not to the thing being
+    // protected.
     const delivery = navGroupsForRole(role).find((group) => group.label === "Delivery");
 
-    expect(delivery?.items.map((entry) => entry.label)).toEqual(["Projects", "Your timesheet"]);
+    expect(delivery?.items[0]?.label).toBe("Projects");
+    expect(delivery?.items.at(-1)?.label).toBe("Your timesheet");
+  });
+
+  // -----------------------------------------------------------------
+  // WHO IS OFFERED A WAY TO START ONE.
+  //
+  // Managers create projects and members do not, and the nav is the only
+  // place that difference is visible - so it is the one place it can be got
+  // wrong without anybody noticing until a member is staring at a form that
+  // refuses them. The refusal is real either way: createProjectService
+  // guards on [ADMIN, MANAGER].
+  // -----------------------------------------------------------------
+  it.each([USER_ROLES.ADMIN, USER_ROLES.MANAGER])("offers %s a way to start a project", (role) => {
+    const labels = navGroupsForRole(role)
+      .flatMap((group) => group.items)
+      .flatMap((entry) => (isCollapsible(entry) ? entry.children.map((c) => c.label) : [entry.label]));
+
+    expect(labels).toContain("New project");
+  });
+
+  it("offers a MEMBER no way to start a project", () => {
+    const labels = navGroupsForRole(USER_ROLES.MEMBER)
+      .flatMap((group) => group.items)
+      .flatMap((entry) => (isCollapsible(entry) ? entry.children.map((c) => c.label) : [entry.label]));
+
+    expect(labels).not.toContain("New project");
   });
 });
