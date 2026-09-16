@@ -7,8 +7,13 @@ import { toast } from "sonner";
 import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 
-import { createTranscriptionAction, startTranscriptionAction } from "../transcription.actions";
-import type { CreateTranscriptionRequestDTO } from "../transcription.types";
+import {
+  createTranscriptionAction,
+  refreshTranscriptionUploadUrlAction,
+  startTranscriptionAction,
+} from "../transcription.actions";
+import { MAX_MEDIA_BYTES, type CreateTranscriptionRequestDTO } from "../transcription.types";
+import { uploadInBlocks } from "./blob-upload";
 
 // -------------------------------------------------------------------
 // useTranscriptionUpload
@@ -18,7 +23,7 @@ import type { CreateTranscriptionRequestDTO } from "../transcription.types";
 // file and finishing a recording differ only in where the bytes came from.
 //
 //   1. claim a row and get a write-only URL   (server action)
-//   2. PUT the bytes straight to blob storage (never through the app)
+//   2. PUT the bytes straight to blob storage, in blocks (never through the app)
 //   3. tell the server the file has landed    (server action)
 //
 // Step 2 is the reason this is a hook rather than an action. The media can
@@ -31,10 +36,6 @@ import type { CreateTranscriptionRequestDTO } from "../transcription.types";
 // event for it - and a person watching a long upload with no indication of
 // whether it is moving will reload the page and lose the recording.
 // -------------------------------------------------------------------
-
-// Azure requires this on a PUT to say what kind of blob is being created.
-// Without it the request is rejected outright.
-const BLOB_TYPE_HEADER = "x-ms-blob-type";
 
 export type TranscriptionUploadRequest = {
   /** The bytes: a File from a picker, or a Blob from MediaRecorder. */
@@ -49,6 +50,19 @@ export type TranscriptionUploadRequest = {
   source: CreateTranscriptionRequestDTO["source"];
 };
 
+// -------------------------------------------------------------------
+// WHAT AN UPLOAD ENDED AS, and the two halves are not the same thing.
+//
+// `transcriptionId` means a ROW exists. `started` means a Speech JOB exists.
+// A caller that treats a returned id as proof of both will delete the only
+// copy on the device for a recording nothing is transcribing - which is how
+// a meeting is lost, since the recovery panel is the only way back.
+//
+// Null is the third outcome: nothing was created at all, and the reason has
+// already been shown.
+// -------------------------------------------------------------------
+export type UploadResult = { transcriptionId: string; started: boolean } | null;
+
 export function useTranscriptionUpload() {
   const [isUploading, setIsUploading] = useState(false);
   // 0-100, or null when nothing is in flight. Null rather than 0 so the bar
@@ -59,7 +73,26 @@ export function useTranscriptionUpload() {
   // Returns the new transcription's id, or null if anything went wrong -
   // in which case the reason has already been shown.
   // -------------------------------------------------------------------
-  const upload = useCallback(async (request: TranscriptionUploadRequest): Promise<string | null> => {
+  const upload = useCallback(async (request: TranscriptionUploadRequest): Promise<UploadResult> => {
+    // -----------------------------------------------------------------
+    // REFUSED BEFORE THE ROW IS CLAIMED, against the ceiling that is
+    // actually left: what SPEECH will accept. The 256 MiB single-PUT limit
+    // is gone, because the upload is in blocks now.
+    //
+    // Checked here rather than only on the server so that a file which can
+    // never transcribe is refused before somebody waits out its upload. The
+    // server checks the same limit again after the bytes land, which is the
+    // first moment IT knows the size - the two are at different points on
+    // purpose and neither replaces the other.
+    // -----------------------------------------------------------------
+    if (request.media.size > MAX_MEDIA_BYTES) {
+      toast.error(
+        `That file is ${Math.round(request.media.size / (1024 * 1024))} MB, and the transcription service accepts up to ${Math.round(MAX_MEDIA_BYTES / (1024 * 1024))} MB. If it is a screen recording, export the audio on its own and upload that.`,
+      );
+
+      return null;
+    }
+
     setIsUploading(true);
     setProgress(0);
 
@@ -75,56 +108,24 @@ export function useTranscriptionUpload() {
         return null;
       }
 
-      const { transcriptionId, uploadUrl, mediaType } = created.data;
+      const { transcriptionId, uploadUrl, mediaType, expiresAt } = created.data;
 
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
+      // IN BLOCKS, ALWAYS. See uploadInBlocks: one path for every upload,
+      // so the code that carries a five hour workshop is the same code that
+      // carried the two minute test this morning.
+      //
+      // WITH A WAY TO RENEW THE CREDENTIAL. The SAS lasts an hour and a
+      // large recording on a client site's broadband does not fit in one -
+      // so without this the transfer simply met a 403 part way through a
+      // meeting nobody could re-record. Staged blocks survive seven days,
+      // so a renewed URL carries on from where it stopped.
+      await uploadInBlocks(uploadUrl, request.media, mediaType, setProgress, {
+        expiresAt,
+        refreshUrl: async () => {
+          const refreshed = await refreshTranscriptionUploadUrlAction({ transcriptionId });
 
-        xhr.open("PUT", uploadUrl, true);
-        xhr.setRequestHeader(BLOB_TYPE_HEADER, "BlockBlob");
-        // The type the SERVER derived from the filename, not one the
-        // browser guessed. Nothing serves these bytes back, so this is for
-        // tidiness in the container rather than for safety - but there is
-        // no reason to write the browser's guess when the server has
-        // already decided.
-        xhr.setRequestHeader("Content-Type", mediaType);
-
-        xhr.upload.addEventListener("progress", (event) => {
-          if (event.lengthComputable) {
-            setProgress(Math.round((event.loaded / event.total) * 100));
-          }
-        });
-
-        xhr.addEventListener("load", () => {
-          // Azure answers 201 on a successful create. Anything else is a
-          // failure, including a 403 from a SAS that has expired - which is
-          // what an upload slower than the signed window looks like.
-          if (xhr.status === 201) resolve();
-          else reject(new Error(`The upload was rejected (${xhr.status}).`));
-        });
-
-        // Status 0 with an error event is what a BLOCKED CROSS-ORIGIN
-        // request looks like from here. The browser refuses to tell a page
-        // why - that is the point of the same-origin policy - so there is
-        // no status, no headers, and nothing distinguishing it from the
-        // network being down. It is named anyway, because the two fixes are
-        // completely different and only one of them is the reader's to make:
-        // a dropped connection is theirs, a missing CORS rule on the
-        // storage account is an administrator's. The real reason is printed
-        // in the browser console by the browser itself.
-        xhr.addEventListener("error", () =>
-          reject(
-            new Error(
-              "The upload could not reach storage. Check your connection - and if this keeps happening, storage may not be configured to accept uploads from this site.",
-            ),
-          ),
-        );
-        // Fired when the page navigates away mid-transfer. Rejecting rather
-        // than hanging means the row is left in "Uploading" and can be
-        // retried, instead of a promise nothing ever settles.
-        xhr.addEventListener("abort", () => reject(new Error("The upload was cancelled.")));
-
-        xhr.send(request.media);
+          return refreshed.success ? refreshed.data.uploadUrl : null;
+        },
       });
 
       // The bytes are in storage but nothing is transcribing them yet. This
@@ -134,14 +135,18 @@ export function useTranscriptionUpload() {
 
       if (!started.success) {
         toast.error(started.formError ?? MESSAGES.SOMETHING_WENT_WRONG);
-        // The row still exists, sitting in "Uploading", and the person can
-        // retry it from the list rather than losing the recording.
-        return transcriptionId;
+
+        // THE ROW EXISTS AND THE JOB DOES NOT, and the caller has to be able
+        // to tell those apart. It used to return the id here as well as on
+        // success, so a caller checking truthiness read a failed start as
+        // "the server has it" and deleted the copy on the device - see
+        // `started` on the result type.
+        return { transcriptionId, started: false };
       }
 
       toast.success(MESSAGES.TRANSCRIPTION_STARTED);
 
-      return transcriptionId;
+      return { transcriptionId, started: true };
     } catch (error) {
       handleFrontendErrorWithToast(error);
       return null;

@@ -41,7 +41,7 @@
 -- on it alone. The same reasoning 023 wrote for phases.charged_minutes.
 --
 -- Apply manually:
---   psql "$DATABASE_URL" -f src/lib/data/sql/migrations/030_ongoing_projects.sql
+--   psql "$DATABASE_URL" -f src/lib/data/sql/migrations/032_ongoing_projects.sql
 ---------------------------------------------------------------------
 
 BEGIN;
@@ -66,6 +66,6 @@ ALTER TABLE projects
 -- re-run is a loud no-op rather than a quiet half-change - which is the
 -- reason the guards above it exist, so the failure lands here and nowhere
 -- earlier.
-INSERT INTO schema_migrations (filename) VALUES ('030_ongoing_projects.sql');
+INSERT INTO schema_migrations (filename) VALUES ('032_ongoing_projects.sql');
 
 COMMIT;

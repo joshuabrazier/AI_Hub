@@ -1173,6 +1173,31 @@ export type NewPushSubscription = Insertable<PushSubscriptions>;
 export type UpdatePushSubscription = Updateable<PushSubscriptions>;
 
 // -------------------------------------------------------------------
+// One row per person per meeting they have been nudged about.
+//
+// It exists to make the send happen ONCE. The sweep looks backwards over a
+// window wider than its own interval, so the same meeting is in range on
+// several consecutive runs - see migration 031. The unique constraint on
+// (userId, eventId) is the claim that turns that into one notification.
+//
+// eventId is the calendar event's IMMUTABLE id as THIS person's mailbox
+// holds it. An event id is per mailbox rather than per meeting, which is
+// right here - everybody in the meeting gets their own nudge - and is
+// exactly why filing matches on a transcript id instead.
+// -------------------------------------------------------------------
+export interface MeetingRecordingReminders {
+  id: string;
+  userId: string;
+  eventId: string;
+  subject: string | null;
+  startsAt: Date;
+  sentAt: Generated<Date>;
+}
+
+export type MeetingRecordingReminder = Selectable<MeetingRecordingReminders>;
+export type NewMeetingRecordingReminder = Insertable<MeetingRecordingReminders>;
+
+// -------------------------------------------------------------------
 // Session Two Factor Table
 //
 // Whether a given SESSION has cleared the second factor. Keyed on the
@@ -1898,6 +1923,7 @@ export interface Database {
   transcriptions: Transcriptions;
   transcriptionFiling: TranscriptionFilings;
   pushSubscriptions: PushSubscriptions;
+  meetingRecordingReminders: MeetingRecordingReminders;
   personalAccessTokens: PersonalAccessTokens;
   sessionTwoFactor: SessionTwoFactors;
   auditLogs: AuditLogs;

@@ -75,6 +75,34 @@ import {
 // would be nothing to persist and a crash would take the lot.
 const CHUNK_INTERVAL_MS = 10_000;
 
+// -------------------------------------------------------------------
+// HOW BIG AN HOUR OF MEETING IS, and it was nobody's decision until now.
+//
+// MediaRecorder was constructed with a mimeType and nothing else, so the
+// browser chose. Chrome's default for Opus is around 128 kbps, which is
+// about 58 MB an hour - so a five hour workshop produced a file over 300 MB,
+// which is past the 256 MiB a single PUT can carry. A recording that cannot
+// be uploaded is the worst outcome this feature has, because the meeting is
+// already over.
+//
+// 32 kbps, and the number is not a guess. Opus is a speech codec before it
+// is a music codec: it was designed for VoIP, and at 32 kbps mono it is
+// transparent for talking - well above the 24 kbps WhatsApp and Teams
+// themselves use for a voice call. Azure Speech then downsamples to 16 kHz
+// mono to recognise it, so most of what the default was spending was thrown
+// away before a single word was transcribed.
+//
+// The effect is about 14 MB an hour rather than 58. A five hour meeting
+// becomes 72 MB, a full working day fits, and every upload is four times
+// faster on the office connection.
+//
+// A HINT, NOT A GUARANTEE. A browser that will not honour it ignores it and
+// records at its own rate, which is why the size ceiling in
+// use-transcription-upload.ts stays: this makes the ceiling almost
+// unreachable rather than impossible to reach.
+// -------------------------------------------------------------------
+const AUDIO_BITS_PER_SECOND = 32_000;
+
 type RecorderState = "idle" | "recording" | "paused";
 
 // Whether this browser will record at all. Never changes within a page, so
@@ -87,6 +115,34 @@ const isRecordingSupported = () =>
 // Whether this browser can keep the screen awake. Chrome, Edge, Android and
 // Safari from 16.4 can; older iOS cannot, and there is that person told to
 // keep the screen on themselves rather than left to find out afterwards.
+// -------------------------------------------------------------------
+// What the line under the clock says.
+//
+// NOTHING IS PROMISED UNLESS IT IS TRUE, which is the whole reason this is
+// a function rather than a nested ternary. It used to say "saving to this
+// device as it goes. The screen stays on." whenever the browser HAD the
+// wake lock API - a different question from whether a lock is held, and a
+// different question again from whether the device store is accepting
+// writes. Both halves were capable of being false while on screen, and
+// somebody closing a tab on that reassurance loses the meeting.
+// -------------------------------------------------------------------
+function recordingCaption(options: {
+  state: RecorderState;
+  isDeviceCopyFailing: boolean;
+  isScreenHeldAwake: boolean;
+}): string {
+  if (options.state === "idle") return "Press record, then leave this page open until the meeting ends.";
+  if (options.state === "paused") return "Paused. Nothing is being recorded.";
+
+  const parts = [
+    options.isDeviceCopyFailing ? "Recording" : "Recording, and saving to this device as it goes",
+  ];
+
+  if (options.isScreenHeldAwake) parts.push("The screen stays on");
+
+  return `${parts.join(". ")}.`;
+}
+
 const isWakeLockSupported = () => typeof navigator !== "undefined" && "wakeLock" in navigator;
 
 // -------------------------------------------------------------------
@@ -164,7 +220,19 @@ export function TranscriptionRecorder({
   onRecorded,
   defaultTitle,
   disabled,
+  onActiveChange,
 }: {
+  /**
+   * Fired whenever a recording starts or stops.
+   *
+   * The state lives here, but the things that can DESTROY a recording are
+   * the parent's: the tab strip that unmounts this component and the sidebar
+   * links that replace it. Neither could see the state, so switching tab
+   * mid-meeting stopped the microphone with nothing said. useWorkInFlight
+   * already computes the same fact, but it only talks to the deployment
+   * watcher.
+   */
+  onActiveChange?: (active: boolean) => void;
   /** Called once, with the finished recording. The caller owns clearing it from the store. */
   onRecorded: (recording: FinishedRecording) => void;
   // A FUNCTION rather than a string, because the default name is built from
@@ -188,6 +256,14 @@ export function TranscriptionRecorder({
   // app causing exactly the loss that file is there to prevent.
   useWorkInFlight(state !== "idle");
 
+  // Told to the parent as well, because the deployment watcher is not the
+  // only thing that can throw a recording away - see onActiveChange. It uses
+  // `state` directly rather than the isActive declared further down, which
+  // belongs to the wake lock and is computed after this.
+  useEffect(() => {
+    onActiveChange?.(state !== "idle");
+  }, [state, onActiveChange]);
+
   // MediaRecorder is missing on some older browsers and, more often, on any
   // page not served over HTTPS - getUserMedia is a secure-context API. Said
   // once, up front, rather than as a failure after somebody has pressed
@@ -203,14 +279,19 @@ export function TranscriptionRecorder({
   // markup React hydrates against has to be the markup the server sent.
   const canHoldScreenAwake = useSyncExternalStore(subscribeToNothing, isWakeLockSupported, () => true);
 
+  // True for the window between start() being called and a recorder
+  // existing. recorderRef is null for all of it, so it cannot guard itself -
+  // see the note in start().
+  const isStartingRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  // NO SHARED CHUNK BUFFER. Each recorder owns its own, captured in the
+  // closure that start() creates - see the note there. A module-level ref
+  // was what let two recorders interleave into one file.
   // The device-held copy this recording is being written to, and the next
   // chunk number. Refs because they are read inside the recorder's own
   // handlers, which close over the render that created them.
   const recordingIdRef = useRef<string | null>(null);
-  const sequenceRef = useRef(0);
   // Elapsed time. A ref rather than state because the recorder's own
   // handlers close over the render that created them and have to read the
   // clock as it stands at the moment of stopping, not as it stood then.
@@ -226,6 +307,51 @@ export function TranscriptionRecorder({
   // effect below.
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
+  // -----------------------------------------------------------------
+  // IS THE DEVICE COPY ACTUALLY BEING WRITTEN?
+  //
+  // The screen says "saving to this device as it goes", and until now that
+  // sentence could be false while it was on the screen: an IndexedDB write
+  // refused for quota or disk space was caught, logged to a console nobody
+  // has open, and the promise stayed up. The person then closed the tab
+  // believing there was a copy, because we told them there was.
+  //
+  // Counted rather than latched on a single failure, because one refused
+  // write is survivable - the in-memory copy still carries a normal stop.
+  // Two in a row means the store is not accepting anything, and at that
+  // point the promise has to be withdrawn while the meeting is still
+  // running and something can still be done about it.
+  // -----------------------------------------------------------------
+  const persistFailuresRef = useRef(0);
+  const [isDeviceCopyFailing, setIsDeviceCopyFailing] = useState(false);
+
+  // -----------------------------------------------------------------
+  // IS THE SCREEN ACTUALLY BEING HELD AWAKE?
+  //
+  // State rather than only a ref, because the caption and the warning are
+  // driven off it. They used to be driven off whether the API EXISTS, which
+  // is a different question with a different answer: battery saver refuses
+  // the lock on a browser that has it, and the screen then said "The screen
+  // stays on" to somebody whose phone was about to sleep and stop recording.
+  //
+  // A lock is also released by the system without asking, which is what the
+  // sentinel's release event is listened for - so the warning comes back
+  // rather than a stale reassurance staying up.
+  // -----------------------------------------------------------------
+  const [isScreenHeldAwake, setIsScreenHeldAwake] = useState(false);
+
+  // -----------------------------------------------------------------
+  // WHEN THE LAST CHUNK ARRIVED.
+  //
+  // A MediaRecorder that has been frozen - an iOS tab put to sleep, an
+  // audio pipeline that died with the Bluetooth headset that was carrying
+  // it - does not fire an error. It simply stops producing data, while the
+  // clock on screen keeps counting and the caption keeps promising. The
+  // recording looked like it was working for the rest of the meeting.
+  // -----------------------------------------------------------------
+  const lastChunkAtRef = useRef(0);
+  const [hasStalled, setHasStalled] = useState(false);
+
   const releaseStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
@@ -236,10 +362,42 @@ export function TranscriptionRecorder({
   // often the display REFRESHES. What it shows is read from the clock, so a
   // tab that was throttled in the background catches up on its next tick
   // instead of having silently lost the time.
+  //
+  // IT IS ALSO THE WATCHDOG. A recorder that has been frozen - an iOS tab
+  // put to sleep, an audio pipeline that died with the Bluetooth headset
+  // carrying it - fires no error and simply stops producing chunks, while
+  // this clock carries on counting and the caption carries on promising. So
+  // the tick compares the two: a clock that is running and a recorder that
+  // has sent nothing for several chunk intervals is not a quiet meeting, it
+  // is a dead recorder.
   useEffect(() => {
     if (state !== "recording") return;
 
-    const tick = () => setElapsedSeconds(elapsedSecondsOf(clockRef.current, performance.now()));
+    const tick = () => {
+      const now = performance.now();
+
+      setElapsedSeconds(elapsedSecondsOf(clockRef.current, now));
+
+      // Three intervals, so one late chunk on a busy device is not treated
+      // as death. Nothing arriving for that long while the clock runs is.
+      if (lastChunkAtRef.current > 0 && now - lastChunkAtRef.current > CHUNK_INTERVAL_MS * 3) {
+        // STOPPED THROUGH THE RECORDER, not by tearing the state down, so
+        // the flush and the completeRecording path still run and whatever
+        // did arrive is a finished recording rather than an abandoned one.
+        lastChunkAtRef.current = 0;
+        setHasStalled(true);
+
+        toast.error(
+          "This device stopped sending audio, so the recording has been stopped here. Everything captured up to that point has been kept.",
+        );
+
+        try {
+          recorderRef.current?.stop();
+        } catch (error) {
+          console.warn("[recorder] could not stop a stalled recorder", error);
+        }
+      }
+    };
 
     const timer = setInterval(tick, 1000);
 
@@ -303,10 +461,23 @@ export function TranscriptionRecorder({
           }
 
           wakeLockRef.current = sentinel;
+          setIsScreenHeldAwake(true);
+
+          // THE SYSTEM CAN TAKE IT BACK WITHOUT ASKING - battery saver
+          // engaging part way through a long meeting is the usual way. The
+          // caption would otherwise keep saying the screen stays on for the
+          // rest of a recording it is no longer protecting.
+          sentinel.addEventListener("release", () => {
+            wakeLockRef.current = null;
+            setIsScreenHeldAwake(false);
+          });
         })
         .catch((error) => {
           // Battery saver, or a browser that has the API and refuses. Not
-          // fatal - the recording carries on either way.
+          // fatal - the recording carries on either way, and the warning
+          // below appears because the state, not the API, drives it.
+          setIsScreenHeldAwake(false);
+
           console.warn("[recorder] the screen wake lock was refused", error);
         });
     };
@@ -336,9 +507,40 @@ export function TranscriptionRecorder({
   useEffect(() => releaseStream, [releaseStream]);
 
   const start = async () => {
+    // -----------------------------------------------------------------
+    // ONE RECORDER, AND THIS GUARD IS THE WHOLE REASON THE FEATURE WORKS.
+    //
+    // start() is async, and `state` does not become "recording" until after
+    // getUserMedia and the IndexedDB open have both resolved. On a first
+    // recording that window is as long as the permission prompt; after that
+    // it is still a device open. The button looks like it did nothing for
+    // the whole of it, which is exactly when somebody clicks again.
+    //
+    // WHAT A SECOND CLICK USED TO DO. It ran start() again: streamRef,
+    // chunksRef and recorderRef were all overwritten, and recorder A was
+    // never stopped. Both dataavailable handlers then pushed into whichever
+    // array was current, so the assembled blob was TWO INDEPENDENT WEBM
+    // STREAMS INTERLEAVED - with a second EBML header partway through. That
+    // plays in a tolerant player, which reads the first stream and stops,
+    // and comes back from Azure as "the audio format is invalid or cannot
+    // be detected". Nothing anywhere said a word about it.
+    //
+    // It also corrupted the copy on the device, through a different door:
+    // sequenceRef was shared, so A's chunks took the even numbers and B's
+    // the odd ones. One of the two then had no chunk 0, which is the EBML
+    // header, and the recovery panel offered a file nothing could read.
+    //
+    // A REF AND NOT STATE, because state is not visible to the call that is
+    // already running - which is the entire failure being prevented.
+    // -----------------------------------------------------------------
+    if (isStartingRef.current || recorderRef.current || streamRef.current) return;
+
+    isStartingRef.current = true;
+
     const format = pickFormat();
 
     if (!format) {
+      isStartingRef.current = false;
       toast.error("This browser cannot record audio. Upload a file instead.");
       return;
     }
@@ -353,11 +555,21 @@ export function TranscriptionRecorder({
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          // ONE CHANNEL. Speech recognition is mono - Azure downmixes
+          // before it recognises anything - so a stereo capture spends
+          // bitrate encoding a second channel that is discarded. A hint
+          // like the three above: a device that cannot do it ignores it.
+          channelCount: 1,
         },
       });
 
       streamRef.current = stream;
-      chunksRef.current = [];
+
+      // OWNED BY THIS CALL, not by the component. If a second recorder ever
+      // existed it would have its own, so neither could corrupt the other's
+      // file or its stored sequence.
+      const chunks: Blob[] = [];
+      let sequence = 0;
 
       clockRef.current = startClock(performance.now());
 
@@ -396,7 +608,6 @@ export function TranscriptionRecorder({
       // during the meeting.
       const recordingId = crypto.randomUUID();
       recordingIdRef.current = recordingId;
-      sequenceRef.current = 0;
 
       const canPersist = isRecordingStoreAvailable();
 
@@ -419,27 +630,58 @@ export function TranscriptionRecorder({
         }
       }
 
-      const recorder = new MediaRecorder(stream, { mimeType: format.mimeType });
+      const recorder = new MediaRecorder(stream, {
+        mimeType: format.mimeType,
+        // See AUDIO_BITS_PER_SECOND. Without this the browser picks, and
+        // what it picks is large enough to put a long meeting past what the
+        // upload can carry.
+        audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+      });
 
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data.size === 0) return;
 
+        // Stamped for the watchdog in the tick above: this is the only
+        // evidence anywhere that the recorder is still alive.
+        lastChunkAtRef.current = performance.now();
+
         // Kept in memory as well, so the common path assembles without
         // touching the database at all.
-        chunksRef.current.push(event.data);
+        chunks.push(event.data);
 
         if (!canPersist) return;
 
-        const seq = sequenceRef.current;
-        sequenceRef.current += 1;
+        const seq = sequence;
+        sequence += 1;
 
         // Deliberately not awaited: this fires on the recorder's own
         // schedule and must not hold it up. A write that fails is logged and
         // the in-memory copy still carries the recording through a normal
         // stop - what is lost is only the protection against a crash.
-        appendChunk(recordingId, seq, event.data).catch((error) => {
-          console.warn(`[recorder] could not persist chunk ${seq}`, error);
-        });
+        appendChunk(recordingId, seq, event.data)
+          .then(() => {
+            // A write that works clears the count: an isolated refusal
+            // under momentary pressure is not the same as a store that has
+            // stopped accepting anything.
+            persistFailuresRef.current = 0;
+          })
+          .catch((error) => {
+            console.warn(`[recorder] could not persist chunk ${seq}`, error);
+
+            persistFailuresRef.current += 1;
+
+            // TWO IN A ROW MEANS THE PROMISE ON SCREEN IS FALSE. Withdrawn
+            // while the meeting is still running, because the whole value
+            // of knowing is being able to act - starting a second recording
+            // on a phone, or simply not closing the tab.
+            if (persistFailuresRef.current === 2) {
+              setIsDeviceCopyFailing(true);
+
+              toast.error(
+                "This device has stopped saving the recording as it goes. Keep this page open until you press stop - if the tab closes now, the meeting is lost.",
+              );
+            }
+          });
       });
 
       recorder.addEventListener("stop", () => {
@@ -447,7 +689,7 @@ export function TranscriptionRecorder({
         // hands back nothing on stop. The type is the one that was
         // recorded, so the Blob describes itself correctly even though the
         // server derives its own from the filename.
-        const media = new Blob(chunksRef.current, { type: format.mimeType });
+        const media = new Blob(chunks, { type: format.mimeType });
 
         // Read BEFORE the clock is cleared, so the figure stored is the real
         // length of the meeting rather than the number of times a throttled
@@ -456,7 +698,7 @@ export function TranscriptionRecorder({
 
         clockRef.current = IDLE_CLOCK;
 
-        chunksRef.current = [];
+        chunks.length = 0;
         releaseStream();
         setState("idle");
         setElapsedSeconds(0);
@@ -479,7 +721,20 @@ export function TranscriptionRecorder({
         onRecorded({ recordingId, media, extension: format.extension, durationSeconds });
       });
 
-      recorder.addEventListener("error", () => {
+      recorder.addEventListener("error", (event) => {
+        // THE REASON, WHICH USED TO BE DISCARDED. MediaRecorder reports a
+        // DOMException on the event - SecurityError when a track became
+        // unreadable, NotSupportedError, InvalidStateError - and without it
+        // a failed recording left nothing anywhere naming what failed. The
+        // person still gets a plain sentence; this is for whoever has to
+        // work out why it keeps happening.
+        const reason = (event as unknown as { error?: DOMException }).error;
+
+        console.error(
+          `[recorder] the recorder failed: ${reason ? `${reason.name}: ${reason.message}` : "no reason given"}`,
+          event,
+        );
+
         clockRef.current = IDLE_CLOCK;
         releaseStream();
         setState("idle");
@@ -490,6 +745,15 @@ export function TranscriptionRecorder({
       });
 
       recorderRef.current = recorder;
+
+      // Reset per recording, not per component: a stall or a store failure
+      // in the last meeting must not colour this one, and must not leave
+      // the watchdog comparing against a timestamp from an hour ago.
+      persistFailuresRef.current = 0;
+      lastChunkAtRef.current = performance.now();
+      setIsDeviceCopyFailing(false);
+      setHasStalled(false);
+
       recorder.start(CHUNK_INTERVAL_MS);
 
       setElapsedSeconds(0);
@@ -498,6 +762,11 @@ export function TranscriptionRecorder({
       clockRef.current = IDLE_CLOCK;
       releaseStream();
       toast.error(microphoneFailureMessage(error));
+    } finally {
+      // In a finally so a refused permission or a dead device leaves the
+      // button usable. Without it, one denied prompt would lock recording
+      // for the life of the page.
+      isStartingRef.current = false;
     }
   };
 
@@ -568,13 +837,7 @@ export function TranscriptionRecorder({
       </p>
 
       <p className="mt-1 text-sm text-muted-foreground">
-        {state === "idle"
-          ? "Press record, then leave this page open until the meeting ends."
-          : state === "paused"
-            ? "Paused. Nothing is being recorded."
-            : canHoldScreenAwake
-              ? "Recording, and saving to this device as it goes. The screen stays on."
-              : "Recording, and saving to this device as it goes."}
+        {recordingCaption({ state, isDeviceCopyFailing, isScreenHeldAwake })}
       </p>
 
       {/* Only when the browser cannot keep the screen on itself - which is
@@ -582,13 +845,28 @@ export function TranscriptionRecorder({
           and stops recording. Said while it still matters rather than
           discovered afterwards, and only then, because a warning shown to
           everybody is one nobody reads. */}
-      {isActive && !canHoldScreenAwake ? (
+      {/* AFTER a stall, not during one. The toast that fired at the moment
+          it happened is gone by the time somebody looks up, and the screen
+          has returned to idle - so without this the only trace of a meeting
+          cut short is a recording that is mysteriously short. */}
+      {hasStalled && state === "idle" ? (
         <p
           role="status"
           className="mt-3 max-w-sm rounded-lg border border-data-caution/40 bg-data-caution-surface p-2.5 text-xs text-data-caution-text"
         >
-          This browser cannot keep the screen on by itself. Set your screen timeout to never, or check the
-          phone every few minutes - if it sleeps, recording stops.
+          The last recording was stopped early because this device stopped sending audio. What was captured
+          before that is kept, and can be uploaded or saved below.
+        </p>
+      ) : null}
+
+      {isActive && !isScreenHeldAwake ? (
+        <p
+          role="status"
+          className="mt-3 max-w-sm rounded-lg border border-data-caution/40 bg-data-caution-surface p-2.5 text-xs text-data-caution-text"
+        >
+          {canHoldScreenAwake
+            ? "The screen is not being held on - battery saver usually refuses it. Set your screen timeout to never, or check the phone every few minutes: if it sleeps, recording stops."
+            : "This browser cannot keep the screen on by itself. Set your screen timeout to never, or check the phone every few minutes - if it sleeps, recording stops."}
         </p>
       ) : null}
 
