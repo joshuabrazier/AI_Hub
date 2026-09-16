@@ -60,6 +60,27 @@ export type NavCollapsible = {
   tooltip: string;
   children: NavLink[];
   /**
+   * The page the group's OWN row goes to, for a group that is also a place.
+   *
+   * Most are not: "AI" and "Reports" are categories with no screen behind
+   * them, so their row only opens and shuts. Projects IS a place - there is a
+   * page listing them with what is assigned to you across all of them - and
+   * saying so here is what removed the second row.
+   *
+   * THAT SECOND ROW IS WHY THIS FIELD EXISTS. The list page and the group of
+   * projects used to be separate entries, one above the other, and because
+   * two rows both reading "Projects" is obviously wrong the LINK was renamed
+   * "All projects" to tell them apart. That made it worse rather than better:
+   * the page shows the projects you are a MEMBER of, the same set the group
+   * below it listed, so "All" was a promise of a fuller list that does not
+   * exist anywhere in the app. One row that both navigates and expands is
+   * what was meant by both of them.
+   *
+   * When set, the row is a link with the disclosure beside it rather than one
+   * button that only toggles - see NavCollapsibleRow.
+   */
+  href?: string;
+  /**
    * Whether it starts open. Unset means "open when the current page is one of
    * its children", which is right for a group of OTHER screens - somewhere you
    * go occasionally, and which should not take up room until you do.
@@ -171,6 +192,44 @@ function aiTools(routes: { chat: string; transcription: string; summaries: strin
 }
 
 // -------------------------------------------------------------------
+// PROJECTS - ONE ROW THAT IS BOTH THE PAGE AND THE LIST.
+//
+// It used to be two: a link called "All projects", and a separate group
+// underneath holding the projects themselves. They showed THE SAME SET -
+// /{area}/projects calls getMyProjectsService, which is exactly what fills
+// the children here - so "All" named a fuller list that does not exist. The
+// duplication was visible enough that a test had been written to stop the two
+// rows being given the same name, which was solving the wrong problem.
+//
+// DEFINED HERE WITH NO CHILDREN, AND FILLED IN LATER, which is the part that
+// is not obvious. The projects are fetched after the session resolves, so
+// they arrive a moment after the sidebar first paints. If the row itself
+// arrived with them it would appear ABOVE "Your timesheet" and push it down -
+// under the cursor of somebody already reaching for it. Existing as an empty
+// collapsible from the first render means nothing moves: the children unfold
+// underneath it when they land, and the row is a plain link until they do.
+//
+// It is also why somebody on NO projects still has a way to the page. The old
+// group returned null when the list was empty and relied on the "All
+// projects" link beside it to cover that; with the link gone, an entry that
+// vanished with its children would strand them.
+// -------------------------------------------------------------------
+function myProjects(href: string): NavCollapsible {
+  return {
+    label: "Projects",
+    href,
+    icon: FolderKanban,
+    tooltip: "The projects you are on, and what is assigned to you across them",
+    // OPEN UNLESS SHUT BY HAND. The sidebar's own default is to open a group
+    // only when the current page is already inside it, which for these would
+    // mean the projects were hidden on every screen where seeing them is
+    // worth anything.
+    defaultOpen: true,
+    children: [],
+  };
+}
+
+// -------------------------------------------------------------------
 // Admin - the whole product.
 // -------------------------------------------------------------------
 const ADMIN_NAV: NavGroup[] = [
@@ -239,15 +298,7 @@ const ADMIN_NAV: NavGroup[] = [
   {
     label: "Delivery",
     items: [
-      {
-        // "All" because the projects themselves are now listed in their
-        // own group below - this is the overview and the way to the ones that
-        // group does not carry.
-        label: "All projects",
-        href: ROUTES.ADMIN_PROJECTS,
-        icon: FolderKanban,
-        tooltip: "Every project you are on, with what is waiting for you",
-      },
+      myProjects(ROUTES.ADMIN_PROJECTS),
       {
         label: "Your timesheet",
         href: ROUTES.ADMIN_TIMESHEET,
@@ -401,6 +452,12 @@ const MANAGER_NAV: NavGroup[] = [
   {
     label: "Overview",
     items: [
+      // A MANAGER HAD NO HOME ROW, and an admin and a member both did. It was
+      // not an oversight in this file so much as an honest reflection of
+      // /manage, which redirected to Projects - there was nothing to point
+      // at. That page now renders the same "your week, and what is waiting"
+      // summary the other two areas open with, so there is.
+      { label: "Home", href: ROUTES.MANAGE, icon: House, tooltip: "Home" },
       aiTools({
         chat: ROUTES.MANAGE_AI_CHAT,
         transcription: ROUTES.MANAGE_TRANSCRIPTION,
@@ -408,20 +465,29 @@ const MANAGER_NAV: NavGroup[] = [
       }),
     ],
   },
-  // The same two entries as the admin tree, in a group with the same name,
-  // and nothing else in it. A manager is a member of projects like anybody
-  // else; managing a team grants nothing on a project board.
+  // -------------------------------------------------------------------
+  // THREE ENTRIES, AND "NEW PROJECT" IS THE ONE THAT IS NOT IN THE MEMBER
+  // TREE. Managers can create projects; members work on them.
+  //
+  // It is deliberately NOT a "Delivery admin" group like the admin tree's.
+  // That group holds clients, rates and budgets - the money and the client
+  // list - and a manager has none of them. One row in the group they already
+  // have says the true thing: starting a project is part of delivery for a
+  // manager, not a separate administrative area they have been let into.
+  //
+  // A MANAGER'S POWER OVER A PROJECT IS NOT IN THIS FILE, and the nav must
+  // not be read as if it were. Creating one makes them its lead, and being
+  // the lead is what the services check; this row is the way to the form.
+  // -------------------------------------------------------------------
   {
     label: "Delivery",
     items: [
+      myProjects(ROUTES.MANAGE_PROJECTS),
       {
-        // "All" because the projects themselves are now listed in their
-        // own group below - this is the overview and the way to the ones that
-        // group does not carry.
-        label: "All projects",
-        href: ROUTES.MANAGE_PROJECTS,
-        icon: FolderKanban,
-        tooltip: "Every project you are on, with what is waiting for you",
+        label: "New project",
+        href: ROUTES.MANAGE_PROJECT_NEW,
+        icon: FolderPlus,
+        tooltip: "Start a project for a client, and lead it",
       },
       {
         label: "Your timesheet",
@@ -455,15 +521,7 @@ const MEMBER_NAV: NavGroup[] = [
   {
     label: "Delivery",
     items: [
-      {
-        // "All" because the projects themselves are now listed in their
-        // own group below - this is the overview and the way to the ones that
-        // group does not carry.
-        label: "All projects",
-        href: ROUTES.PORTAL_PROJECTS,
-        icon: FolderKanban,
-        tooltip: "Every project you are on, with what is waiting for you",
-      },
+      myProjects(ROUTES.PORTAL_PROJECTS),
       {
         label: "Your timesheet",
         href: ROUTES.PORTAL_TIMESHEET,
@@ -479,23 +537,18 @@ const MEMBER_NAV: NavGroup[] = [
 ];
 
 // -------------------------------------------------------------------
-// THE PERSON'S OWN PROJECTS, AS A GROUP OF THEIR OWN.
+// THE PERSON'S OWN PROJECTS, HUNG UNDER THE ROW THAT ALREADY NAMES THEM.
 //
-// The sidebar carried a "Projects" LINK and nothing else, so the projects
-// somebody actually works on were two clicks away on every screen: open the
-// list, then pick one. They are the thing this app is used for, and they were
-// the only part of it the nav did not name.
+// The sidebar once carried a "Projects" LINK and nothing else, so the
+// projects somebody actually works on were two clicks away on every screen:
+// open the list, then pick one. They are the thing this app is used for, and
+// they were the only part of it the nav did not name.
 //
-// A GROUP, NOT A COLLAPSIBLE, and that is the whole reason this is not one
-// line. A collapsible in this sidebar opens only when the active route is
-// already inside it (`useState(childActive)` in sidebar.tsx), so a "Projects"
-// disclosure would sit shut on every other page - which is exactly the
-// screens where seeing them is worth anything. A group renders its items
-// under a heading, always.
-//
-// ABSENT WHEN THERE ARE NONE. An empty heading is worse than no heading: it
-// is a promise of something that is not there, and somebody on no projects
-// already has the "Projects" link telling them so in words.
+// The fix for that added a SECOND group, which is what this replaces. For a
+// while the rail showed a link called "All projects", then a heading reading
+// "Projects", then a disclosure also reading "Projects" - three rows and two
+// of them the same words, over one list. Filling in the children of the entry
+// that was already there does the same job in one row.
 //
 // EVERY ROUTE IS BUILT BY projectBoardForRole, never assembled here. The
 // proxy REDIRECTS a role that lands in the wrong area rather than refusing
@@ -505,8 +558,11 @@ const MEMBER_NAV: NavGroup[] = [
 // NOT CAPPED. The list is `getMyProjectsService` - memberships only, archived
 // excluded - so it is the working set rather than everything, and a person's
 // working set is a handful. Truncating it would hide a project with nothing
-// on screen saying so, and the "All projects" link above covers the case
-// where somebody wants the full list anyway.
+// on screen saying so, and the row's own link goes to the page listing them.
+//
+// AN EMPTY LIST LEAVES THE ROW ALONE, rather than removing it. Somebody on no
+// projects still needs the way to the page that says so - there is no longer
+// a second link covering that case.
 // -------------------------------------------------------------------
 export type NavProject = {
   id: string;
@@ -514,34 +570,33 @@ export type NavProject = {
   clientName: string;
 };
 
-export function projectsNavGroup(role: UserRole, projects: readonly NavProject[]): NavGroup | null {
-  if (projects.length === 0) return null;
+/** The label the projects hang under. Matched on rather than an id, and the tests pin it. */
+const PROJECTS_LABEL = "Projects";
 
-  return {
-    label: "Projects",
-    items: [
-      {
-        label: "Projects",
-        icon: FolderKanban,
-        tooltip: "The projects you are on",
-        // OPEN UNLESS SHUT BY HAND. The sidebar's own default is to open a
-        // group only when you are already inside it, which for these would
-        // mean the projects were hidden on every screen where seeing them is
-        // worth anything.
-        defaultOpen: true,
-        children: projects.map((project) => ({
-          label: project.title,
-          href: projectBoardForRole(role, project.id),
-          icon: FolderKanban,
-          // The client, because two projects called "Website" for two clients
-          // is the ordinary case and the label alone cannot tell them apart.
-          // It is also what the row shows on hover, since a long title is
-          // truncated to the width of the rail.
-          tooltip: `${project.title} - ${project.clientName}`,
-        })),
-      },
-    ],
-  };
+export function withMyProjects(
+  groups: NavGroup[],
+  role: UserRole,
+  projects: readonly NavProject[],
+): NavGroup[] {
+  if (projects.length === 0) return groups;
+
+  const children: NavLink[] = projects.map((project) => ({
+    label: project.title,
+    href: projectBoardForRole(role, project.id),
+    icon: FolderKanban,
+    // The client, because two projects called "Website" for two clients is
+    // the ordinary case and the label alone cannot tell them apart. It is
+    // also what the row shows on hover, since a long title is truncated to
+    // the width of the rail.
+    tooltip: `${project.title} - ${project.clientName}`,
+  }));
+
+  return groups.map((group) => ({
+    ...group,
+    items: group.items.map((entry) =>
+      isCollapsible(entry) && entry.label === PROJECTS_LABEL ? { ...entry, children } : entry,
+    ),
+  }));
 }
 
 // -------------------------------------------------------------------

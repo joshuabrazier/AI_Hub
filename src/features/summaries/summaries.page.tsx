@@ -25,6 +25,10 @@ export default function SummariesPage({ eyebrow }: { eyebrow: string }) {
       // and because a refresh will lose their summary, which is better
       // learned here than by doing it.
       description="Paste any text and get a summary in the style you need. Nothing is saved, so copy anything you want to keep. Administrators can review the text sent to the model."
+      // FILL, so the answer panel is a full column rather than a short box
+      // floating beside a tall one. The two halves being the same height is
+      // most of what makes this read as before-and-after.
+      fill
     >
       <SummariesWorkspace page={page} />
     </PortalPage>

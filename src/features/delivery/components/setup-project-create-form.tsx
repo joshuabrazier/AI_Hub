@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { MESSAGES } from "@/lib/constants";
 import { PROJECT_KINDS, PROJECT_KIND_HELP } from "@/lib/data/kysely-database-types";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
-import { ROUTES } from "@/lib/routes";
+import { projectHomeForRole, projectSetupForRole } from "@/lib/routes";
 
 import { createProjectAction } from "../delivery-setup.actions";
 import {
@@ -60,7 +60,27 @@ type ProjectFormValues = z.infer<typeof ProjectFormSchema>;
 const CLIENT_FIELD_ID = "project-client";
 const CLIENT_DESCRIPTION_ID = "project-client-description";
 
-export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[] }) {
+export function SetupProjectCreateForm({
+  clients,
+  // -----------------------------------------------------------------
+  // THE ROLE, NOT TWO FUNCTIONS, and the first version of this crashed.
+  //
+  // It took `setupHref` and `projectsHref` as callbacks so the server page
+  // could hand down routes it had already resolved. A FUNCTION CANNOT CROSS
+  // THE SERVER-CLIENT BOUNDARY: React refuses to serialise one, so every
+  // render of /manage/projects/new answered a server error before any of this
+  // ran. It was invisible to tsc, to eslint and to the build, because all
+  // three see a perfectly ordinary prop.
+  //
+  // A role is a string, which serialises, and routes.ts is pure so the
+  // helpers are callable from here. The page still decides nothing about
+  // where these go - the helper does, in one place, for all three areas.
+  // -----------------------------------------------------------------
+  role,
+}: {
+  clients: ClientOptionDTO[];
+  role: string;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -114,9 +134,10 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
 
         toast.success("Project created. Now add its people, budget and phases.");
 
-        // Straight into setup, because a project with no members is
-        // invisible to everybody except an admin until membership is set.
-        router.push(ROUTES.adminProjectSetup(response.data));
+        // Straight into setup: the project exists with exactly one member -
+        // whoever made it, as its lead - and nothing else, so this is where
+        // it becomes workable.
+        router.push(projectSetupForRole(role, response.data));
       } catch (error) {
         handleFrontendErrorWithToast(error);
       }
@@ -199,7 +220,7 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
           />
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={() => router.push(ROUTES.ADMIN_PROJECTS)}>
+            <Button type="button" variant="outline" onClick={() => router.push(projectHomeForRole(role))}>
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || !form.formState.isValid} loading={isPending}>
