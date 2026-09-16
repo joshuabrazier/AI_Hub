@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { mergePhrasesIntoSegments, segmentsToText, type RecognizedPhrase } from "./speech-client";
+import {
+  MAX_DIARIZED_SPEAKERS,
+  mergePhrasesIntoSegments,
+  segmentsToText,
+  type RecognizedPhrase,
+} from "./speech-client";
 
 // -------------------------------------------------------------------
 // The Speech service emits one phrase at a time, and this is the only
@@ -121,5 +126,28 @@ describe("segmentsToText", () => {
     const text = segmentsToText([{ speaker: null, startMs: 0, endMs: 1_000, text: "Just the one voice." }]);
 
     expect(text).toBe("Just the one voice.");
+  });
+});
+
+describe("MAX_DIARIZED_SPEAKERS", () => {
+  // -----------------------------------------------------------------
+  // PINNED BECAUSE THE API REJECTS THE WHOLE JOB OVER IT, and rejects it
+  // at creation - so getting this wrong does not degrade transcription, it
+  // stops every transcription in the app with a 400 before any audio is
+  // read. It was briefly 36, from documentation that describes diarization
+  // as supporting "up to 36 speakers"; the validator enforces 35.
+  //
+  // A number taken from prose is a guess until a request has been accepted
+  // with it in, and this test is the cheapest way to stop the guess coming
+  // back.
+  // -----------------------------------------------------------------
+  it("never exceeds the 35 the Speech API enforces", () => {
+    expect(MAX_DIARIZED_SPEAKERS).toBeLessThanOrEqual(35);
+  });
+
+  it("is high enough to be worth having over the old cap of 10", () => {
+    // Past the cap Azure merges two people into one label rather than
+    // failing, so a low value buys nothing and costs attribution.
+    expect(MAX_DIARIZED_SPEAKERS).toBeGreaterThan(10);
   });
 });
