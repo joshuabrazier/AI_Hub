@@ -173,6 +173,22 @@ export function TranscriptionComposer({
   // -----------------------------------------------------------------
   const [isRecordingNow, setIsRecordingNow] = useState(false);
 
+  // -----------------------------------------------------------------
+  // WHICH TAB IS OPEN, held here rather than left to Radix.
+  //
+  // The record panel is force-mounted so that switching tabs cannot stop
+  // the microphone mid-meeting - and a force-mounted panel is one Radix
+  // deliberately does NOT hide: `present` is true by definition, so its
+  // `hidden` is false and the caller is expected to control visibility
+  // itself. That is what forceMount is for.
+  //
+  // Which means the composer has to know the selected tab, because
+  // otherwise the recorder is simply drawn on every tab - underneath the
+  // file picker and underneath the Teams list, which is exactly what it
+  // was doing.
+  // -----------------------------------------------------------------
+  const [tab, setTab] = useState(canRecord ? "upload" : "teams");
+
   // The default name for a recording. A function, not a value, because it
   // reads the clock - computing it during render would differ between
   // server and client and break hydration.
@@ -539,9 +555,14 @@ export function TranscriptionComposer({
         </div>
       ) : null}
 
-      {/* Defaults to whichever tab exists. A Tabs with a defaultValue no
+      {/* CONTROLLED, because the record panel is force-mounted and Radix
+          does not hide a force-mounted panel - see the note on it below.
+          Something has to know which tab is open in order to hide the
+          others, and with an uncontrolled Tabs nothing does.
+
+          The initial value is whichever tab exists: a Tabs whose value no
           trigger matches renders with nothing selected and no content. */}
-      <Tabs defaultValue={canRecord ? "upload" : "teams"}>
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           {canRecord ? (
             <>
@@ -686,8 +707,22 @@ export function TranscriptionComposer({
             otherwise, and unmounting stops the microphone mid-meeting. The
             triggers are disabled below as well - this is the half that
             makes an accident survivable, that is the half that prevents
-            it. */}
-        <TabsContent value="record" className="space-y-4" forceMount hidden={undefined}>
+            it.
+
+            `hidden` IS PASSED DELIBERATELY, and it has to be. Radix
+            computes its own as `!present`, and with forceMount `present`
+            is true by definition - so a force-mounted panel is never
+            hidden by Radix. That is the point of forceMount: it hands
+            visibility to the caller. It previously carried
+            `hidden={undefined}`, which reads like a no-op and is not - it
+            is the difference between "kept mounted, and hidden" and
+            "drawn on every tab", and the recorder was appearing
+            underneath the file picker and the Teams list.
+
+            Hiding does not stop the recording. A MediaRecorder is not tied
+            to whether its UI is painted, so display:none keeps the
+            microphone open - which is the whole point of mounting it. */}
+        <TabsContent value="record" className="space-y-4" forceMount hidden={tab !== "record"}>
           <TranscriptionRecorder
             onActiveChange={setIsRecordingNow}
             onRecorded={submitRecording}

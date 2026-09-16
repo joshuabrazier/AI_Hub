@@ -33,13 +33,22 @@ const SPEECH_API_VERSION = "v3.2";
 // -------------------------------------------------------------------
 // The most voices the service will separate in one meeting.
 //
-// 36 is its documented maximum. The number matters less than what happens
-// past it: Azure does not refuse a busier meeting, it MERGES two people
-// into one speaker label - so a transcript attributes one person's words to
-// another, silently, and nobody reading it can tell. A crowded transcript
-// with an extra label is a far smaller problem than a misattributed quote.
+// THIRTY-FIVE, AND THE API IS THE AUTHORITY ON THAT. This was briefly 36,
+// taken from documentation describing diarization as supporting "up to 36
+// speakers" - and Azure refused every single job with
+// `400 InvalidRequest: properties.diarization.speakers.maxCount must be
+// less than or equal to 35`. The prose and the validator disagree by one,
+// the validator is the one that runs, and a number read from a document is
+// a guess until a request has been accepted with it in.
+//
+// The value matters less than what happens PAST it: Azure does not refuse
+// a busier meeting, it MERGES two people into one speaker label - so the
+// transcript attributes one person's words to another, silently, and
+// nobody reading it can tell. An extra label is a much smaller problem
+// than a misattributed quote, which is why this sits at the ceiling rather
+// than at a comfortable guess.
 // -------------------------------------------------------------------
-const MAX_DIARIZED_SPEAKERS = 36;
+export const MAX_DIARIZED_SPEAKERS = 35;
 
 export function isSpeechConfigured(): boolean {
   return Boolean(envServer.AZURE_SPEECH_KEY && envServer.AZURE_SPEECH_REGION);
@@ -312,9 +321,11 @@ export async function startTranscription(options: {
             // That is a worse outcome than a crowded transcript, and it is
             // invisible to whoever reads it.
             //
-            // Raised to the service's documented maximum. The cost of a
-            // high cap is only that a quiet participant may get a label of
-            // their own; the cost of a low one is a misattributed quote.
+            // Set to the ceiling the API actually enforces - see the
+            // constant, and the 400 that proved the documented figure was
+            // one too high. The cost of a high cap is that a quiet
+            // participant may get a label of their own; the cost of a low
+            // one is a misattributed quote.
             // -----------------------------------------------------------
             speakers: { minCount: 1, maxCount: MAX_DIARIZED_SPEAKERS },
           },
