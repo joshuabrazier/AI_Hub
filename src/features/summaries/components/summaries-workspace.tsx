@@ -16,6 +16,7 @@ import { MESSAGES } from "@/lib/constants";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
 import { cn } from "@/lib/utils";
 
+import { SavedSummaries } from "./saved-summaries";
 import {
   MAX_INPUT_CHARS,
   MIN_INPUT_CHARS,
@@ -23,6 +24,7 @@ import {
   SUMMARY_STYLE_DESCRIPTIONS,
   SUMMARY_STYLE_LABELS,
   SUMMARY_STYLE_RESULT_HEADINGS,
+  type SavedSummaryDetailDTO,
   type SummariesPageDTO,
   type SummaryStyle,
 } from "../summaries.types";
@@ -32,9 +34,16 @@ import {
 //
 // Paste, pick a style, read the summary as it arrives.
 //
-// NOTHING IS SAVED, and the screen says so rather than letting somebody
-// discover it by refreshing. The whole exchange lives in this component's
-// state: the text they pasted and the summary streaming back.
+// WHAT WAS PASTED AND WHAT CAME BACK ARE BOTH SAVED, to the person's own
+// account. The exchange still lives in this component's state while it is
+// happening - the row is written before the model is asked and settled when
+// the stream ends, server-side, so nothing here is responsible for
+// persisting anything.
+//
+// Opening a saved one replaces both panes with what was stored. That is the
+// only way back into old work, so it deliberately loads the material as well
+// as the answer: a summary without the thing it summarised is not much use
+// six months later.
 //
 // The summary is STREAMED rather than awaited, which is why this reads from
 // a fetch body instead of calling a server action. A detailed summary of a
@@ -66,8 +75,9 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
   const abortRef = useRef<AbortController | null>(null);
 
   // Tell the deployment watcher not to reload over a summary being written.
-  // This feature stores nothing, so an interrupted one is not resumable and
-  // not recoverable - it is a model call paid for and thrown away.
+  // An interrupted one is not resumable: the row keeps whatever arrived and
+  // says it did not finish, but the rest of that model call is paid for and
+  // gone.
   useWorkInFlight(isStreaming);
 
   const characters = text.trim().length;
@@ -101,6 +111,25 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
   const stop = () => {
     abortRef.current?.abort();
     abortRef.current = null;
+  };
+
+  // -------------------------------------------------------------------
+  // Opening something saved.
+  //
+  // BOTH PANES ARE REPLACED, material as well as answer. A stored summary
+  // with no sight of what it was made from is close to useless months
+  // later - the question "is this the right version of the contract" can
+  // only be answered by the text.
+  //
+  // The style is restored too, because the three styles are three different
+  // questions: reading an executive summary under a heading that says
+  // Detailed would misrepresent what was asked.
+  // -------------------------------------------------------------------
+  const openSaved = (saved: SavedSummaryDetailDTO) => {
+    setText(saved.sourceText);
+    setStyle(saved.style);
+    setSummary(saved.summary ?? "");
+    setStreamError(saved.error);
   };
 
   const submit = async () => {
@@ -259,6 +288,13 @@ export function SummariesWorkspace({ page }: { page: SummariesPageDTO }) {
           the guessing. Three across keeps every description on screen and
           still costs one row instead of three.
           ----------------------------------------------------------------- */}
+      {/* ---------------------------------------------------------------
+          THE WAY BACK IN. Above the two panes because it is how a session
+          starts when somebody is returning rather than pasting - and
+          horizontal so it costs the panes below almost no height.
+          --------------------------------------------------------------- */}
+      <SavedSummaries saved={page.saved} disabled={isStreaming} onOpen={openSaved} />
+
       <fieldset className="shrink-0" disabled={isStreaming}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <legend className="text-sm font-medium text-foreground">Style</legend>

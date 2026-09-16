@@ -1,5 +1,7 @@
 import "server-only";
 
+import { notFound } from "next/navigation";
+
 import { ConverseStreamCommand, type Message, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
 import { generateId } from "better-auth";
 
@@ -15,24 +17,32 @@ import {
   addAiChatRequestLogRepo,
   boundPayload,
 } from "@/lib/data/repositories/ai-chat-request-logs.repository";
+import {
+  addTextSummaryRepo,
+  deleteTextSummaryForUserRepo,
+  getTextSummariesForUserRepo,
+  getTextSummaryForUserRepo,
+  updateTextSummaryForUserRepo,
+} from "@/lib/data/repositories/text-summaries.repository";
 import { DisplayErrorMessage } from "@/lib/errors";
 import { handleError } from "@/lib/handle-errors";
 
+import { mapDBTextSummaryToDetailDTO, mapDBTextSummaryToListDTO } from "./summaries.mappers";
+
 import {
+  deriveSummaryTitle,
+  SAVED_SUMMARY_LIMIT,
   SUMMARY_MAX_TOKENS,
   SUMMARY_STYLES,
+  type SavedSummaryDetailDTO,
   type SummariseTextRequestDTO,
   type SummariesPageDTO,
+  type SummaryIdRequestDTO,
   type SummaryStyle,
 } from "./summaries.types";
 
 // -------------------------------------------------------------------
 // Summaries of pasted text.
-//
-// The simplest feature in the app and the one with the least state: no
-// table, no ownership, nothing to authorize beyond "are you signed in".
-// requireUser is the whole access model, because there is no stored object
-// for one person to reach another person's copy of.
 //
 // WHAT IS NOT SIMPLE is the input. Somebody pastes a document written by
 // somebody else - a contract, a supplier's proposal, a report - and the
@@ -40,10 +50,76 @@ import {
 // instructions aimed at the model, so it is fenced and labelled as material
 // rather than dropped into the prompt as though the app had written it. See
 // buildRequest.
+//
+// AND IT IS NOW KEPT, which is what makes the rest of this file careful.
+// The feature stored nothing for most of its life and that was a decision,
+// not an omission; storing the material means this is the most sensitive
+// table in the application. Every read here is scoped to the session user,
+// there is no path that takes an owner from a request, and there is no
+// service anywhere that lists across owners. See the repository.
 // -------------------------------------------------------------------
 
-export function getSummariesPageService(): SummariesPageDTO {
-  return { isConfigured: isBedrockConfigured() };
+export async function getSummariesPageService(): Promise<SummariesPageDTO> {
+  try {
+    const user = await requireUser();
+
+    // Bounded rather than paged: this is a list of recent work, not an
+    // archive, and an unbounded select on a table with a 400,000 character
+    // column is a query worth never writing.
+    const saved = await getTextSummariesForUserRepo(user.id, SAVED_SUMMARY_LIMIT);
+
+    return { isConfigured: isBedrockConfigured(), saved: saved.map(mapDBTextSummaryToListDTO) };
+  } catch (error) {
+    throw handleError("getSummariesPageService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// One saved summary, opened.
+//
+// The id comes from the browser and proves nothing - the row is resolved
+// against the SESSION user, and a row belonging to somebody else is not
+// found rather than forbidden. Saying "forbidden" to a guessed id confirms
+// the row exists and turns this into an enumeration oracle over other
+// people's documents.
+// -------------------------------------------------------------------
+export async function getSavedSummaryService(
+  requestDTO: SummaryIdRequestDTO,
+): Promise<SavedSummaryDetailDTO> {
+  try {
+    const user = await requireUser();
+
+    const row = await getTextSummaryForUserRepo(requestDTO.summaryId, user.id);
+
+    if (!row) notFound();
+
+    return mapDBTextSummaryToDetailDTO(row);
+  } catch (error) {
+    throw handleError("getSavedSummaryService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// Remove one.
+//
+// NOT OPTIONAL, given what this table holds. Somebody who pastes the wrong
+// document - a client's contract into the wrong account, a medical letter
+// they did not mean to keep - needs a way to take it back that does not
+// involve asking an administrator, and a feature that stores sensitive
+// material without offering deletion has made a decision on their behalf
+// that is not its to make.
+//
+// The row goes entirely. There is no soft delete, because a soft delete
+// would mean the text is still there after somebody was told it was not.
+// -------------------------------------------------------------------
+export async function deleteSavedSummaryService(requestDTO: SummaryIdRequestDTO): Promise<void> {
+  try {
+    const user = await requireUser();
+
+    await deleteTextSummaryForUserRepo(requestDTO.summaryId, user.id);
+  } catch (error) {
+    throw handleError("deleteSavedSummaryService", error);
+  }
 }
 
 // -------------------------------------------------------------------
@@ -249,11 +325,43 @@ export async function* streamTextSummaryService(
 
   const { system, messages } = buildRequest(requestDTO);
 
+  // -----------------------------------------------------------------
+  // THE ROW IS WRITTEN BEFORE THE MODEL IS ASKED, and that ordering is the
+  // whole reason this is worth storing at all.
+  //
+  // The expensive, irreplaceable half of this record is the INPUT - the
+  // document somebody assembled and pasted in. The answer can always be
+  // asked for again; the paste cannot, once the tab is gone. Writing the
+  // row first means a model call that times out, throttles, or is
+  // interrupted by somebody closing the laptop still leaves them their
+  // material and a row that says what happened to it.
+  //
+  // Written the other way round, the one case where somebody most wants
+  // their text back - the request that failed - is the exact case that
+  // would have stored nothing.
+  // -----------------------------------------------------------------
+  const saved = await addTextSummaryRepo({
+    id: generateId(),
+    userId: user.id,
+    title: deriveSummaryTitle(requestDTO.text),
+    style: requestDTO.style,
+    sourceText: requestDTO.text,
+    summary: null,
+    error: null,
+    inputChars: requestDTO.text.length,
+  });
+
   let inputTokens: number | null = null;
   let outputTokens: number | null = null;
   let cacheReadTokens: number | null = null;
   let cacheWriteTokens: number | null = null;
   let failure: string | null = null;
+
+  // Accumulated as it is yielded, so what is stored is exactly what the
+  // reader saw - including a partial answer, which is kept rather than
+  // discarded. Half an answer to a long report is still an answer, and the
+  // alternative is a row holding the material with nothing beside it.
+  const chunks: string[] = [];
 
   const startedAt = Date.now();
 
@@ -286,6 +394,7 @@ export async function* streamTextSummaryService(
       const chunk = event.contentBlockDelta?.delta?.text;
 
       if (chunk) {
+        chunks.push(chunk);
         yield chunk;
         continue;
       }
@@ -312,6 +421,26 @@ export async function* streamTextSummaryService(
 
     throw handleError("streamTextSummaryService", error);
   } finally {
+    const text = chunks.join("");
+
+    // -----------------------------------------------------------------
+    // SETTLING THE ROW IS NOT ALLOWED TO TAKE THE REQUEST DOWN WITH IT.
+    // This runs in a finally, so on the failure path it is competing with
+    // an error that is already on its way to the reader - and a throw here
+    // would replace a diagnosis with a database message. The material is
+    // already stored either way; this call only adds the answer.
+    // -----------------------------------------------------------------
+    await updateTextSummaryForUserRepo(saved.id, user.id, {
+      summary: text.length > 0 ? text : null,
+      error: failure,
+      // Only a stream that ended cleanly is complete. A partial answer
+      // keeps its text AND its reason, so the screen can show what arrived
+      // and say why there is no more of it.
+      completedAt: failure === null ? new Date() : null,
+    }).catch((error) => {
+      console.warn(`[summaries] could not store the summary for ${saved.id}`, error);
+    });
+
     // Runs on success, on failure, AND when the reader closes the tab
     // mid-stream - the three cases somebody reviewing spend needs to be
     // able to tell apart. The arrays are the exact ones handed to Converse.
