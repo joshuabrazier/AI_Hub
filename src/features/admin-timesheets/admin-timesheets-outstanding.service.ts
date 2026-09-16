@@ -1,6 +1,10 @@
 import "server-only";
 
-import { getIssuesWithLoggedTimeRepo, getJiraProjectsRepo } from "@/lib/data/repositories/timesheet.repository";
+import {
+  getReportingClientsRepo,
+  getReportingProjectsRepo,
+  getReportingTasksWithLoggedTimeRepo,
+} from "@/lib/data/repositories/delivery-reporting.repository";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
 import { handleError } from "@/lib/handle-errors";
 import { requireUserRole } from "@/lib/auth/session-auth-server";
@@ -157,21 +161,43 @@ export async function getOutstandingBoardService(scope: OutstandingScope = {}): 
 async function loadOutstandingRows() {
   await requireUserRole([USER_ROLES.ADMIN]);
 
-  const [issues, projects] = await Promise.all([getIssuesWithLoggedTimeRepo(), getJiraProjectsRepo()]);
+  const [tasks, projects, clients] = await Promise.all([
+    getReportingTasksWithLoggedTimeRepo(),
+    getReportingProjectsRepo(),
+    getReportingClientsRepo(),
+  ]);
 
   return {
-    projectNames: new Map(projects.map((project) => [project.projectKey, project.name])),
+    // The CLIENT names, keyed by client id - which is what a row's
+    // `projectKey` is. Jira's vocabulary, the app's ids.
+    projectNames: new Map(clients.map((client) => [client.clientId, client.name])),
     // The engine gets rows and nothing else - no queries, no model, no rate
     // lookups. Everything it needs is already resolved.
-    rows: issues.map((issue) => ({
-      issueKey: issue.issueKey,
-      parentKey: issue.parentKey,
-      projectKey: issue.projectKey,
-      issueType: issue.issueType,
-      summary: issue.summary,
-      status: issue.status,
-      currentEstimateSeconds: issue.currentEstimateSeconds,
-      loggedSeconds: issue.loggedSeconds,
-    })),
+    //
+    // THE PROJECTS ARE IN THE LIST TOO, as parent rows carrying their own
+    // charged hours. The view rolls a job's deliverables up to it and needs
+    // something to roll up TO - and a project quoted at 200 hours with no
+    // tasks under it yet is precisely the row it exists to surface.
+    rows: [
+      ...tasks,
+      ...projects.map((project) => ({
+        issueKey: project.projectId,
+        parentKey: "",
+        projectKey: project.clientId,
+        issueType: "Project",
+        summary: project.title,
+        // A project is done when it is no longer active. `isDoneStatus`
+        // matches "completed" and "cancelled", which are two of the four
+        // project statuses, so this lines up without a translation table.
+        status: project.status,
+        // What the client agreed to pay for - see getReportingProjectsRepo
+        // for why a missing quote stays null rather than becoming nought.
+        currentEstimateSeconds: project.chargedMinutes === null ? null : project.chargedMinutes * 60,
+        // Summed onto the parent by the engine from the tasks above, so
+        // nought here rather than a second, independently-derived total that
+        // could disagree with them.
+        loggedSeconds: 0,
+      })),
+    ],
   };
 }

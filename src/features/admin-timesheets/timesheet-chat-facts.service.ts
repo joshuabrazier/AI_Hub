@@ -3,8 +3,11 @@ import "server-only";
 import { requireUser } from "@/lib/auth/session-auth-server";
 import { matchByName } from "@/lib/resolve-by-name";
 import { USER_ROLES } from "@/lib/data/kysely-database-types";
-import { getUserByUserIdRepo } from "@/lib/data/repositories/users.repository";
-import { getWorklogFactsInRangeRepo } from "@/lib/data/repositories/timesheet.repository";
+import {
+  getReportingTasksRepo,
+  getReportingTimeEntriesInRangeRepo,
+} from "@/lib/data/repositories/delivery-reporting.repository";
+import { toReportingFactRows } from "@/lib/timesheet/app-snapshot";
 import { envServer } from "@/lib/env-server";
 import { handleError } from "@/lib/handle-errors";
 import { secondsToHours, type OutstandingSummary } from "@/lib/timesheet/outstanding";
@@ -401,41 +404,27 @@ async function ownFacts(request: TimesheetChatFactsRequest, userId: string): Pro
     todayIso,
     envServer.TIMESHEET_HISTORY_START ?? envServer.JIRA_SYNC_START_DATE,
   );
+  // -------------------------------------------------------------------
+  // THE PERSON IS THE SESSION USER, FULL STOP - and that deletes a whole
+  // failure mode rather than moving it.
+  //
+  // This used to resolve `users.atlassian_account_id`, because a worklog
+  // identified people by Atlassian accountId. An account with no link got a
+  // refusal telling them to ask an administrator to connect it - so somebody
+  // who had been logging hours in this app all week could be told the app
+  // could not find their timesheet.
+  //
+  // Time entries carry `users.id`. There is nothing to link, nothing to be
+  // missing, and no branch to be in.
+  // -------------------------------------------------------------------
+  const accountId = userId;
 
-  const row = await getUserByUserIdRepo(userId);
-  const accountId = row?.atlassianAccountId ?? null;
+  const [entryRows, taskRows] = await Promise.all([
+    getReportingTimeEntriesInRangeRepo(period.from, period.end),
+    getReportingTasksRepo(),
+  ]);
 
-  if (!accountId) {
-    return {
-      scope: {
-        period: period.label,
-        from: period.from,
-        to: period.end,
-        viewer: "self",
-        person: null,
-        client: null,
-        project: null,
-        category: null,
-        billable: null,
-        notes: [
-          ...notes,
-          "This account is not linked to a Jira user, so no timesheet figures can be found for it. An administrator has to link it.",
-        ],
-      },
-      totals: {
-        hours: 0,
-        billableHours: 0,
-        nonBillableHours: 0,
-        unsetHours: 0,
-        billableSharePercent: null,
-        entries: 0,
-        daysWorked: 0,
-      },
-      capacity: { contractedHours: null, utilisationPercent: null, billableTargetPercent: null },
-    };
-  }
-
-  const factRows = await getWorklogFactsInRangeRepo(period.from, period.end);
+  const factRows = toReportingFactRows(entryRows, taskRows);
 
   // Scoped to this person BEFORE the engine runs, so every roll-up and the
   // billable split describe one person's time and nothing is filtered out of
@@ -469,7 +458,11 @@ async function ownFacts(request: TimesheetChatFactsRequest, userId: string): Pro
       from: period.from,
       to: period.end,
       viewer: "self",
-      person: row?.name ?? null,
+      // Off the entries rather than a second user lookup: the read already
+      // joined users to label them, and one name resolved twice is two names
+      // that can disagree. Null when they logged nothing this period, which
+      // is the truthful answer to "whose figures are these".
+      person: mine[0]?.personName ?? null,
       client: null,
       project: null,
       category: null,

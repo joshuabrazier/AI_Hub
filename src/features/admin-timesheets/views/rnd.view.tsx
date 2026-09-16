@@ -12,7 +12,7 @@ import {
 
 import { getAdminTimesheetsService, TimesheetRequest } from "../admin-timesheets.service";
 import { getStaffRateRowsService } from "../admin-timesheets-rate.service";
-import { StatTile, SyncStatusLine } from "../timesheet-panels";
+import { StatTile, DataStatusLine } from "../timesheet-panels";
 import TimesheetShell from "../timesheet-shell";
 
 // -------------------------------------------------------------------
@@ -36,7 +36,7 @@ import TimesheetShell from "../timesheet-shell";
 // -------------------------------------------------------------------
 export default async function RndView(request: TimesheetRequest) {
   const [data, rates] = await Promise.all([getAdminTimesheetsService(request), getStaffRateRowsService()]);
-  const { period, report, syncStatus } = data;
+  const { period, report, dataStatus } = data;
 
   // Read off the fact rows, which are one row per worklog. Never joined to an
   // issue-level table: an issue with six worklogs would count its hours six
@@ -174,7 +174,7 @@ export default async function RndView(request: TimesheetRequest) {
         showKey
       />
 
-      <SyncStatusLine syncStatus={syncStatus} />
+      <DataStatusLine dataStatus={dataStatus} />
     </TimesheetShell>
   );
 }

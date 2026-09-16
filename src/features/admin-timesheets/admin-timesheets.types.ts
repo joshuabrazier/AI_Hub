@@ -135,13 +135,31 @@ export interface TimesheetFiltersDTO {
 // empty: never synced, synced and genuinely quiet, or synced but failing.
 // A blank page with no explanation is the thing people file a bug about.
 // -------------------------------------------------------------------
-export interface SyncStatusDTO {
-  configured: boolean;
-  lastSuccessAt: Date | null;
-  lastRunAt: Date | null;
-  lastError: string | null;
-  lastUpdatedCount: number;
-  totalWorklogs: number;
+// -------------------------------------------------------------------
+// WHERE THE HOURS COME FROM, NOW THAT THEY COME FROM HERE.
+//
+// This was SyncStatusDTO and it described a Jira sync: whether the
+// credentials were set, when it last ran, what it last failed with, how many
+// rows it had pulled. Every one of those questions is gone - the hours are
+// typed into this app's own timesheet, so there is no run to have succeeded
+// and no source to be unreachable.
+//
+// WHAT SURVIVES IS THE ONE DISTINCTION THAT ACTUALLY MATTERED. An empty
+// report has two completely different causes and they look identical on
+// screen: this period was quiet, or nobody has ever logged an hour. The
+// first needs no action; the second means the timesheet is not being used
+// and every figure here is describing nothing. `totalEntries` is what tells
+// them apart, and it is the whole reason that count is fetched.
+//
+// `latestWorkDate` is the follow-up question: time IS being logged, but is
+// it being logged CURRENTLY? A latest entry three months old is a different
+// problem again, and neither of the other two fields can show it.
+// -------------------------------------------------------------------
+export interface DataStatusDTO {
+  /** Every time entry in the app, across every period and every person. */
+  totalEntries: number;
+  /** The most recent day anybody has logged against, 'YYYY-MM-DD', or null. */
+  latestWorkDate: string | null;
 }
 
 export interface AdminTimesheetsDTO {
@@ -164,7 +182,7 @@ export interface AdminTimesheetsDTO {
   // filtered view can say "18.75 of 62.00 h" rather than presenting a filtered
   // subtotal as if it were the period.
   periodTotalHours: number;
-  syncStatus: SyncStatusDTO;
+  dataStatus: DataStatusDTO;
   // A full working day, for the utilisation column's denominator.
   workingHoursPerDay: number;
 }

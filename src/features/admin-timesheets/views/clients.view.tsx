@@ -2,7 +2,7 @@ import { ROUTES } from "@/lib/routes";
 
 import { getAdminTimesheetsService, TimesheetRequest } from "../admin-timesheets.service";
 import { ClientsCard } from "../clients-card";
-import { StatTile, SyncStatusLine } from "../timesheet-panels";
+import { StatTile, DataStatusLine } from "../timesheet-panels";
 import TimesheetShell from "../timesheet-shell";
 
 // -------------------------------------------------------------------
@@ -25,7 +25,7 @@ import TimesheetShell from "../timesheet-shell";
 // -------------------------------------------------------------------
 export default async function ClientsView(request: TimesheetRequest) {
   const data = await getAdminTimesheetsService(request);
-  const { period, report, syncStatus, clientOptions } = data;
+  const { period, report, dataStatus, clientOptions } = data;
 
   const projects = report.budget;
   const started = projects.filter((project) => project.worklogCount > 0).length;
@@ -58,7 +58,7 @@ export default async function ClientsView(request: TimesheetRequest) {
 
       <ClientsCard clients={clientOptions} projects={projects} index={4} />
 
-      <SyncStatusLine syncStatus={syncStatus} />
+      <DataStatusLine dataStatus={dataStatus} />
     </TimesheetShell>
   );
 }

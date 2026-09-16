@@ -12,7 +12,7 @@ import { RevenueTiles } from "../revenue-panels";
 import { getPersonRatesService } from "../admin-timesheets-rate.service";
 import { StaffRateDialog } from "../staff-rate-dialog";
 import { StaffTargetDialog } from "../staff-target-dialog";
-import { ProjectsCard, StatTile, SyncStatusLine } from "../timesheet-panels";
+import { ProjectsCard, StatTile, DataStatusLine } from "../timesheet-panels";
 import TimesheetShell, { filterQuery, periodHref } from "../timesheet-shell";
 import { EntriesDataTable } from "../table/timesheet-data-tables";
 import { PersonDaysTable } from "../timesheet-tables";
@@ -33,7 +33,7 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
   // The person filter is forced to the id in the path, so every figure and
   // every table on this screen describes them and nobody else.
   const { data, dashboard } = await getStaffDashboardService({ ...request, person: personId });
-  const { period, filters, report, syncStatus, workingHoursPerDay, periodSeries } = data;
+  const { period, filters, report, dataStatus, workingHoursPerDay, periodSeries } = data;
 
   const person = dashboard.people.find((candidate) => candidate.personId === personId);
 
@@ -138,7 +138,7 @@ export default async function PersonView({ personId, ...request }: TimesheetRequ
 
       {report.facts.length > 0 && <EntriesDataTable facts={report.facts} />}
 
-      <SyncStatusLine syncStatus={syncStatus} />
+      <DataStatusLine dataStatus={dataStatus} />
     </TimesheetShell>
   );
 }

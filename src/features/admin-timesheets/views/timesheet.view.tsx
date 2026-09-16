@@ -4,7 +4,7 @@ import { getStaffDashboardService, TimesheetRequest } from "../admin-timesheets.
 import { getRevenueForFactsService } from "../admin-timesheets-revenue.service";
 import { RevenueTiles } from "../revenue-panels";
 import { ProductivityChart } from "../productivity-chart";
-import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
+import { EmptyState, StatTile, DataStatusLine } from "../timesheet-panels";
 import TimesheetShell, { periodHref } from "../timesheet-shell";
 import { EntriesDataTable } from "../table/timesheet-data-tables";
 
@@ -24,7 +24,7 @@ export default async function TimesheetView(request: TimesheetRequest) {
   // Through the dashboard service, so the chart s capacity track scales with
   // however many people are in view rather than sitting at one person s day.
   const { data } = await getStaffDashboardService(request);
-  const { period, filters, report, syncStatus, periodTotalHours, periodSeries } = data;
+  const { period, filters, report, dataStatus, periodTotalHours, periodSeries } = data;
 
   // Values the rows already on screen. This is the view the ask box links to
   // after a question about money, so arriving here without the money would
@@ -86,12 +86,12 @@ export default async function TimesheetView(request: TimesheetRequest) {
           </div>
 
           <EntriesDataTable facts={report.facts} />
-          <SyncStatusLine syncStatus={syncStatus} />
+          <DataStatusLine dataStatus={dataStatus} />
         </>
       ) : (
         <>
-          <EmptyState syncStatus={syncStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
-          <SyncStatusLine syncStatus={syncStatus} />
+          <EmptyState dataStatus={dataStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
+          <DataStatusLine dataStatus={dataStatus} />
         </>
       )}
     </TimesheetShell>
