@@ -24,7 +24,13 @@ export default function SummariesPage({ eyebrow }: { eyebrow: string }) {
       // somebody is entitled to an answer to before pasting a contract in -
       // and because a refresh will lose their summary, which is better
       // learned here than by doing it.
-      description="Paste any text and get a summary in the style you need. Nothing is saved, so copy anything you want to keep. Administrators can review the text sent to the model."
+      description="Paste any text and get a summary at the depth you need. Nothing is saved here, so copy anything you want to keep, and administrators can review what is sent to the model."
+      // FILL, because the two panes underneath are a before and an after and
+      // they have to be the same height to read as one. Without it the page
+      // grows to fit its content, which on this screen means a tall box of
+      // pasted text beside a short box of summary, and a third of the window
+      // left empty below both.
+      fill
     >
       <SummariesWorkspace page={page} />
     </PortalPage>
