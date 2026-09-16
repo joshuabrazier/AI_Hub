@@ -40,7 +40,7 @@ export async function draftProjectPlanAction(
   brief: string,
 ): Promise<ServerApiResponse<ResolvedProjectPlan>> {
   try {
-    const actor = await requireUserRole([USER_ROLES.ADMIN]);
+    const actor = await requireUserRole([USER_ROLES.ADMIN, USER_ROLES.MANAGER]);
 
     const plan = await draftProjectPlanService(brief, { id: actor.id, role: actor.role });
 
@@ -54,7 +54,7 @@ export async function applyProjectPlanAction(
   plan: ResolvedProjectPlan,
 ): Promise<ServerApiResponse<{ projectId: string }>> {
   try {
-    const actor = await requireUserRole([USER_ROLES.ADMIN]);
+    const actor = await requireUserRole([USER_ROLES.ADMIN, USER_ROLES.MANAGER]);
 
     const applied = await applyProjectPlanService(plan, { id: actor.id, role: actor.role });
 

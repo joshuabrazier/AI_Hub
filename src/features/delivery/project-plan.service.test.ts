@@ -91,19 +91,64 @@ function plan(overrides: Partial<ResolvedProjectPlan> = {}): ResolvedProjectPlan
 beforeEach(() => vi.clearAllMocks());
 
 describe("who may apply a plan", () => {
-  it("refuses anybody who is not an admin", async () => {
-    // Creating a project is admin-only on every other path in this module,
-    // and this is the one that can be reached without a browser session - so
-    // it is the last place the rule can be enforced.
+  it("refuses a MEMBER", async () => {
+    // Creating a project is [ADMIN, MANAGER] on every other path in this
+    // module, and this is the one that can be reached without a browser
+    // session - so it is the last place the rule can be enforced.
     await expect(applyProjectPlanService(plan(), { id: "u9", role: USER_ROLES.MEMBER })).rejects.toThrow();
 
     expect(addProjectRepo).not.toHaveBeenCalled();
   });
 
-  it("refuses a manager too", async () => {
+  it("lets a MANAGER apply one", async () => {
+    // Managers create projects, so they get the whole path rather than the
+    // form half of it. This was admin-only for one commit while the member
+    // trap below was still there.
     await expect(
       applyProjectPlanService(plan(), { id: "u9", role: USER_ROLES.MANAGER }),
-    ).rejects.toThrow();
+    ).resolves.toBeDefined();
+  });
+});
+
+// ===================================================================
+// WHOEVER APPLIED THE PLAN IS ON THE PROJECT
+//
+// setProjectMembersRepo REPLACES the member set with the people the brief
+// mentioned, and the person pasting the brief is usually not one of them. A
+// manager could describe a project, apply it, and lose it on the spot -
+// absent from their Projects list and refused by the setup screen, because
+// both are membership questions and they would have had no membership row.
+//
+// It never showed up while this was admin-only: an admin's reach comes from
+// their role, so an admin applying a plan that forgot them noticed nothing.
+// That is exactly why it is asserted with a MANAGER.
+// ===================================================================
+describe("the creator's own membership", () => {
+  it("adds the applier as lead when the plan does not mention them", async () => {
+    await applyProjectPlanService(plan(), { id: "u9", role: USER_ROLES.MANAGER });
+
+    const [, members] = vi.mocked(setProjectMembersRepo).mock.calls[0];
+
+    expect(members).toEqual(
+      expect.arrayContaining([expect.objectContaining({ userId: "u9", isLead: true })]),
+    );
+  });
+
+  it("promotes them rather than adding them twice when the plan does", async () => {
+    // A duplicate row would violate the primary key and take the whole
+    // transaction with it, so this is a write that fails rather than a
+    // cosmetic problem.
+    const withCreator = plan({
+      members: [{ userId: "u9", name: "Louis", isLead: false, addedForAssignment: false }],
+    });
+
+    await applyProjectPlanService(withCreator, { id: "u9", role: USER_ROLES.MANAGER });
+
+    const [, members] = vi.mocked(setProjectMembersRepo).mock.calls[0];
+    const mine = members.filter((member) => member.userId === "u9");
+
+    expect(mine).toHaveLength(1);
+    expect(mine[0].isLead).toBe(true);
   });
 });
 
