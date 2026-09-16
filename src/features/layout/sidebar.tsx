@@ -294,12 +294,22 @@ function NavCollapsibleRow({
   // Projects is a row you can GO to and a list you can OPEN, and it used to be
   // two separate rows for exactly that reason - a link above a disclosure,
   // over the same set of projects. One button cannot be both, so where there
-  // is an href the label is a link and the chevron is its own button beside
-  // it. Everything without one keeps the single toggling button it had.
+  // is an href the label is a link and the chevron is its own control.
+  // Everything without one keeps the single toggling button it had.
   //
-  // The chevron carries its own accessible name rather than inheriting the
-  // row's: two controls in a row both announced as "Projects" is worse than
-  // no disclosure at all for anyone listening to it.
+  // IT IS TWO CONTROLS AND IT HAS TO LOOK LIKE ONE ROW. The first version
+  // gave the chevron its own rounded hover box, which drew a second button
+  // sitting inside the nav row - Projects ended up looking like the only
+  // entry in the rail with a widget bolted onto it, while every other group's
+  // chevron was just a mark at the end of its row. So the ROW carries the
+  // padding, the hover fill and the active state, the two controls sit inside
+  // it with no surfaces of their own, and the chevron only brightens. One
+  // hover highlight, one row, whichever half the pointer is over.
+  //
+  // The chevron still carries its own accessible NAME: two controls in a row
+  // both announced as "Projects" is worse than no disclosure at all for
+  // anyone listening to it. Looking like one row and being announced as one
+  // control are different questions.
   //
   // COLLAPSED, THERE IS NO CHEVRON AT ALL - the rail is icon-only, and the
   // whole row is the link. The children still expand inline underneath when
@@ -307,12 +317,17 @@ function NavCollapsibleRow({
   // -----------------------------------------------------------------
   const groupRow =
     entry.href !== undefined ? (
-      <div className={cn("flex items-center", collapsed ? "justify-center" : "pr-1")}>
+      <div className={cn(rowClasses, "cursor-default")}>
         <Link
           href={entry.href}
           aria-label={entry.label}
           aria-current={selfActive ? "page" : undefined}
-          className={cn(rowClasses, !collapsed && "w-auto flex-1")}
+          // No padding, no fill, no radius: the row around it owns all three,
+          // so the link is only the hit area for the label.
+          className={cn(
+            "flex min-w-0 items-center rounded-sm focus-visible:ring-2 focus-visible:ring-sidebar-ring/60 focus-visible:outline-none",
+            collapsed ? "justify-center" : "flex-1 gap-2.5",
+          )}
         >
           <Icon size={18} aria-hidden="true" className={iconClasses} />
           {!collapsed && <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>}
@@ -325,10 +340,7 @@ function NavCollapsibleRow({
             onClick={() => setOpen((previous) => !previous)}
             aria-expanded={open}
             aria-label={`${open ? "Hide" : "Show"} ${entry.label.toLowerCase()}`}
-            className={cn(
-              "flex size-7 shrink-0 items-center justify-center rounded-md transition-colors",
-              "hover:bg-sidebar-accent",
-            )}
+            className="-mr-1 flex shrink-0 items-center rounded-sm p-1 opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-sidebar-ring/60 focus-visible:outline-none"
           >
             {chevron}
           </button>

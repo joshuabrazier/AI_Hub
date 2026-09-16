@@ -61,6 +61,9 @@ vi.mock("@/lib/auth/session-auth-server", () => ({
 
 vi.mock("@/lib/audit/audit-log.service", () => ({ recordAuditEvent: vi.fn() }));
 
+import { recordAuditEvent } from "@/lib/audit/audit-log.service";
+import { AUDIT_ACTIONS } from "@/lib/audit/audit-log.types";
+
 vi.mock("@/lib/data/repositories/clients.repository", () => ({
   addClientRepo: vi.fn(),
   countProjectsForClientRepo: vi.fn(),
@@ -897,6 +900,55 @@ describe("a project the caller is not on", () => {
 });
 
 // -------------------------------------------------------------------
+// ===================================================================
+// WHOEVER MAKES A PROJECT IS ON IT
+//
+// It used to start with nobody on it, which was defensible - a project with
+// no members is invisible to everyone but an admin, and admins are who create
+// projects - and still wrong, because the person who just made it could not
+// find it in their own list.
+//
+// Worth its own test for one reason: a membership row is an AUTHORIZATION
+// row. This one happens to grant nothing (canEditProjectTasks is `ADMIN ||
+// isLead`, and creating already requires ADMIN), and that is exactly the kind
+// of reasoning that stops being true when somebody later widens what a lead
+// can do. Then this row is the thing that was written without anybody asking.
+// ===================================================================
+describe("createProjectService", () => {
+  it("puts the creator on the project as lead", async () => {
+    signedInAsAdmin();
+
+    await createProjectService({ ...CREATE_PROJECT });
+
+    expect(mockAddProjectMember).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: PROJECT_ID,
+        // From the SESSION, never from the request - the same rule as every
+        // other actor resolution in this module.
+        userId: ADMIN_ID,
+        isLead: true,
+      }),
+    );
+  });
+
+  it("records the membership in the audit log, not just the creation", async () => {
+    // A membership row is how somebody reaches a project, so "who put them
+    // there" has to be answerable however they got there. The members panel
+    // writes PROJECT_MEMBER_ADDED; this writes the same action rather than
+    // leaving a row the log cannot explain.
+    signedInAsAdmin();
+
+    await createProjectService({ ...CREATE_PROJECT });
+
+    expect(vi.mocked(recordAuditEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: AUDIT_ACTIONS.PROJECT_MEMBER_ADDED,
+        subjectUserId: ADMIN_ID,
+      }),
+    );
+  });
+});
+
 // ===================================================================
 // AN EMPTY SCOPE IS NOTHING, NOT EVERYTHING
 // ===================================================================

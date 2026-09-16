@@ -12,6 +12,7 @@ import { requireUser, requireUserRole } from "@/lib/auth/session-auth-server";
 import {
   PROJECT_STATUSES,
   PROJECT_STATUS_LABELS,
+  RATE_BANDS,
   RATE_BAND_LABELS,
   USER_ROLES,
   type Client,
@@ -1058,12 +1059,35 @@ export async function getProjectDetailService(projectId: string): Promise<Projec
 // -------------------------------------------------------------------
 // Create a project, and its client if that is what was asked for.
 //
-// IT STARTS WITH NO MEMBERS, NO PHASES AND NO BUDGET GROUPS, which is what
-// CreateProjectSchema describes and what its comment in delivery.types.ts
-// says: the setup screen runs setProjectMembersService next, then the
-// phases and the groups. A project with no members is invisible to
-// everybody except an admin, and since admins are who create projects that
-// locks nobody out.
+// IT STARTS WITH ONE MEMBER - WHOEVER MADE IT, AS LEAD - and then no phases
+// and no budget groups, which is what CreateProjectSchema describes and what
+// its comment in delivery.types.ts says: the setup screen runs the phases and
+// the groups after this.
+//
+// -------------------------------------------------------------------
+// THE CREATOR IS A MEMBER, AND IT COSTS NO PRIVILEGE TO DO IT.
+//
+// It used to start with nobody on it, on the reasoning that a project with no
+// members is invisible to everybody except an admin, and admins are who
+// create projects - so it locked nobody out. That was true and it was still
+// wrong: the person who just made the project could not find it. It was
+// absent from their Projects rail, absent from their projects page, and
+// reachable only by going back through the clients list. The first thing
+// anybody did after creating a project was add themselves to it.
+//
+// NOTHING IS GRANTED BY THIS. `canEditProjectTasks` is `role === ADMIN ||
+// isLead`, and createProjectService already requires ADMIN - so the creator
+// could edit this project's tasks a moment ago and can edit them now. The row
+// changes what they can SEE listed, not what they can do, which is why this
+// is safe to do without asking.
+//
+// LEAD RATHER THAN PLAIN MEMBER, because a project with no lead is a state
+// the setup screen warns about, and the person who created it is the honest
+// default answer to "who is running this". It is editable like any other
+// membership: the members panel can demote or remove them.
+//
+// Idempotent by the repo's own `onConflict doNothing`, so this cannot fail on
+// a retry that got as far as the insert.
 //
 // (The brief this was written from asked for one transaction covering
 // members, bands, groups and phases as well. There is no schema for a
@@ -1102,12 +1126,37 @@ export async function createProjectService(requestDTO: CreateProjectRequestDTO):
       updatedAt: now,
     });
 
+    await addProjectMemberRepo({
+      projectId: project.id,
+      userId: user.id,
+      isLead: true,
+      // Stated rather than left to the column default, for the same reason
+      // `status` is above: which band the creator sits in is a decision, and
+      // a decision belongs in the code that makes it rather than in a
+      // DEFAULT clause somebody would have to go and look up.
+      rateBand: RATE_BANDS.STANDARD,
+      createdAt: now,
+    });
+
     await recordAuditEvent({
       action: AUDIT_ACTIONS.PROJECT_CREATED,
       entityType: AUDIT_ENTITY_TYPES.PROJECT,
       entityId: project.id,
       summary: `Created project ${project.title} for ${client.name}`,
       metadata: { clientId: client.id, isBillable: project.isBillable },
+    });
+
+    // Audited separately from the creation, and with the SAME action the
+    // members panel uses. A membership row is an authorization row, and the
+    // audit log's answer to "how did this person get on this project" must
+    // not depend on which screen put them there.
+    await recordAuditEvent({
+      action: AUDIT_ACTIONS.PROJECT_MEMBER_ADDED,
+      entityType: AUDIT_ENTITY_TYPES.PROJECT_MEMBER,
+      entityId: project.id,
+      subjectUserId: user.id,
+      summary: `Added ${user.name ?? "the creator"} to project ${project.title} as lead on creation`,
+      metadata: { projectId: project.id, isLead: true, rateBand: RATE_BANDS.STANDARD },
     });
 
     revalidateProjectViews();
