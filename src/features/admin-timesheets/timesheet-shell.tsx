@@ -7,7 +7,6 @@ import { USER_ROLES, USER_ROLE_LABELS } from "@/lib/data/kysely-database-types";
 import { ROUTES } from "@/lib/routes";
 
 import { AdminTimesheetsDTO } from "./admin-timesheets.types";
-import { RefreshButton } from "./refresh-button";
 import { PeriodControl } from "./period-control";
 import { CategorySegmentedControl, ClientSelect, ProjectSelect } from "./timesheet-filters";
 import { appendFilterParams } from "./timesheet-url";
@@ -106,8 +105,22 @@ export default function TimesheetShell({
       description={pageDescription}
       actions={
         <div className="flex flex-wrap items-center gap-2">
-          <RefreshButton />
+          {/* -------------------------------------------------------------
+              "REFRESH FROM JIRA" IS GONE, AND ITS ABSENCE IS THE FEATURE.
 
+              These reports read the app's own clients, projects, tasks and
+              time entries now. There is no read model to refresh: the tables
+              the screen aggregates are the same tables the app writes when
+              somebody logs an hour, so the figures are current the moment the
+              page renders.
+
+              Leaving the button would have been worse than useless. It pulled
+              Jira worklogs into a read model nothing reads any more, so it
+              would have spun, reported success, and changed not one number on
+              the screen - which is indistinguishable from the app being
+              broken, and is the exact complaint this module has been chasing
+              elsewhere.
+              ------------------------------------------------------------- */}
           {report.totals.worklogCount > 0 && (
             <Button asChild variant="outline">
               <Link href={`${ROUTES.ADMIN_TIMESHEETS_EXPORT}?${filterQuery(filters)}`} prefetch={false}>
