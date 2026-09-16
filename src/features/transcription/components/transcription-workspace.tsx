@@ -34,6 +34,7 @@ import {
   type TranscriptionPageDTO,
   type TranscriptionSummaryDTO,
 } from "../transcription.types";
+import { listPendingRecordings } from "./recording-store";
 import { TranscriptionComposer } from "./transcription-composer";
 import { TranscriptionDetail } from "./transcription-detail";
 
@@ -94,6 +95,40 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
   // Opens on the composer when there is nothing to show, which is what a
   // first visit looks like.
   const [isCreating, setIsCreating] = useState(page.transcriptions.length === 0);
+
+  // -------------------------------------------------------------------
+  // ===================================================================
+  // A RECORDING STILL ON THIS DEVICE OUTRANKS WHATEVER WAS LAST FINISHED
+  // ===================================================================
+  //
+  // The recovery panel is the net under this whole feature, and it was
+  // invisible to exactly the people standing in it. It lives inside the
+  // composer, and the composer only renders when `isCreating` - which is
+  // seeded from "this person has no transcriptions at all". So anybody who
+  // had ever recorded anything before, whose tab then died mid-meeting,
+  // reloaded to find their last transcript on screen and NOTHING anywhere
+  // saying an unsent recording was sitting in IndexedDB. They would
+  // reasonably conclude the meeting was gone.
+  //
+  // The store is asked on mount and the answer wins: a meeting that has not
+  // reached the server is more urgent than one that finished days ago.
+  //
+  // Asked here rather than in the composer because the composer is the very
+  // thing that is not mounted in the case that matters.
+  // -------------------------------------------------------------------
+  useEffect(() => {
+    let cancelled = false;
+
+    listPendingRecordings()
+      .then((held) => {
+        if (!cancelled && held.length > 0) setIsCreating(true);
+      })
+      .catch((error) => console.warn("[workspace] could not read the local recording store", error));
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [renaming, setRenaming] = useState<TranscriptionSummaryDTO | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [deleting, setDeleting] = useState<TranscriptionSummaryDTO | null>(null);
@@ -225,9 +260,21 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
 
   return (
     <>
-      <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
-        {/* Transcriptions */}
-        <aside className="flex min-w-0 flex-col gap-3">
+      {/* ===================================================================
+          ON A PHONE THE PRIMARY ACTION COMES FIRST.
+          Stacked, this used to put the list of past transcriptions above
+          any way of starting a new one - so somebody opening the app to
+          record a meeting that was about to begin had to scroll past
+          everything they had ever recorded to find the button.
+          The three children are in DOM order "start, work, history", which
+          is the order a phone shows them and therefore the order a screen
+          reader and the tab key follow. The two-column desktop layout is
+          restored by explicit grid placement rather than by `order`, so the
+          markup does not have to lie about its own sequence to get it.
+          =================================================================== */}
+      <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:gap-y-3">
+        {/* Start a new one. Column one, top, on a wide screen. */}
+        <div className="lg:col-start-1 lg:row-start-1">
           <Button
             onClick={() => setIsCreating(true)}
             disabled={!isReady || isCreating}
@@ -236,7 +283,24 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
             <Plus size={16} aria-hidden="true" />
             New transcription
           </Button>
+        </div>
 
+        {/* The open transcription, or a new one. Column two, full height. */}
+        <section className="min-w-0 lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          {!isReady ? (
+            <NotConfigured page={page} />
+          ) : isCreating || page.active === null ? (
+            <TranscriptionComposer page={page} onStarted={openTranscription} />
+          ) : (
+            // Keyed on the row so opening a different one remounts and
+            // resets the polling and the open tab. Without the key React
+            // would keep the previous transcription's local state.
+            <TranscriptionDetail key={page.active.id} detail={page.active} />
+          )}
+        </section>
+
+        {/* What has been recorded before. Column one, under the button. */}
+        <aside className="flex min-w-0 flex-col gap-3 lg:col-start-1 lg:row-start-2">
           {page.transcriptions.length === 0 ? (
             <p className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
               Nothing yet. Record a meeting, upload one, or import one from Teams to see it here.
@@ -343,20 +407,6 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
             </nav>
           )}
         </aside>
-
-        {/* The open transcription, or a new one */}
-        <section className="min-w-0">
-          {!isReady ? (
-            <NotConfigured page={page} />
-          ) : isCreating || page.active === null ? (
-            <TranscriptionComposer page={page} onStarted={openTranscription} />
-          ) : (
-            // Keyed on the row so opening a different one remounts and
-            // resets the polling and the open tab. Without the key React
-            // would keep the previous transcription's local state.
-            <TranscriptionDetail key={page.active.id} detail={page.active} />
-          )}
-        </section>
       </div>
 
       {/* Rename. AppDialog rather than ConfirmDialog because this needs a
@@ -405,7 +455,12 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
           if (!open) setDeleting(null);
         }}
         title="Delete this transcription?"
-        description={`"${deleting?.title ?? ""}", its transcript and its summary will be permanently deleted. This cannot be undone.`}
+        // NAMES THE RECORDING, because deleting takes the audio as well and
+        // the old wording listed only the transcript and the summary. On a
+        // row that failed, the blob is frequently the ONLY copy left - the
+        // device copy is discarded once a job starts - so somebody tidying
+        // up a failed row was destroying the meeting without being told.
+        description={`"${deleting?.title ?? ""}", its recording, its transcript and its summary will be permanently deleted. This cannot be undone.`}
         confirmLabel="Delete"
         pendingLabel="Deleting…"
         isPending={isPending}

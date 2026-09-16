@@ -130,8 +130,10 @@ export const ROUTES = {
   MANAGE_TRANSCRIPTION: "/manage/transcription",
   MANAGE_SUMMARIES: "/manage/summaries",
   MANAGE_PROJECTS: "/manage/projects",
+  MANAGE_PROJECT_NEW: "/manage/projects/new",
   MANAGE_TIMESHEET: "/manage/timesheet",
   manageProject: (projectId: string) => `/manage/projects/${encodeURIComponent(projectId)}`,
+  manageProjectSetup: (projectId: string) => `/manage/projects/${encodeURIComponent(projectId)}/setup`,
   MANAGE_ACCOUNT: "/manage/account",
 
   // Member portal
@@ -265,6 +267,36 @@ export function projectBoardForRole(role: string, projectId: string): string {
     default:
       return ROUTES.portalProject(projectId);
   }
+}
+
+// -------------------------------------------------------------------
+// Setting a project up, in the caller's own area.
+//
+// Managers can create projects and set up the ones they lead, so the two
+// setup routes exist twice and the right one has to be chosen by ROLE rather
+// than written down. A manager sent to /admin/projects/... is redirected by
+// the proxy to their own home, so a hardcoded admin link does not fail
+// loudly - it quietly throws the person out of the flow they were in the
+// middle of, which is the harder kind of bug to be told about.
+//
+// A MEMBER HAS NO SETUP ROUTE AT ALL, and falls back to the board. They
+// cannot create projects and cannot restructure one, so there is nothing for
+// a /portal setup page to render; the board is the nearest true thing.
+// -------------------------------------------------------------------
+export function projectSetupForRole(role: string, projectId: string): string {
+  switch (role as UserRole) {
+    case USER_ROLES.ADMIN:
+      return ROUTES.adminProjectSetup(projectId);
+    case USER_ROLES.MANAGER:
+      return ROUTES.manageProjectSetup(projectId);
+    default:
+      return ROUTES.portalProject(projectId);
+  }
+}
+
+/** Where "start a project" goes. Members never see the link. */
+export function newProjectForRole(role: string): string {
+  return (role as UserRole) === USER_ROLES.ADMIN ? ROUTES.ADMIN_PROJECT_NEW : ROUTES.MANAGE_PROJECT_NEW;
 }
 
 export function timesheetHomeForRole(role: string): string {

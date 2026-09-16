@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Archive,
+  ArrowDown,
   Check,
   CircleStop,
   Copy,
@@ -34,6 +35,7 @@ import {
   assistantObject,
   assistantSubject,
 } from "@/lib/ai/assistant-identity";
+import { useWorkInFlight } from "@/features/layout/work-in-flight";
 import { removeAiChatAttachmentAction } from "../ai-chat.actions";
 import {
   MAX_MESSAGE_CHARS,
@@ -56,6 +58,17 @@ import { AiChatAttachmentList } from "./ai-chat-attachment-list";
 // Mounted with a key on the conversation id (see AiChatWorkspace), so all
 // of the state below is per conversation and switching threads resets it.
 // -------------------------------------------------------------------
+/**
+ * How close to the bottom still counts as "at the bottom", in pixels.
+ *
+ * Not zero. Sub-pixel rounding on a zoomed or scaled display leaves a
+ * fraction of a pixel that never reaches zero, and a threshold that tight
+ * would unpin a thread nobody had touched. Generous enough to survive that
+ * and a line of text arriving, tight enough that scrolling up by a paragraph
+ * reads as a deliberate move away.
+ */
+const PINNED_THRESHOLD_PX = 64;
+
 export function AiChatThread({
   detail,
   canAttachFiles,
@@ -111,6 +124,65 @@ export function AiChatThread({
 
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // ===================================================================
+  // FOLLOWING THE REPLY, UNTIL SOMEBODY DECIDES NOT TO.
+  //
+  // A streaming reply used to drag the view to the bottom on every chunk,
+  // which made reading anything earlier in the thread impossible while the
+  // model was answering - scroll up, get yanked back, several times a second.
+  // Long answers are exactly when somebody wants to re-read the question or
+  // check what was said before it.
+  //
+  // So the scroll is a MODE rather than an action: pinned to the bottom, or
+  // not. Scrolling away turns it off, scrolling back turns it on, and while
+  // it is off the newest text keeps arriving without the view moving at all.
+  //
+  // -------------------------------------------------------------------
+  // IT IS DERIVED FROM POSITION, NEVER FROM DIRECTION, and that is what makes
+  // it work rather than fight itself.
+  //
+  // A programmatic scroll fires the same `scroll` event a person's does, and
+  // there is no flag on it saying which was which. Anything that decided
+  // "the user scrolled up" by watching direction would unpin itself on its
+  // own auto-scroll, or need a suppression flag racing the browser. Asking
+  // "how far from the bottom is it NOW" has neither problem: after an
+  // auto-scroll the answer is zero, so pinned stays pinned, and no flag,
+  // timer or guard is needed anywhere.
+  // ===================================================================
+
+  // The ref is what the auto-scroll effect reads, so that effect depends on
+  // the MESSAGES and not on this - adding it to the dependencies would make
+  // the act of unpinning schedule one more scroll. The state exists only to
+  // render the button.
+  const pinnedRef = useRef(true);
+  const [isPinned, setIsPinned] = useState(true);
+
+  const setPinned = (pinned: boolean) => {
+    pinnedRef.current = pinned;
+    // Guarded so a scroll event per frame does not re-render per frame: the
+    // value only changes when the mode actually flips.
+    setIsPinned((current) => (current === pinned ? current : pinned));
+  };
+
+  const onScroll = () => {
+    const element = scrollRef.current;
+
+    if (!element) return;
+
+    setPinned(
+      element.scrollHeight - element.scrollTop - element.clientHeight <= PINNED_THRESHOLD_PX,
+    );
+  };
+
+  const jumpToBottom = () => {
+    // Pinned FIRST, so the reply carries on following once it arrives there.
+    // Setting it from the scroll event alone would work, but this way the
+    // mode is on from the moment of the click rather than a frame later.
+    setPinned(true);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Drag events fire on every child element, so a plain boolean would clear
   // the highlight as soon as the pointer crossed one. Counting enters and
@@ -119,6 +191,12 @@ export function AiChatThread({
 
   const isStreaming = reply !== null;
   const isUploading = uploadingCount > 0;
+
+  // Tell the deployment watcher not to reload over this. A streaming reply
+  // has already been paid for and cannot be resumed, and an upload mid-flight
+  // leaves a staged row with no bytes behind it. Neither is visible in the
+  // DOM, so neither would be noticed otherwise.
+  useWorkInFlight(isStreaming || isUploading);
 
   // -------------------------------------------------------------------
   // Upload chosen files.
@@ -191,9 +269,17 @@ export function AiChatThread({
     );
   };
 
-  // Keep the newest text in view as it arrives. `instant` rather than smooth
-  // because a smooth scroll re-triggered on every chunk never catches up.
+  // Keep the newest text in view as it arrives - but ONLY while the view is
+  // still at the bottom. See the block above: somebody who has scrolled up to
+  // re-read something is not moved, and the reply goes on arriving beneath
+  // them until they come back down.
+  //
+  // `instant` rather than smooth because a smooth scroll re-triggered on every
+  // chunk never catches up. (The button uses smooth, because that is one
+  // deliberate jump rather than one per token.)
   useEffect(() => {
+    if (!pinnedRef.current) return;
+
     bottomRef.current?.scrollIntoView({ behavior: "instant", block: "end" });
   }, [messages, reply]);
 
@@ -209,6 +295,12 @@ export function AiChatThread({
     // staged at the moment the turn is written, so sending mid-upload would
     // attach some of the chosen files and silently leave the rest behind.
     if (!content || isStreaming || isUploading) return;
+
+    // Asking a question is a decision to watch the answer, so it re-pins
+    // whatever the view was doing. Without this, somebody who had scrolled up
+    // to check something, then typed, would send a message and watch nothing
+    // happen - their own turn would appear below the fold.
+    setPinned(true);
 
     // Optimistic user turn. The id is local and is replaced by the server's
     // on the refresh below; it only has to be unique within this render.
@@ -380,7 +472,13 @@ export function AiChatThread({
           that holds the layout in. 4xl over 3xl because a bordered panel eats
           the visual breathing room the old bare page had, not because wider
           reads better. */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* The button is positioned against THIS wrapper rather than against the
+          scrolling element inside it. An absolute child of a scroll container
+          is positioned against its CONTENT, so it would sit at a fixed point
+          in the transcript and scroll away with the text - which is the one
+          place a "jump to the bottom" control must never be. */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-4 py-6">
         {messages.length === 0 && !isStreaming ? (
           // The greeting on an empty thread, and the place the full terms of
@@ -466,6 +564,41 @@ export function AiChatThread({
 
           <div ref={bottomRef} />
         </div>
+      </div>
+
+        {/* ---------------------------------------------------------------
+            JUMP TO THE LATEST.
+
+            Shown only when the view is away from the bottom, because at the
+            bottom it would be a button that does nothing - and a permanent
+            one floating over the last line of every reply is worse than the
+            problem it solves.
+
+            It says "Latest" rather than carrying an unread count: the thread
+            is one reply arriving, not a feed of other people's messages, so
+            there is nothing to count that somebody has not already seen begin.
+            --------------------------------------------------------------- */}
+        {!isPinned && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+            <button
+              type="button"
+              onClick={jumpToBottom}
+              // The visible word is inside the spoken name, which is what WCAG
+              // 2.5.3 asks for - somebody using voice control says "click
+              // latest" and it works.
+              aria-label="Jump to latest"
+              className={cn(
+                "pointer-events-auto flex items-center gap-1.5 rounded-full py-1.5 pl-3 pr-3.5",
+                "border border-border bg-background/95 text-xs font-medium text-foreground shadow-md backdrop-blur",
+                "transition-colors hover:bg-accent hover:text-accent-foreground",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              )}
+            >
+              <ArrowDown size={14} aria-hidden="true" />
+              Latest
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Composer. Doubles as the drop zone, so a file can be dragged

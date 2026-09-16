@@ -43,9 +43,12 @@ import { envServer } from "@/lib/env-server";
 // the container legible when something has to be traced by hand, and means
 // a future per-person purge has something to work from - the transcription
 // rows themselves are gone by the time de-identification has finished.
-export function mediaStorageKey(userId: string, transcriptionId: string): string {
-  return `transcription/${userId}/${transcriptionId}`;
-}
+//
+// The rules themselves live in media-keys.ts, which is pure: this module
+// imports the Azure SDK at load, so anything a client component can reach
+// must not import it. Re-exported because every caller of this file
+// reasonably expects to find them here.
+export { mediaStorageKey, isReplacementMediaKey, nextMediaStorageKey } from "./media-keys";
 
 export function isMediaStorageConfigured(): boolean {
   return Boolean(envServer.AZURE_STORAGE_CONNECTION_STRING);
@@ -209,8 +212,22 @@ function sasUrlFor(key: string, permissions: BlobSASPermissions, minutes: number
 // Write-only, one blob, one hour. The browser never receives a credential
 // that can read anything - not this file, and not any other.
 // -------------------------------------------------------------------
-export async function createUploadUrl(key: string): Promise<string> {
-  return sasUrlFor(key, BlobSASPermissions.parse("cw"), UPLOAD_SAS_MINUTES);
+export const UPLOAD_SAS_LIFETIME_MS = UPLOAD_SAS_MINUTES * 60 * 1000;
+
+/**
+ * A write-only URL for one blob, and WHEN IT STOPS WORKING.
+ *
+ * The expiry is returned rather than assumed, because the browser is the
+ * only party that knows how far through a transfer it is and it cannot
+ * guess a constant held on the server. An upload that outlives the signed
+ * window is not a rare case - an hour is comfortably less than a big
+ * recording takes on a client site's broadband.
+ */
+export async function createUploadUrl(key: string): Promise<{ url: string; expiresAt: Date }> {
+  return {
+    url: await sasUrlFor(key, BlobSASPermissions.parse("cw"), UPLOAD_SAS_MINUTES),
+    expiresAt: new Date(Date.now() + UPLOAD_SAS_LIFETIME_MS),
+  };
 }
 
 // -------------------------------------------------------------------
@@ -244,6 +261,70 @@ export async function getMediaInfo(key: string): Promise<{ exists: boolean; byte
   const properties = await blob.getProperties();
 
   return { exists: true, byteSize: properties.contentLength ?? null };
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
+// READ A SLICE OF A RECORDING, FOR DIAGNOSIS
+// ===================================================================
+//
+// Not a download. When a transcription fails, the one thing nobody can see
+// is what was actually STORED - the row records a media type derived from a
+// filename, and Azure reports that the bytes were invalid without saying
+// which part of them. This reads enough of the file to answer that from the
+// bytes themselves.
+//
+// RANGED, AND SMALL. A meeting is hundreds of megabytes and this runs on a
+// failing request; pulling the whole thing into the instance to look at its
+// header would be a far worse fault than the one being diagnosed. Container
+// headers live at the very start, so a head of a few hundred kilobytes
+// answers almost everything.
+//
+// A TAIL IS SOMETIMES NEEDED TOO. An MP4 that was not written for streaming
+// keeps its moov box at the END, so duration and codec are not in the head
+// at all - which is why this takes an offset rather than only a length.
+//
+// Null rather than throwing when the blob is gone, because every caller is
+// already handling a failure and a diagnostic that throws turns a bad
+// outcome into a crash.
+// -------------------------------------------------------------------
+export async function readMediaRange(
+  key: string,
+  offset: number,
+  count: number,
+  // Passed by a caller that has already asked. Every metadata round trip
+  // here sits on a request somebody is waiting on, and the size is read
+  // three times over between the size check, the probe and this - for one
+  // number that cannot have changed in between.
+  knownSize?: number,
+): Promise<Uint8Array | null> {
+  const container = await getContainer();
+  const blob = container.getBlockBlobClient(key);
+
+  // Clamped to what is there. Asking past the end of a blob is an error
+  // rather than a short read, and a recording shorter than the window is
+  // exactly the damaged case worth looking at.
+  const size = knownSize ?? (await readBlobSize(blob));
+
+  if (size === null) return null;
+
+  if (size === 0) return new Uint8Array(0);
+
+  const start = Math.max(0, Math.min(offset, size - 1));
+  const length = Math.max(0, Math.min(count, size - start));
+
+  if (length === 0) return new Uint8Array(0);
+
+  const buffer = await blob.downloadToBuffer(start, length);
+
+  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+}
+
+/** The blob's length, or null when there is no blob. */
+async function readBlobSize(blob: { exists: () => Promise<boolean>; getProperties: () => Promise<{ contentLength?: number }> }): Promise<number | null> {
+  if (!(await blob.exists())) return null;
+
+  return (await blob.getProperties()).contentLength ?? 0;
 }
 
 // -------------------------------------------------------------------

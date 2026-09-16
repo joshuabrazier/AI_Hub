@@ -14,14 +14,18 @@ import { FormTextareaField } from "@/components/form/form-textarea-field";
 import { useFormDialogSubmit } from "@/components/form/use-form-dialog-submit";
 import { Button } from "@/components/ui/button";
 import {
+  PROJECT_KINDS,
+  PROJECT_KIND_HELP,
   PROJECT_STATUSES,
   PROJECT_STATUS_LABELS,
+  type ProjectKind,
   type ProjectStatus,
 } from "@/lib/data/kysely-database-types";
 
 import { updateProjectAction } from "../delivery-setup.actions";
 import {
   DESCRIPTION_MAX_CHARS,
+  PROJECT_KIND_OPTIONS,
   PROJECT_TITLE_MAX_CHARS,
   type UpdateProjectRequestDTO,
 } from "../delivery.types";
@@ -66,6 +70,7 @@ const ProjectEditFormSchema = z.object({
   description: z.string().trim().max(DESCRIPTION_MAX_CHARS),
   isBillable: z.boolean(),
   status: z.enum(PROJECT_STATUSES),
+  kind: z.enum(PROJECT_KINDS),
 });
 
 type ProjectEditFormValues = z.infer<typeof ProjectEditFormSchema>;
@@ -76,6 +81,7 @@ export type EditableProject = {
   description: string | null;
   isBillable: boolean;
   status: ProjectStatus;
+  kind: ProjectKind;
 };
 
 const toFormValues = (project: EditableProject): ProjectEditFormValues => ({
@@ -86,6 +92,7 @@ const toFormValues = (project: EditableProject): ProjectEditFormValues => ({
   description: project.description ?? "",
   isBillable: project.isBillable,
   status: project.status,
+  kind: project.kind,
 });
 
 // Everything but the soft delete, plus `archived` itself when that is where
@@ -154,6 +161,7 @@ export function SetupProjectEditDialog({ project }: { project: EditableProject }
     if (values.isBillable !== initial.isBillable) patch.isBillable = values.isBillable;
 
     if (values.status !== initial.status) patch.status = values.status;
+    if (values.kind !== initial.kind) patch.kind = values.kind;
 
     return submit(values, () => updateProjectAction(patch), "Project updated");
   };
@@ -204,6 +212,19 @@ export function SetupProjectEditDialog({ project }: { project: EditableProject }
               ? "Choosing anything else brings this project back."
               : "Archiving is separate, because it takes the project out of every list."
           }
+        />
+
+        {/* NOT A DESTRUCTIVE CHANGE, which is why it sits here with the
+            ordinary fields and has no confirmation on it. Flipping a project
+            to ongoing changes how it is DRAWN - no task, phase or logged hour
+            is touched - and flipping it back restores the old screens
+            exactly. The audit line names who did it either way. */}
+        <FormSelectField
+          control={form.control}
+          name="kind"
+          label="Kind"
+          options={PROJECT_KIND_OPTIONS}
+          description={PROJECT_KIND_HELP}
         />
 
         <FormSwitchField

@@ -412,6 +412,7 @@ export function BoardWorkspace({
                   onDeleteTask={setDeletingTask}
                   onAssignTask={assignTask}
                   members={members}
+                  defaultColumn={optimisticBoard.defaultColumn}
                   onMoveTask={moveTask}
                   onAddTask={(phaseId, boardColumn) => setAddingTo({ phaseId, boardColumn })}
                   onRenamePhase={(target) => setPhaseDialog({ phase: target })}

@@ -98,13 +98,103 @@ export const MODEL_FIRST_EVENT_ATTEMPTS = 2;
 /** The worst case, which a covering phase budget must exceed. */
 export const MODEL_FIRST_EVENT_WORST_CASE_MS = MODEL_FIRST_EVENT_MS * MODEL_FIRST_EVENT_ATTEMPTS;
 
+// ===================================================================
+// DID IT REACH BEDROCK AT ALL? THE TRACE COULD NOT SAY, AND NOW IT CAN.
+//
+// This deadline covers `await open(signal)` as well as the iteration after
+// it, because both are ways for an attempt to produce nothing. That is the
+// right POLICY - the reader is waiting either way - and it made two
+// completely different failures indistinguishable in the log:
+//
+//   NEVER OPENED     no response headers ever came back, so this side never
+//                    got an acknowledgement. The likeliest reading is that
+//                    the request never left the host: a connection queued
+//                    behind an exhausted pool has no socket, so no timeout in
+//                    the SDK can see it, and Azure's outbound SNAT has the
+//                    same shape. Look at our networking first.
+//
+//   OPENED, SILENT   headers came back, so Bedrock accepted the request and
+//                    began a response, and then no event ever arrived. The
+//                    model WAS asked. This is the one that can cost money
+//                    and the one AWS can be asked about.
+//
+// The remedies are opposite - one is our networking, the other is theirs -
+// and the old message asserted the second ("The model accepted the request
+// but sent nothing") without being able to know it. A production silence
+// could not be attributed without reading CloudWatch by hand.
+//
+// -------------------------------------------------------------------
+// "NEVER OPENED" IS NOT THE SAME AS "NEVER ASKED", and the message must not
+// say that it is.
+//
+// `send()` settling on the response headers is a sound one-way signal: it
+// CANNOT settle for a request Bedrock never received, so `openedAfterMs`
+// being a number does prove the model was asked. The converse does not
+// follow. `send()` wraps the SDK's whole retry ladder, so it is also
+// unsettled while the SDK is sleeping between attempts of its own - and an
+// attempt that came back 429 or 500 reached Bedrock. Headers can be lost on
+// the way back, too, for a request that arrived.
+//
+// So "no headers" means "unacknowledged", which is a strong hint and not a
+// billing statement. Saying "nothing was billed" would be an assertion this
+// code is not in a position to make, and the whole point of the split is to
+// stop asserting things it cannot know.
+// ===================================================================
+
+/** What one abandoned attempt actually did, measured rather than assumed. */
+export type SilentAttempt = {
+  /** 1-based. */
+  attempt: number;
+  /**
+   * Milliseconds from the attempt starting to the response headers arriving,
+   * or NULL when they never did.
+   *
+   * Null is the whole point: nothing came back to acknowledge the request, so
+   * the silence is most likely on this side of the connection. It is evidence
+   * rather than proof - see the block above on why "unacknowledged" is not
+   * the same as "never asked".
+   */
+  openedAfterMs: number | null;
+  /** How long the attempt ran before it was abandoned. */
+  elapsedMs: number;
+};
+
 export class ModelSilentError extends Error {
-  constructor(attempts: number, perAttemptMs: number) {
+  /** Every abandoned attempt, in order, for a caller that records traces. */
+  readonly attempts: SilentAttempt[];
+
+  /**
+   * True when at least one attempt got response headers back.
+   *
+   * The single fact worth knowing first, and it is only sound in one
+   * direction: true PROVES the model was asked and said nothing, which is a
+   * question for AWS. False means nothing acknowledged the request, which
+   * points at our networking without ruling out an attempt that reached
+   * Bedrock inside the SDK's own retry ladder.
+   */
+  readonly reachedModel: boolean;
+
+  constructor(attempts: SilentAttempt[], perAttemptMs: number) {
+    const reached = attempts.some((entry) => entry.openedAfterMs !== null);
+    const count = attempts.length;
+    const times = count === 1 ? "once" : `${count} times in a row`;
+    const seconds = Math.round(perAttemptMs / 1000);
+
     super(
-      `The model accepted the request but sent nothing, ${attempts === 1 ? "once" : `${attempts} times`} ` +
-        `in a row, ${Math.round(perAttemptMs / 1000)}s apart.`,
+      reached
+        ? `Bedrock accepted the request and then sent nothing for ${seconds}s, ${times}. ` +
+          `Response headers came back after ${attempts
+            .map((entry) => (entry.openedAfterMs === null ? "never" : `${entry.openedAfterMs}ms`))
+            .join(" then ")}, so the model was asked and did not answer.`
+        : `Nothing acknowledged the request: ${times}, ${seconds}s each, no response headers ever ` +
+          `came back. That points at the connection pool and outbound networking rather than at ` +
+          `the model - though the SDK may also have been retrying an attempt of its own, which ` +
+          `would have reached Bedrock.`,
     );
+
     this.name = "ModelSilentError";
+    this.attempts = attempts;
+    this.reachedModel = reached;
   }
 }
 
@@ -113,8 +203,13 @@ export type ModelStreamOptions = {
   signal?: AbortSignal;
   firstEventMs?: number;
   attempts?: number;
-  /** Told when an attempt is abandoned, so the caller can record it. */
-  onSilentAttempt?: (attempt: number) => void;
+  /**
+   * Told when an attempt is abandoned, so the caller can record it.
+   *
+   * Given the whole measurement rather than just the attempt number, so a
+   * trace can say which side the silence was on without re-deriving it.
+   */
+  onSilentAttempt?: (detail: SilentAttempt) => void;
 };
 
 /**
@@ -130,6 +225,11 @@ export async function* streamModelEvents<TEvent>(
 ): AsyncGenerator<TEvent, void, undefined> {
   const firstEventMs = options.firstEventMs ?? MODEL_FIRST_EVENT_MS;
   const attempts = options.attempts ?? MODEL_FIRST_EVENT_ATTEMPTS;
+
+  // Every abandoned attempt, so the error can describe the whole sequence
+  // rather than only the last one - "never opened, then opened after 800ms
+  // and stayed silent" is a different story from either on its own.
+  const abandoned: SilentAttempt[] = [];
 
   for (let attempt = 1; ; attempt++) {
     // Its own controller rather than AbortSignal.timeout, because this
@@ -152,8 +252,20 @@ export async function* streamModelEvents<TEvent>(
 
     let sawEvent = false;
 
+    // Measured, not inferred. `startedAt` is per ATTEMPT rather than per call
+    // so a second attempt's timings are its own; `openedAt` stays null until
+    // the response headers arrive, which is the one fact that separates "the
+    // model said nothing" from "the model was never asked".
+    const startedAt = Date.now();
+    let openedAt: number | null = null;
+
     try {
       const stream = await open(signal);
+
+      // Set BEFORE the empty check below, because a response that came back
+      // without a stream still reached Bedrock - that is a malformed answer,
+      // not an unreachable one, and the two must not be confused.
+      openedAt = Date.now();
 
       if (!stream) throw new Error("The model returned no stream");
 
@@ -185,9 +297,17 @@ export async function* streamModelEvents<TEvent>(
       // and means something. Only our own silence deadline is retried.
       if (!deadlineFired) throw error;
 
-      if (attempt >= attempts) throw new ModelSilentError(attempts, firstEventMs);
+      const detail: SilentAttempt = {
+        attempt,
+        openedAfterMs: openedAt === null ? null : openedAt - startedAt,
+        elapsedMs: Date.now() - startedAt,
+      };
 
-      options.onSilentAttempt?.(attempt);
+      abandoned.push(detail);
+
+      if (attempt >= attempts) throw new ModelSilentError(abandoned, firstEventMs);
+
+      options.onSilentAttempt?.(detail);
     } finally {
       // However this attempt ended. A timer left armed holds the event loop
       // open for the rest of its window.

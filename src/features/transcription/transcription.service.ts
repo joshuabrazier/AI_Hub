@@ -75,6 +75,8 @@ import {
   teamsSegmentsToText,
   teamsSourceRef,
 } from "@/lib/graph/teams-transcript";
+import { type AudioProbe, describeAudioProbe, fatalAudioProblem } from "@/lib/media/audio-probe";
+import { probeStoredMedia } from "@/lib/media/stored-media-probe";
 import { isPushConfigured, sendPushToUser } from "@/lib/push/push-notifications";
 import { ROUTES, transcriptionHomeForRole } from "@/lib/routes";
 import { GRAPH_OUTCOMES, graphInnerErrorOf, graphOutcomeOf } from "@/lib/sharepoint/graph-client";
@@ -87,13 +89,17 @@ import {
   isMediaStorageConfigured,
   mediaBlobUrl,
   mediaStorageKey,
+  nextMediaStorageKey,
   openMediaStream,
 } from "@/lib/storage/media-storage";
 import {
   deleteTranscriptionJob,
+  describeFailureReport,
+  getTranscriptionFailureDetail,
   getTranscriptionResult,
   getTranscriptionStatus,
   isSpeechConfigured,
+  SpeechApiError,
   startTranscription,
   type SpeechJobStatus,
 } from "@/lib/speech/speech-client";
@@ -102,9 +108,15 @@ import { mapDBTranscriptionToDetailDTO, mapDBTranscriptionToSummaryDTO } from ".
 import { getTranscriptionFilingsForUserRepo } from "@/lib/data/repositories/transcription-filing.repository";
 
 import { proposeTranscriptionFiling } from "./filing.service";
+import {
+  classifyTranscriptionFailure,
+  TRANSCRIPTION_FAILURE_KINDS,
+} from "./transcription-failure";
+import { logTranscriptionFailure, type TranscriptionFailureStage } from "./transcription-logging";
 import { revalidateTranscriptionViews } from "./transcription.revalidate";
 import {
   MAX_MEDIA_BYTES,
+  MAX_MEDIA_MINUTES,
   MAX_SUMMARY_ATTEMPTS,
   MAX_SUMMARY_INPUT_CHARS,
   SUMMARY_LEASE_MS,
@@ -114,7 +126,9 @@ import {
   TRANSCRIPTION_TIMEOUT_HOURS,
   extensionForMediaType,
   formatTimestamp,
+  SUPPORTED_MEDIA_EXTENSIONS,
   mediaTypeForFileName,
+  type ReplaceTranscriptionMediaRequestDTO,
   speakerLabel,
   type CreateTranscriptionRequestDTO,
   type ImportTeamsMeetingRequestDTO,
@@ -167,13 +181,38 @@ const UNREACHABLE_STORAGE_MESSAGE =
 
 // Bounds an error before it goes in the column. Both services this feature
 // talks to can return a great deal of text, and the message is shown to the
-// person who was waiting - it needs to be a sentence, not a payload.
-const MAX_ERROR_CHARS = 300;
+// person who was waiting - it needs to be a paragraph, not a payload.
+//
+// RAISED FROM 300 when failures started carrying what the file actually is
+// alongside what the service said about it. Three hundred characters was
+// enough for "InvalidData: the audio format is invalid", which is precisely
+// the message that helped nobody; a useful failure now reads more like a
+// short paragraph, and truncating it mid-sentence would cut off the half
+// that says what to do.
+// -------------------------------------------------------------------
+const MAX_ERROR_CHARS = 900;
 
 function boundError(error: unknown): string {
   const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 
   return message.length > MAX_ERROR_CHARS ? `${message.slice(0, MAX_ERROR_CHARS)}...` : message;
+}
+
+// -------------------------------------------------------------------
+// Join what several sources said into one readable paragraph.
+//
+// Each source writes in its own style - Azure ends some messages with a
+// full stop and some without - so this adds the punctuation rather than
+// trusting it, and drops the ones that had nothing to say. The alternative
+// was joining with " - ", which produced sentences that ran together and
+// read as one garbled message rather than three findings.
+// -------------------------------------------------------------------
+function joinSentences(parts: (string | null | undefined)[]): string {
+  return parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part && part.length > 0))
+    .map((part) => (/[.!?]$/.test(part) ? part : `${part}.`))
+    .join(" ");
 }
 
 // -------------------------------------------------------------------
@@ -571,21 +610,106 @@ async function advanceTranscription(
 ): Promise<Transcription> {
   const { AWAITING_MEDIA, QUEUED, TRANSCRIBING, SUMMARISING, COMPLETED, FAILED } = TRANSCRIPTION_STATUSES;
 
-  // Nothing to advance. `awaiting_media` is the browser's turn, not ours.
-  if (transcription.status === AWAITING_MEDIA || transcription.status === COMPLETED || transcription.status === FAILED) {
+  // `awaiting_media` is the browser's turn; a row stuck there is handled
+  // below, once failWith exists to end one.
+  if (transcription.status === COMPLETED || transcription.status === FAILED) {
     return transcription;
   }
 
-  const failWith = async (message: string): Promise<Transcription> => {
-    const updated = await updateTranscriptionForUserRepo(transcription.id, userId, {
-      status: FAILED,
-      error: message.slice(0, MAX_ERROR_CHARS),
+  // -------------------------------------------------------------------
+  // Give up on this row, and say why in both places it needs saying.
+  //
+  // THE SCREEN AND THE LOG GET DIFFERENT THINGS FROM THE SAME CALL, because
+  // they are read by different people asking different questions. The
+  // person waiting wants a sentence about their recording; whoever is
+  // working out why this keeps happening wants one greppable line with the
+  // row, the stage, the declared type and what the bytes actually were.
+  // Producing them apart is how they drifted, and how a failure ended up
+  // being visible on screen and invisible in the log.
+  //
+  // `stage` is not optional. It is the field every later question filters
+  // on first, and a default would quietly collapse the distinction between
+  // a job that failed and a summary that did.
+  //
+  // IT IS A CLAIMED WRITE, NOT AN UNCONDITIONAL ONE, and that is the part
+  // that protects a transcript. Two sweeps run over the same row - a page
+  // load and a poll, or two open tabs - and a slow one can arrive with bad
+  // news about a job the fast one has already collected the result of. An
+  // unguarded write then stamps FAILED over a row that holds a finished
+  // transcript, and the person is shown an error for a meeting that
+  // transcribed perfectly. The status predicate makes that impossible:
+  // only a row still in flight can be failed.
+  // -------------------------------------------------------------------
+  const failWith = async (
+    message: string,
+    context: {
+      stage: TranscriptionFailureStage;
+      probe?: AudioProbe | null;
+      extra?: Record<string, string | number | boolean | null | undefined>;
+    } = { stage: "job" },
+  ): Promise<Transcription> => {
+    logTranscriptionFailure({
+      stage: context.stage,
+      transcription,
+      reason: message,
+      probe: context.probe,
+      extra: context.extra,
     });
 
-    await finishTranscription(updated ?? transcription, userId);
+    const updated = await claimTranscriptionTransitionRepo(
+      transcription.id,
+      userId,
+      // Every status from which failing is still the truth. COMPLETED is
+      // deliberately absent, and so is FAILED - re-failing a failed row
+      // would replace its original reason with a later, vaguer one.
+      [AWAITING_MEDIA, QUEUED, TRANSCRIBING, SUMMARISING],
+      {
+        status: FAILED,
+        error: message.slice(0, MAX_ERROR_CHARS),
+      },
+    );
 
-    return updated ?? transcription;
+    // The claim was refused, which means another sweep moved this row on
+    // while this one was deciding. That row is the newer truth and is
+    // returned untouched.
+    if (!updated) {
+      const current = await getTranscriptionForUserRepo(transcription.id, userId);
+
+      return current ?? transcription;
+    }
+
+    await finishTranscription(updated, userId);
+
+    return updated;
   };
+
+  // -------------------------------------------------------------------
+  // AN UPLOAD THAT NEVER ARRIVED.
+  //
+  // `awaiting_media` is the browser's turn, so this is normally not ours to
+  // advance - but "normally" turned out to mean "forever": a tab closed
+  // mid-upload leaves a row in this state that no sweep, no timeout and no
+  // retry path could ever resolve. It sat in the list reading "Uploading"
+  // indefinitely, and because the blob was never committed there was
+  // nothing behind it either.
+  //
+  // Given the same ceiling as a job that hangs. The wording is the point:
+  // it says the upload did not finish rather than blaming the recording, so
+  // whoever finds it knows to send the file again rather than concluding
+  // the file is bad.
+  // -------------------------------------------------------------------
+  if (transcription.status === AWAITING_MEDIA) {
+    const waitingHours = (Date.now() - transcription.createdAt.getTime()) / (60 * 60 * 1000);
+
+    if (waitingHours > TRANSCRIPTION_TIMEOUT_HOURS) {
+      return failWith(
+        `The upload never finished, and this has been waiting ${TRANSCRIPTION_TIMEOUT_HOURS} hours for it. If the recording is still on the device that made it, it can be sent again from the recording screen.`,
+        { stage: "start", extra: { neverUploaded: true } },
+      );
+    }
+
+    return transcription;
+  }
 
   // The transcript is already stored and only the summary is outstanding -
   // a summariser failure, or a tab closed between the two calls.
@@ -633,11 +757,29 @@ async function advanceTranscription(
       // Out of attempts. The row is completed WITHOUT a summary rather than
       // retried forever: the transcript is already stored, so this loses
       // nothing but the prose, and the screen offers to write it by hand.
+      // -------------------------------------------------------------
+      // KEEP WHY. This line used to overwrite the error column with a
+      // sentence saying only that the summary had not worked - destroying
+      // the last attempt's actual reason, which was the one record anywhere
+      // of whether three attempts had hit a timeout, a throttle or a
+      // misconfiguration. Three identical unexplained failures look like
+      // flakiness; three timeouts look like a budget that is too tight.
+      // -------------------------------------------------------------
       const givenUp = await claimTranscriptionTransitionRepo(transcription.id, userId, [SUMMARISING], {
         status: COMPLETED,
-        error: "The summary could not be generated. The transcript is unaffected.",
+        error: joinSentences([
+          `The summary could not be generated after ${MAX_SUMMARY_ATTEMPTS} attempts. The transcript is unaffected`,
+          current.error ? `The last attempt reported: ${current.error}` : null,
+        ]).slice(0, MAX_ERROR_CHARS),
         completedAt: new Date(),
         summaryStartedAt: null,
+      });
+
+      logTranscriptionFailure({
+        stage: "summary",
+        transcription: current,
+        reason: current.error ?? "no reason recorded",
+        extra: { attempts: current.summaryAttempts, transcriptChars: current.transcript?.length },
       });
 
       if (givenUp) await finishTranscription(givenUp, userId);
@@ -672,7 +814,9 @@ async function advanceTranscription(
   if (!transcription.speechJobId) {
     // Queued with no job id means startTranscription did not get as far as
     // writing one. The file is still there, so this is retryable.
-    return failWith("This was never handed to the transcription service. Try again.");
+    return failWith("This was never handed to the transcription service. Try again.", {
+      stage: "start",
+    });
   }
 
   let job: SpeechJobStatus;
@@ -680,21 +824,178 @@ async function advanceTranscription(
   try {
     job = await getTranscriptionStatus(transcription.speechJobId);
   } catch (error) {
-    // A transient failure asking for the status must NOT fail the job - the
-    // work is still running on the service, and the next poll will ask
-    // again. Logged and left alone.
-    console.warn(`advanceTranscription: could not read the status of job ${transcription.speechJobId}`, error);
+    // -----------------------------------------------------------------
+    // NOT EVERY FAILURE TO ASK IS A REASON TO WAIT, and treating them alike
+    // was wrong in a way nobody could see.
+    //
+    // A 429 or a 503 means the service is busy: the work is still running
+    // there, the next poll will ask again, and failing the row would throw
+    // away a recording over something that fixes itself. That was the whole
+    // justification for swallowing these - and it was applied to all of
+    // them.
+    //
+    // A 401 or a 403 is a Speech key that has been rotated or a resource
+    // that has been locked down. It will answer identically on every poll
+    // for as long as anybody cares to wait, so swallowing it leaves the row
+    // saying "Transcribing" indefinitely, with nothing on the screen and
+    // nothing in the row to say why. An expired key looked exactly like a
+    // slow meeting, forever.
+    // -----------------------------------------------------------------
+    const speechError = error instanceof SpeechApiError ? error : null;
+
+    // -----------------------------------------------------------------
+    // A 404 IS NOT A REFUSAL. It means the job is no longer on the Speech
+    // service - which is the NORMAL end state, because this app deletes a
+    // job once its result is safely stored, and Azure clears them on its
+    // own retention besides. Treating it as terminal would fail a row for
+    // the crime of having already succeeded: a second tab polling a
+    // transcription the first tab has just completed hits exactly this.
+    //
+    // The row is re-read rather than assumed, because whatever moved it on
+    // is the newer truth.
+    // -----------------------------------------------------------------
+    if (speechError?.status === 404) {
+      const current = await getTranscriptionForUserRepo(transcription.id, userId);
+
+      if (current && current.status !== QUEUED && current.status !== TRANSCRIBING) return current;
+    }
+
+    if (speechError && !speechError.isTransient && speechError.status !== 404) {
+      return failWith(
+        joinSentences([
+          "The transcription service refused to say how this job is going, and it will keep refusing",
+          speechError.status === 401 || speechError.status === 403
+            ? "This is a credentials problem on the transcription service rather than anything wrong with your recording - an administrator needs to check the Speech key. Your recording is safe and can be downloaded"
+            : speechError.message,
+        ]),
+        { stage: "job", extra: { azureStatus: speechError.status, azureCode: speechError.code } },
+      );
+    }
+
+    // -----------------------------------------------------------------
+    // TRANSIENT IS NOT THE SAME AS FOREVER, and the early return below made
+    // them the same thing. Leaving the row alone is right for a 429 or a
+    // 503 - the work is still running on the service and the next poll will
+    // ask again - but the age check that ends a job nobody can reach lives
+    // further down this function, PAST this return. So a fault that never
+    // cleared was retried politely until the end of time, and the row said
+    // "Transcribing" for as long as anybody cared to look.
+    //
+    // The same ceiling applies here as to a job that is genuinely running:
+    // past it, this stops.
+    // -----------------------------------------------------------------
+    const unreachableFor = Date.now() - (transcription.updatedAt ?? transcription.createdAt).getTime();
+
+    if (unreachableFor > TRANSCRIPTION_TIMEOUT_HOURS * 60 * 60 * 1000) {
+      return failWith(
+        joinSentences([
+          `The transcription service could not be reached for ${TRANSCRIPTION_TIMEOUT_HOURS} hours, so this has been stopped`,
+          speechError?.message,
+          "The recording is still here, so you can try again",
+        ]),
+        {
+          stage: "timeout",
+          extra: { azureStatus: speechError?.status, unreachable: true },
+        },
+      );
+    }
+
+    // Transient, and not yet old enough to give up on. Left alone for the
+    // next poll, and logged with enough to see a pattern.
+    console.warn(
+      `[transcription] status poll failed id=${transcription.id} job=${transcription.speechJobId} ${speechError ? speechError.summary : "unrecognised"}`,
+      error,
+    );
 
     return transcription;
   }
 
   if (job.state === "Failed") {
-    await deleteTranscriptionJob(transcription.speechJobId);
+    // -----------------------------------------------------------------
+    // READ THE REPORT BEFORE GIVING UP, and do NOT delete the job.
+    //
+    // The job-level error is too coarse to act on: "InvalidData: The
+    // recordings URI contains invalid data" is returned when the blob could
+    // not be READ, when the bytes were not audio, and when the audio could
+    // not be DECODED. Those need an Azure role change, a re-upload and a
+    // re-encode respectively - and collapsed into one sentence, every
+    // failure reads as "transcription is broken again".
+    //
+    // Azure writes the per-file reason into a TranscriptionReport alongside
+    // the transcript. This used to delete the job on the same line it
+    // failed, which destroyed that report before anything read it - so the
+    // one place the real reason was written down was removed at exactly the
+    // moment somebody needed it.
+    //
+    // The job is now LEFT for Azure's own retention to clear. It holds no
+    // audio, only the outcome.
+    // -----------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // ===================================================================
+    // SAY WHAT WENT WRONG, NOT THAT SOMETHING DID
+    // ===================================================================
+    //
+    // Three sources, and each answers something the others cannot:
+    //
+    //   the JOB error       Azure's headline. "InvalidData" - accurate,
+    //                       and returned for at least three unrelated
+    //                       faults, so on its own it is close to useless.
+    //   the REPORT          Azure's own per-file log, which distinguishes
+    //                       a blob it could not fetch from bytes it could
+    //                       not decode.
+    //   the BYTES           what we actually stored. Neither of Azure's
+    //                       answers says whether the recording is a video
+    //                       with no audio in it, two takes joined
+    //                       together, or forty megabytes of nothing - and
+    //                       that is nearly always the real question.
+    //
+    // The third is why the probe exists. The row records a media type
+    // DERIVED FROM A FILENAME, which is a claim, and this feature has
+    // already been misled by one: a WAV still named .m4a was handed back to
+    // Azure as the very thing it had just refused. Reading the header
+    // settles it.
+    //
+    // ALL THREE ARE BEST EFFORT and the order is deliberate: Azure's own
+    // words first, because they are what an administrator will search for,
+    // then what the file is, because that is what the person waiting can
+    // act on.
+    //
+    // The job is LEFT for Azure's own retention to clear - it holds no
+    // audio, only the outcome. It used to be deleted on the same line that
+    // failed the row, which destroyed the report before anything read it.
+    // -----------------------------------------------------------------
+    const report = await getTranscriptionFailureDetail(transcription.speechJobId);
 
-    // The file stays. This is the case the format warning is about - an MP4
-    // the service would not demux - and the person may want to convert it
-    // and try again rather than find the meeting gone.
-    return failWith(job.error ?? "The transcription service could not process this recording.");
+    const probe = transcription.storageKey ? await probeStoredMedia(transcription.storageKey) : null;
+
+    // The blob URL in the report names the storage account and container,
+    // so it goes to the log and never to the screen.
+    const sources = (report?.failures ?? [])
+      .map((failure) => failure.source)
+      .filter((source): source is string => Boolean(source));
+
+    // The file stays. The person may want to convert it and try again
+    // rather than find the meeting gone.
+    return failWith(
+      joinSentences([
+        job.error
+          ? [job.error.code, job.error.message].filter(Boolean).join(": ")
+          : "The transcription service could not process this recording.",
+        describeFailureReport(report),
+        probe ? describeAudioProbe(probe) : null,
+      ]),
+      {
+        stage: "job",
+        probe,
+        extra: {
+          azureCode: job.error?.code,
+          reportFailed: report?.failedCount,
+          reportSucceeded: report?.successCount,
+          errorKind: report?.failures[0]?.errorKind,
+          source: sources[0],
+        },
+      },
+    );
   }
 
   if (job.state !== "Succeeded") {
@@ -710,13 +1011,40 @@ async function advanceTranscription(
     // would be marked failed on the first sweep - even though Azure had
     // finished it successfully minutes after it started, and the transcript
     // was sitting there waiting to be collected.
-    const ageHours = (Date.now() - transcription.createdAt.getTime()) / (60 * 60 * 1000);
+    // -----------------------------------------------------------------
+    // THE AGE OF THE JOB, NOT OF THE ROW, and the difference loses meetings.
+    //
+    // createdAt is when the RECORDING was made. A meeting recorded on Friday
+    // and retried on Monday starts a brand new Speech job with a row that is
+    // three days old - so the very first poll of that new job aged it out
+    // and failed it instantly, and every retry after that did the same. The
+    // recording was fine and unreachable.
+    //
+    // updatedAt is stamped by every patch this service makes, including the
+    // one that stores the new speechJobId on a retry, so it tracks the job
+    // rather than the recording. It also advances on each status transition,
+    // which is the right direction: a job that is visibly progressing is not
+    // a job that has hung.
+    // -----------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // AZURE'S OWN TIMESTAMP, WHERE IT GAVE ONE. lastActionDateTime is
+    // documented as "when the current status was entered", which is the
+    // exact fact this check wants and the exact fact the two heuristics
+    // below only approximate. updatedAt tracks the job better than
+    // createdAt does - it is stamped when a retry stores a new job id - but
+    // it also moves on every status transition, so it drifts; and createdAt
+    // is when the RECORDING was made, which on a Monday retry of a Friday
+    // meeting is three days before the job existed.
+    // -----------------------------------------------------------------
+    const jobStartedAt = job.lastActionAt ?? transcription.updatedAt ?? transcription.createdAt;
+    const ageHours = (Date.now() - jobStartedAt.getTime()) / (60 * 60 * 1000);
 
     if (ageHours > TRANSCRIPTION_TIMEOUT_HOURS) {
       await deleteTranscriptionJob(transcription.speechJobId);
 
       return failWith(
         `This did not finish within ${TRANSCRIPTION_TIMEOUT_HOURS} hours and has been stopped. The recording is still here, so you can try again.`,
+        { stage: "timeout" },
       );
     }
 
@@ -739,16 +1067,49 @@ async function advanceTranscription(
   try {
     result = await getTranscriptionResult(transcription.speechJobId);
   } catch (error) {
+    // -----------------------------------------------------------------
+    // THE SAME FAULT, TREATED OPPOSITELY DEPENDING ON WHICH CALL MET IT.
+    // A 429 asking for the STATUS was tolerated and retried; the identical
+    // 429 asking for the RESULT failed the row outright - and this one is
+    // worse, because the transcript exists on the service and the row is
+    // marked failed anyway. The next poll would have collected it.
+    // -----------------------------------------------------------------
+    const speechError = error instanceof SpeechApiError ? error : null;
+
+    if (speechError?.isTransient) {
+      console.warn(
+        `[transcription] result read failed, will retry id=${transcription.id} job=${transcription.speechJobId} ${speechError.summary}`,
+      );
+
+      return transcription;
+    }
+
     console.error(`advanceTranscription: could not read the result of job ${transcription.speechJobId}`, error);
 
-    return failWith(boundError(error));
+    return failWith(boundError(error), { stage: "result" });
   }
 
   if (result.text.trim().length === 0) {
     await deleteTranscriptionJob(transcription.speechJobId);
 
+    // -----------------------------------------------------------------
+    // THE SERVICE SUCCEEDED AND HEARD NOTHING, which is the one failure
+    // that is not about the file being unreadable - and is therefore the
+    // one where "check your microphone" is sometimes the wrong advice.
+    //
+    // The bytes often say which. A video track with no audio in it, or a
+    // recording lasting two seconds, explains an empty transcript
+    // completely; a full hour of Opus does not, and points at the room or
+    // the language instead. Both are worth more than the same sentence.
+    // -----------------------------------------------------------------
+    const probe = transcription.storageKey ? await probeStoredMedia(transcription.storageKey) : null;
+
     return failWith(
-      "No speech was recognised in this recording. Check that the microphone was picking up the room, and that the language matches.",
+      joinSentences([
+        "No speech was recognised in this recording. Check that the microphone was picking up the room, and that the language matches.",
+        probe ? describeAudioProbe(probe) : null,
+      ]),
+      { stage: "result", probe },
     );
   }
 
@@ -1429,7 +1790,36 @@ export async function createTranscriptionService(
     const mediaType = mediaTypeForFileName(requestDTO.fileName);
 
     if (!mediaType) {
-      throw new DisplayErrorMessage("That is not a file type this can transcribe.");
+      // -----------------------------------------------------------------
+      // SAY WHICH EXTENSION, because this refusal has been hit on a .webm -
+      // the format the recorder itself produces and which is in the table
+      // right above. That can only mean the name arriving here is not the
+      // name anybody thinks it is, and the old message gave nobody a way to
+      // find out which.
+      //
+      // THE EXTENSION ONLY, never the whole filename. An uploaded file is
+      // named by the person who chose it and can carry a client's name or a
+      // matter number; the extension is the entire diagnostic and carries
+      // none of that. `source` travels with it because it separates the two
+      // paths that build a name - a recording is named by this app, an
+      // upload by whoever made the file - and that is the first fork any
+      // investigation takes.
+      //
+      // An empty extension prints as (none), which is the shape a name with
+      // no dot in it makes and is otherwise invisible in a log line.
+      // -----------------------------------------------------------------
+      const extension = requestDTO.fileName.toLowerCase().slice(
+        requestDTO.fileName.lastIndexOf("."),
+      );
+      const shown = requestDTO.fileName.includes(".") ? extension : "(none)";
+
+      console.warn(
+        `[transcription] refused an upload: extension=${shown} source=${requestDTO.source}`,
+      );
+
+      throw new DisplayErrorMessage(
+        `That is not a file type this can transcribe (${shown}). Recordings should be .webm, and uploads can be ${SUPPORTED_MEDIA_EXTENSIONS.slice(0, 4).join(", ")} and others.`,
+      );
     }
 
     const transcriptionId = generateId();
@@ -1459,13 +1849,72 @@ export async function createTranscriptionService(
 
     // Write-only, one blob, and it expires. See media-storage.ts for why
     // this feature signs a URL at all when chat attachments do not.
-    const uploadUrl = await createUploadUrl(storageKey);
+    const upload = await createUploadUrl(storageKey);
 
     revalidateTranscriptionViews();
 
-    return { transcriptionId, uploadUrl, mediaType };
+    return { transcriptionId, uploadUrl: upload.url, mediaType, expiresAt: upload.expiresAt };
   } catch (error) {
     throw handleError("createTranscriptionService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
+// A FRESH UPLOAD URL FOR AN UPLOAD ALREADY IN PROGRESS
+// ===================================================================
+//
+// The SAS is signed for an hour, and a long recording on a client site's
+// broadband can take longer than that. The upload then met a 403 part way
+// through - after twenty minutes of somebody's afternoon, on a meeting that
+// cannot be re-recorded - and nothing could tell that from a permissions
+// problem, so it was not even retried.
+//
+// RESUMING COSTS NOTHING, which is what makes this worth having rather than
+// merely possible. Blocks are STAGED: Azure holds them for seven days and
+// the blob does not exist until Put Block List commits them. So a refreshed
+// URL can carry on from the block it stopped at, and the blocks already
+// sent are still there waiting.
+//
+// IT GRANTS NOTHING NEW. The same key, derived from a row this caller is
+// proved to own, with the same write-only permission for the same hour -
+// so a refresh is the credential the caller already had, re-issued. The
+// only way to get one is to own a row that is still waiting for its media.
+// -------------------------------------------------------------------
+export async function refreshTranscriptionUploadUrlService(
+  requestDTO: TranscriptionIdRequestDTO,
+): Promise<TranscriptionUploadTicketDTO> {
+  try {
+    const user = await requireUser();
+
+    const transcription = await requireOwnedTranscription(requestDTO.transcriptionId, user.id);
+
+    if (!isMediaStorageConfigured()) {
+      throw new DisplayErrorMessage("Transcription storage is not configured on this environment.");
+    }
+
+    // ONLY A ROW STILL WAITING FOR ITS MEDIA. A queued or completed row has
+    // a file behind it that something is already working on, and handing
+    // out a write credential for that blob would let a second tab overwrite
+    // a transcript's own source.
+    if (transcription.status !== TRANSCRIPTION_STATUSES.AWAITING_MEDIA) {
+      throw new DisplayErrorMessage("That upload has already finished.");
+    }
+
+    if (!transcription.storageKey || !transcription.mediaType) {
+      throw new DisplayErrorMessage("That transcription has no upload to continue.");
+    }
+
+    const upload = await createUploadUrl(transcription.storageKey);
+
+    return {
+      transcriptionId: transcription.id,
+      uploadUrl: upload.url,
+      mediaType: transcription.mediaType,
+      expiresAt: upload.expiresAt,
+    };
+  } catch (error) {
+    throw handleError("refreshTranscriptionUploadUrlService", error);
   }
 }
 
@@ -1517,7 +1966,24 @@ export async function startTranscriptionService(
     const media = await getMediaInfo(transcription.storageKey);
 
     if (!media.exists || media.byteSize === null || media.byteSize === 0) {
-      throw new DisplayErrorMessage("The recording did not finish uploading. Try again.");
+      // -----------------------------------------------------------------
+      // WHY THE FILE IS MISSING DECIDES WHAT TO SAY. An over-size refusal
+      // DELETES the media - correctly, because nothing will ever transcribe
+      // it - and the retry then found no blob and reported an upload that
+      // had not finished. That is a sentence inviting somebody to press a
+      // button which removes a file that is already gone, forever, and it
+      // was the wrong diagnosis besides.
+      // -----------------------------------------------------------------
+      const previously = classifyTranscriptionFailure(transcription.error);
+
+      throw new DisplayErrorMessage(
+        previously === TRANSCRIPTION_FAILURE_KINDS.TOO_LARGE
+          ? joinSentences([
+              "This recording was too large for the transcription service, so it is no longer stored and cannot be tried again",
+              transcription.error,
+            ])
+          : "The recording did not finish uploading. Try again.",
+      );
     }
 
     if (media.byteSize > MAX_MEDIA_BYTES) {
@@ -1527,6 +1993,13 @@ export async function startTranscriptionService(
       // will ever transcribe it, and it would otherwise be the largest thing
       // in the container for the length of the retention window.
       await deleteMedia(transcription.storageKey);
+
+      logTranscriptionFailure({
+        stage: "start",
+        transcription,
+        reason: tooLarge,
+        extra: { actualBytes: media.byteSize, limitBytes: MAX_MEDIA_BYTES },
+      });
 
       // Recorded on the row as well as thrown, so the reason is still there
       // when they come back to the list rather than only in a toast they
@@ -1539,6 +2012,116 @@ export async function startTranscriptionService(
       revalidateTranscriptionViews();
 
       throw new DisplayErrorMessage(tooLarge);
+    }
+
+    // -----------------------------------------------------------------
+    // ===================================================================
+    // READ THE HEADER BEFORE PAYING ANYBODY TO READ THE FILE
+    // ===================================================================
+    //
+    // The bytes are in storage and a Speech job takes minutes, so the cheap
+    // question comes first: is this a thing that could ever transcribe? A
+    // video with no audio track, a file whose beginning was never written,
+    // or an empty container cannot, and finding that out from Azure costs a
+    // job, a wait, and a sentence that does not say which of them it was.
+    //
+    // THIS IS ALSO WHERE THE DECLARED TYPE IS CHECKED AGAINST REALITY. The
+    // row's media type was derived from a FILENAME, which is a claim; this
+    // reads what is actually there. The two disagreeing has already caused
+    // a real failure in this feature - a converted WAV still named .m4a was
+    // handed to Azure as the very thing it had just refused - so the
+    // mismatch is recorded rather than assumed away.
+    //
+    // IT ONLY REFUSES WHAT CANNOT WORK. The list is fatalAudioProblem's,
+    // shared with the browser check, and an unrecognised container is not
+    // on it: the probe knows six formats and Azure accepts more.
+    // -----------------------------------------------------------------
+    const probe = await probeStoredMedia(transcription.storageKey, media.byteSize);
+
+    const fatal = probe ? fatalAudioProblem(probe) : null;
+
+    if (probe && fatal) {
+      const message = joinSentences([fatal.detail, describeAudioProbe(probe)]);
+
+      logTranscriptionFailure({
+        stage: "start",
+        transcription,
+        reason: message,
+        probe,
+        extra: { refusedBefore: "speech-job" },
+      });
+
+      // The media stays. It is the person's recording, they may want to
+      // download it, and nothing here has proved it is worthless - only
+      // that this service will not transcribe it.
+      await updateTranscriptionForUserRepo(transcription.id, user.id, {
+        status: TRANSCRIPTION_STATUSES.FAILED,
+        error: message.slice(0, MAX_ERROR_CHARS),
+      });
+
+      revalidateTranscriptionViews();
+
+      throw new DisplayErrorMessage(message);
+    }
+
+    // -----------------------------------------------------------------
+    // THE LENGTH CEILING, WHICH IS SEPARATE FROM THE SIZE ONE AND WAS NOT
+    // CHECKED AT ALL. Diarization caps a file at 240 minutes and this app
+    // always asks for diarization, so a five hour workshop - well under a
+    // gigabyte at any sensible bitrate - was accepted, uploaded, queued,
+    // and then refused by Azure with a sentence about invalid audio.
+    //
+    // Only refused on a duration the FILE DECLARES. A container that does
+    // not carry one is let through: unknown is not long, and the whole
+    // point of reading the header is to stop guessing.
+    // -----------------------------------------------------------------
+    // NOT ON A GUESS. An MP3 carries no length, so its duration here is
+    // derived from the file size and one frame's bitrate - which is wrong
+    // for every variable-bitrate file, and most are. Refusing a recording
+    // outright is a decision that has to rest on a figure the file actually
+    // states; where it does not, the ceiling is left to Azure, which has
+    // decoded the audio and knows.
+    if (
+      probe?.durationSeconds &&
+      !probe.durationIsEstimated &&
+      probe.durationSeconds > MAX_MEDIA_MINUTES * 60
+    ) {
+      const tooLong = `That recording is ${Math.round(probe.durationSeconds / 60)} minutes long, and the transcription service accepts up to ${MAX_MEDIA_MINUTES} minutes in one file when it is separating speakers. Split it and upload the parts, or record longer meetings in sections.`;
+
+      logTranscriptionFailure({
+        stage: "start",
+        transcription,
+        reason: tooLong,
+        probe,
+        extra: { refusedBefore: "speech-job", limitMinutes: MAX_MEDIA_MINUTES },
+      });
+
+      // The media STAYS, unlike the size refusal - it is within the size
+      // limit, the person can download it, and splitting it is something
+      // they may want to do from the original.
+      await updateTranscriptionForUserRepo(transcription.id, user.id, {
+        status: TRANSCRIPTION_STATUSES.FAILED,
+        error: tooLong,
+      });
+
+      revalidateTranscriptionViews();
+
+      throw new DisplayErrorMessage(tooLong);
+    }
+
+    if (probe && probe.container && transcription.mediaType) {
+      const declared = transcription.mediaType;
+      const detected = probe.container.toLowerCase();
+
+      // Logged, never acted on. Azure sniffs the bytes rather than trusting
+      // a content type, so a mismatch is not itself a failure - but it is
+      // the first thing worth knowing when one happens, and it is invisible
+      // everywhere else.
+      if (!declared.toLowerCase().includes(detected)) {
+        console.warn(
+          `[transcription] type mismatch id=${transcription.id} declared=${declared} detected=${probe.container}`,
+        );
+      }
     }
 
     // A plain blob URL with no token on it. The Speech resource reads it
@@ -1558,6 +2141,14 @@ export async function startTranscriptionService(
         locale: envServer.AZURE_SPEECH_LOCALE,
       });
     } catch (error) {
+      logTranscriptionFailure({
+        stage: "start",
+        transcription,
+        reason: boundError(error),
+        probe,
+        extra: { locale: envServer.AZURE_SPEECH_LOCALE },
+      });
+
       await updateTranscriptionForUserRepo(transcription.id, user.id, {
         status: TRANSCRIPTION_STATUSES.FAILED,
         error: boundError(error),
@@ -1583,6 +2174,186 @@ export async function startTranscriptionService(
   } catch (error) {
     throw handleError("startTranscriptionService", error);
   }
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
+// TRYING AGAIN WITH DIFFERENT BYTES
+// ===================================================================
+//
+// The "Try again" button on a failed row hands Azure the same file a second
+// time. For a transient fault that is exactly right. For the commonest
+// failure this feature has - the service downloaded the recording and could
+// not decode it - it can never work, and it was being offered as though it
+// might.
+//
+// So there is a second rung: re-encode the media and try THAT. The browser
+// does the encoding, because ffmpeg is not on the App Service Node runtime
+// and the device already has, or can fetch, the file. These two services
+// are the server half - claim a destination, then accept the result.
+//
+// WHY TWO STEPS RATHER THAN ONE. The bytes never pass through the app; the
+// browser writes them straight to storage on a write-only URL, exactly as a
+// first upload does. Something has to sign that URL before, and something
+// has to verify what landed after, and nothing can happen in between.
+//
+// WHAT THE BROWSER DOES NOT GET TO DECIDE. Not the destination - the key is
+// computed from the row the server looked up - and not the media type,
+// which is derived from the name on both steps. A `fileName` is a label and
+// a source of an extension, and nothing else.
+// -------------------------------------------------------------------
+export async function replaceTranscriptionMediaService(
+  requestDTO: ReplaceTranscriptionMediaRequestDTO,
+): Promise<TranscriptionUploadTicketDTO> {
+  try {
+    const user = await requireUser();
+
+    const transcription = await requireOwnedTranscription(requestDTO.transcriptionId, user.id);
+
+    if (!isMediaStorageConfigured() || !isSpeechConfigured()) {
+      throw new DisplayErrorMessage("Transcription is not configured on this environment.");
+    }
+
+    // Same check as a first upload and for the same reason: there is no
+    // point re-encoding a meeting to put it somewhere Azure cannot read.
+    if (!isMediaReachableByAzureServices()) {
+      throw new DisplayErrorMessage(UNREACHABLE_STORAGE_MESSAGE);
+    }
+
+    const { mediaType, storageKey } = replacementTargetFor(transcription, requestDTO.fileName);
+
+    const upload = await createUploadUrl(nextMediaStorageKey(storageKey));
+
+    return {
+      transcriptionId: transcription.id,
+      // Write-only, one blob, an hour - the same credential shape a first
+      // upload gets, on a key this row does not yet claim.
+      uploadUrl: upload.url,
+      mediaType,
+      expiresAt: upload.expiresAt,
+    };
+  } catch (error) {
+    throw handleError("replaceTranscriptionMediaService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The re-encoded file has landed. Adopt it and start the job.
+//
+// THE ROW IS SWITCHED OVER IN ONE UPDATE, and only after the new blob has
+// been proved to exist, to be non-empty and to be within the service's
+// ceiling. Until that update the row still claims the original, so every
+// way this can fail leaves the person exactly where they were - with their
+// recording and a failure they can retry - rather than with neither.
+//
+// THE OLD BLOB IS DELETED AFTER, not before. A Postgres row cannot cascade
+// into storage, so the rule throughout this feature is that a file goes
+// when nothing claims it; doing it in the other order would, on a crash
+// between the two, destroy the only copy of a meeting.
+// -------------------------------------------------------------------
+export async function finishTranscriptionMediaReplacementService(
+  requestDTO: ReplaceTranscriptionMediaRequestDTO,
+): Promise<TranscriptionDetailDTO> {
+  try {
+    const user = await requireUser();
+
+    const transcription = await requireOwnedTranscription(requestDTO.transcriptionId, user.id);
+
+    const { mediaType, storageKey: previousKey } = replacementTargetFor(
+      transcription,
+      requestDTO.fileName,
+    );
+
+    const replacementKey = nextMediaStorageKey(previousKey);
+
+    const media = await getMediaInfo(replacementKey);
+
+    if (!media.exists || media.byteSize === null || media.byteSize === 0) {
+      throw new DisplayErrorMessage("The converted recording did not finish uploading. Try again.");
+    }
+
+    // ---------------------------------------------------------------
+    // CHECKED BEFORE THE ROW MOVES, which is the whole reason this is not
+    // left to startTranscriptionService. That one deletes the media it
+    // refuses - correct for a file nothing will ever read, and catastrophic
+    // here, because by then the media it would delete is the replacement
+    // AND the original has already been let go. 16 kHz mono PCM is
+    // uncompressed, so a long meeting genuinely can come out over the
+    // ceiling: this is a real path rather than a defensive one.
+    // ---------------------------------------------------------------
+    if (media.byteSize > MAX_MEDIA_BYTES) {
+      // The replacement is the thing nothing claims, so the replacement is
+      // the thing that goes.
+      await deleteMedia(replacementKey);
+
+      throw new DisplayErrorMessage(
+        `Converted, that recording comes to ${Math.round(media.byteSize / (1024 * 1024))} MB, which is over the ${Math.round(MAX_MEDIA_BYTES / (1024 * 1024))} MB the transcription service accepts. Your original recording is untouched and can still be downloaded.`,
+      );
+    }
+
+    await updateTranscriptionForUserRepo(transcription.id, user.id, {
+      storageKey: replacementKey,
+      mediaType,
+      byteSize: media.byteSize,
+      // Cleared here as well as by the start below, so a failure between
+      // the two does not leave the previous reason sitting on a row whose
+      // file is no longer the one that produced it.
+      error: null,
+    });
+
+    // Unclaimed as of the update above, so it goes now rather than waiting
+    // for the monthly reconciliation pass to notice.
+    await deleteMedia(previousKey).catch((error) => {
+      console.warn(`[transcription] could not remove the replaced recording ${previousKey}`, error);
+    });
+
+    revalidateTranscriptionViews();
+
+    // Every size, reachability and job-creation check lives there, and this
+    // path must not grow a second copy of any of them.
+    return await startTranscriptionService({ transcriptionId: transcription.id });
+  } catch (error) {
+    throw handleError("finishTranscriptionMediaReplacementService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The checks both halves of a replacement share.
+//
+// In one place because they have to agree: the two calls are minutes apart
+// and compute the same storage key from the same row, so a rule applied on
+// one and not the other would sign a URL for a destination the second step
+// would refuse.
+// -------------------------------------------------------------------
+function replacementTargetFor(
+  transcription: Transcription,
+  fileName: string,
+): { mediaType: string; storageKey: string } {
+  // Only a row with nothing to lose. A completed transcription has a
+  // transcript people are reading, and replacing its media would either
+  // orphan that text or throw it away - neither of which anybody asked for.
+  const replaceable: string[] = [
+    TRANSCRIPTION_STATUSES.FAILED,
+    TRANSCRIPTION_STATUSES.AWAITING_MEDIA,
+  ];
+
+  if (!replaceable.includes(transcription.status)) {
+    throw new DisplayErrorMessage("That transcription is not waiting to be transcribed.");
+  }
+
+  // A Teams import was never uploaded here - Teams transcribed the meeting
+  // and only the text was fetched - so there is no file to replace.
+  if (!transcription.storageKey) {
+    throw new DisplayErrorMessage("That transcription has no recording to convert.");
+  }
+
+  const mediaType = mediaTypeForFileName(fileName);
+
+  if (!mediaType) {
+    throw new DisplayErrorMessage("That is not a file type this can transcribe.");
+  }
+
+  return { mediaType, storageKey: transcription.storageKey };
 }
 
 // -------------------------------------------------------------------

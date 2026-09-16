@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
+import { extractFigures } from "./meaning-check";
 import {
   HOUSE_VOICE,
+  HOUSE_VOICE_REWRITES,
   MAX_VOICE_EXAMPLES,
+  REWRITE_RULES,
   VOICE_EXTRACTION_PROMPT,
   buildHouseVoiceBlock,
+  buildHouseVoiceRewriteBlock,
   type HouseVoiceProfile,
 } from "./house-voice";
 
@@ -156,5 +160,170 @@ describe("VOICE_EXTRACTION_PROMPT", () => {
 
   it("asks for testable instructions", () => {
     expect(VOICE_EXTRACTION_PROMPT.toLowerCase()).toContain("not adjectives");
+  });
+});
+
+// -------------------------------------------------------------------
+// The rewrite voice.
+//
+// The interesting assertions here are not about the string shape - they are
+// about the CLAIMS the file's header makes. A comment citing a study is
+// worth nothing if the data underneath it quietly stops matching, so the
+// properties those citations argue for are pinned.
+// -------------------------------------------------------------------
+describe("buildHouseVoiceRewriteBlock", () => {
+  it("still returns rules for an EMPTY profile with no examples, unlike its sibling", () => {
+    // The difference is deliberate. buildHouseVoiceBlock describes only this
+    // organisation's voice, so an empty profile has nothing to say and it
+    // returns null. These rules are about what makes any English prose read
+    // as machine-written, so they hold for a deployment that has never
+    // written a house rule - and they are the half that moves the output.
+    const block = buildHouseVoiceRewriteBlock(profile(), []);
+
+    expect(block).toContain("Vary sentence length on purpose.");
+    expect(block).not.toContain("<never_do>");
+    expect(block).not.toContain("<example>");
+  });
+
+  it("uses before and after tags, not brief and written", () => {
+    // The whole reason this function exists. Brief-to-written demonstrates
+    // generating from a request, and handed a finished paragraph the model
+    // treats it as the brief - which is how a figure gets invented.
+    const block = buildHouseVoiceRewriteBlock();
+
+    expect(block).toContain("<before>");
+    expect(block).toContain("<after>");
+    expect(block).not.toContain("<brief>");
+    expect(block).not.toContain("<written>");
+  });
+
+  it("tells the model to match the edit rather than the subject", () => {
+    expect(buildHouseVoiceRewriteBlock()).toContain("Match the EDIT, not the subject.");
+  });
+
+  it("carries the profile's own rules AND the rewrite rules", () => {
+    const block = buildHouseVoiceRewriteBlock(profile({ rules: ["Write in Australian English."] }));
+
+    expect(block).toContain("Write in Australian English.");
+    expect(block).toContain("Vary sentence length on purpose.");
+  });
+
+  it("keeps the profile's prohibitions, which carry over unchanged", () => {
+    const block = buildHouseVoiceRewriteBlock(profile({ avoid: ["Em dashes."] }));
+
+    expect(block).toContain("<never_do>");
+    expect(block).toContain("Em dashes.");
+  });
+
+  it("caps examples at MAX_VOICE_EXAMPLES", () => {
+    const many = Array.from({ length: MAX_VOICE_EXAMPLES + 4 }, (_, i) => ({
+      before: `before ${i}`,
+      after: `after ${i}`,
+    }));
+
+    const block = buildHouseVoiceRewriteBlock(profile(), many) ?? "";
+
+    expect(block.split("<example>")).toHaveLength(MAX_VOICE_EXAMPLES + 1);
+  });
+
+  it("drops a half-written pair rather than rendering an empty tag", () => {
+    const block = buildHouseVoiceRewriteBlock(profile(), [{ before: "something", after: "   " }]) ?? "";
+
+    expect(block).not.toContain("<example>");
+  });
+
+  it("orders rules, then prohibitions, then examples, for the cached prefix", () => {
+    // Same ordering as buildHouseVoiceBlock and for the same reason: the
+    // longest and most-edited part goes last, so everything before it stays
+    // byte-identical when the examples change.
+    const block =
+      buildHouseVoiceRewriteBlock(profile({ rules: ["A rule."], avoid: ["A prohibition."] })) ?? "";
+
+    expect(block.indexOf("<voice_rules>")).toBeLessThan(block.indexOf("<never_do>"));
+    expect(block.indexOf("<never_do>")).toBeLessThan(block.indexOf("<rewrite_examples>"));
+  });
+});
+
+describe("the shipped rewrite pairs", () => {
+  // Sentence splitting good enough for a length check. Not exported,
+  // because nothing outside this assertion needs it.
+  const sentences = (text: string) =>
+    text
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => sentence.length > 0);
+
+  const words = (sentence: string) => sentence.split(/\s+/).filter(Boolean).length;
+
+  it("DEMONSTRATES the variance rule rather than averaging it away", () => {
+    // The header argues few-shot examples flatten rhythm, and rhythm is this
+    // feature's main lever. That makes the pairs themselves the mitigation:
+    // an `after` of uniform sentence length teaches the opposite of the rule
+    // sitting above it, and nothing else in the build would notice.
+    for (const example of HOUSE_VOICE_REWRITES) {
+      const lengths = sentences(example.after).map(words);
+
+      expect(Math.min(...lengths), `short sentence in: ${example.after}`).toBeLessThan(8);
+      expect(Math.max(...lengths), `long sentence in: ${example.after}`).toBeGreaterThan(25);
+    }
+  });
+
+  it("puts consultant vocabulary on the BEFORE side and never on the after", () => {
+    // A pair only teaches a removal if the thing being removed is present in
+    // one half and absent from the other.
+    const tells = ["leverage", "utilise", "comprehensive", "it is worth noting", "rest assured"];
+    const before = HOUSE_VOICE_REWRITES.map((example) => example.before.toLowerCase()).join(" ");
+    const after = HOUSE_VOICE_REWRITES.map((example) => example.after.toLowerCase()).join(" ");
+
+    expect(tells.some((tell) => before.includes(tell))).toBe(true);
+
+    for (const tell of tells) {
+      expect(after, tell).not.toContain(tell);
+    }
+  });
+
+  it("keeps the figures across each pair, because the examples model the safety rule too", () => {
+    // An example that dropped a number would teach the model that dropping
+    // numbers is what we do.
+    for (const example of HOUSE_VOICE_REWRITES) {
+      for (const figure of extractFigures(example.before)) {
+        expect(extractFigures(example.after), `${figure} in: ${example.after}`).toContain(figure);
+      }
+    }
+  });
+
+  it("never uses an em dash or an en dash, which the house rules forbid", () => {
+    for (const example of HOUSE_VOICE_REWRITES) {
+      expect(example.after).not.toMatch(/[–—]/);
+    }
+  });
+});
+
+describe("REWRITE_RULES", () => {
+  it("leads with structure, which is what the measurement says matters most", () => {
+    // 50% of human articles wrongly called AI were flagged on sentence
+    // structure against 31% on vocabulary, so a rules list that opened with
+    // word choice would be ordered by intuition rather than by evidence.
+    expect(REWRITE_RULES[0].toLowerCase()).toContain("sentence length");
+  });
+
+  it("tells the model to REPEAT a noun rather than vary it", () => {
+    // The opposite of the usual advice, and deliberately so: LLM output is
+    // measurably MORE lexically diverse than human writing, so synonym
+    // hunting is itself the tell.
+    const joined = REWRITE_RULES.join(" ").toLowerCase();
+
+    expect(joined).toContain("repeat a key noun");
+    expect(joined).not.toContain("vary your word choice");
+  });
+
+  it("is written as countable instructions rather than adjectives", () => {
+    // "Sound natural" is unfollowable. Every rule here has to be something
+    // the model can check itself against.
+    const vague = ["engaging", "natural-sounding", "high-quality", "authentic"];
+
+    for (const word of vague) {
+      expect(REWRITE_RULES.join(" ").toLowerCase(), word).not.toContain(word);
+    }
   });
 });

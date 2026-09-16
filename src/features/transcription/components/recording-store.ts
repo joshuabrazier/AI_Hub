@@ -150,6 +150,12 @@ export async function appendChunk(recordingId: string, seq: number, blob: Blob):
 // by a crash is still most of a meeting, and MediaRecorder writes each chunk
 // as a self-contained cluster, so the partial file generally plays and
 // transcribes. It is simply described honestly when it is offered.
+//
+// WITH ONE EXCEPTION, and this comment used to miss it. "Generally plays"
+// holds for a file that lost its END. A file that lost its FIRST chunk lost
+// the EBML header with it and plays nowhere at all - see
+// inspectChunkSequence, which is what now tells the two apart before
+// anything is uploaded.
 // -------------------------------------------------------------------
 export async function completeRecording(recordingId: string, durationSeconds: number): Promise<void> {
   const db = await openDatabase();
@@ -183,7 +189,58 @@ export async function listPendingRecordings(): Promise<PendingRecording[]> {
 // Sorted by sequence explicitly rather than trusting the order the records
 // come back in - see the note on the key above.
 // -------------------------------------------------------------------
-export async function assembleRecording(recording: PendingRecording): Promise<Blob | null> {
+// -------------------------------------------------------------------
+// WHAT A SET OF STORED CHUNKS ADDS UP TO.
+//
+// Pure, exported and tested, because the conclusion it reaches is the
+// difference between a meeting somebody gets back and a file Azure refuses
+// several minutes later with "the audio format cannot be detected".
+//
+// CHUNK 0 IS NOT LIKE THE OTHERS. MediaRecorder writes each chunk as a
+// self-contained cluster, which is what makes a recording cut short by a
+// crash generally still play - but the FIRST chunk also carries the EBML
+// header that says what the file is. Without it there is no format to
+// detect, and every later cluster is unreadable however complete it is.
+//
+// IT CAN GO MISSING, and the mechanism is in transcription-recorder.tsx:
+// chunk writes are deliberately not awaited, so the recorder is never held
+// up by the disk. A write that fails or that is still in flight when the tab
+// dies leaves a hole, and the sequence counter has already moved on.
+// Best-effort persistence is the right trade - the alternative is dropping
+// audio to keep a database happy - but it means the gap has to be DETECTED
+// rather than assumed away.
+//
+// A LATER GAP IS SURVIVABLE and is reported rather than refused. It costs
+// the seconds in the hole; the rest still decodes, and somebody who has lost
+// a meeting would much rather have most of it.
+// -------------------------------------------------------------------
+export function inspectChunkSequence(seqs: readonly number[]): {
+  hasHeader: boolean;
+  gaps: number[];
+} {
+  if (seqs.length === 0) return { hasHeader: false, gaps: [] };
+
+  const present = new Set(seqs);
+  const highest = Math.max(...seqs);
+  const gaps: number[] = [];
+
+  for (let seq = 0; seq <= highest; seq += 1) {
+    if (!present.has(seq)) gaps.push(seq);
+  }
+
+  return { hasHeader: present.has(0), gaps };
+}
+
+export type AssembledRecording =
+  | { ok: true; media: Blob; gaps: number[] }
+  // Nothing was ever written for this recording.
+  | { ok: false; reason: "no-chunks" }
+  // Chunks exist but the first is missing, so the bytes carry no header and
+  // nothing can read them. Refused HERE, on the device, rather than uploaded
+  // for Azure to refuse minutes later.
+  | { ok: false; reason: "no-header" };
+
+export async function assembleRecording(recording: PendingRecording): Promise<AssembledRecording> {
   const db = await openDatabase();
 
   const transaction = db.transaction(CHUNKS, "readonly");
@@ -192,11 +249,15 @@ export async function assembleRecording(recording: PendingRecording): Promise<Bl
     transaction.objectStore(CHUNKS).index("recordingId").getAll(recording.id),
   )) as { recordingId: string; seq: number; blob: Blob }[];
 
-  if (records.length === 0) return null;
+  if (records.length === 0) return { ok: false, reason: "no-chunks" };
+
+  const { hasHeader, gaps } = inspectChunkSequence(records.map((record) => record.seq));
+
+  if (!hasHeader) return { ok: false, reason: "no-header" };
 
   const ordered = records.sort((a, b) => a.seq - b.seq).map((record) => record.blob);
 
-  return new Blob(ordered, { type: recording.mimeType });
+  return { ok: true, media: new Blob(ordered, { type: recording.mimeType }), gaps };
 }
 
 // -------------------------------------------------------------------

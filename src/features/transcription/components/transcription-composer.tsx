@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useWorkInFlight } from "@/features/layout/work-in-flight";
 import { TRANSCRIPTION_SOURCES } from "@/lib/data/kysely-database-types";
 import { downloadBlob, safeDownloadName } from "@/lib/download-blob";
 import { formatDateTime } from "@/lib/format";
@@ -26,6 +27,7 @@ import {
   type TranscriptionPageDTO,
 } from "../transcription.types";
 import { convertForTranscription, needsConversion } from "./audio-convert";
+import { inspectRecording } from "./recording-integrity";
 import {
   assembleRecording,
   discardRecording,
@@ -102,25 +104,100 @@ export function TranscriptionComposer({
   // A recording that is on this device and not yet safely uploaded. Set
   // when an upload fails, and on load when a previous visit left one - a
   // crashed tab, a closed laptop, a refresh mid-upload.
-  const [pending, setPending] = useState<PendingRecording | null>(null);
-  const [isRecovering, setIsRecovering] = useState(false);
+  // -----------------------------------------------------------------
+  // EVERY recording still held on this device, newest first.
+  //
+  // IT USED TO BE ONLY THE NEWEST, on the reasoning that stacking a panel
+  // per recording would bury the one somebody had just lost. That reasoning
+  // was right about the ordering and wrong about the consequence: the older
+  // ones were not merely out of the way, they were UNREACHABLE. There was
+  // no screen anywhere in the app that could upload them, save them or
+  // delete them - so a laptop that crashed twice kept the first meeting
+  // forever, consuming the quota that then made the next recording's chunk
+  // writes fail.
+  //
+  // Newest first still, and the rest behind a disclosure, so the ordering
+  // argument is kept and the trap is not.
+  // -----------------------------------------------------------------
+  const [pendingList, setPendingList] = useState<PendingRecording[]>([]);
+
+  // Which one is being uploaded or saved right now, so the buttons on the
+  // others stay usable rather than the whole panel freezing.
+  const [recoveringId, setRecoveringId] = useState<string | null>(null);
   // Decoding an hour of audio takes a few seconds and blocks nothing else,
   // so the screen has to say what it is doing or the file simply appears to
   // not attach.
   const [isConverting, setIsConverting] = useState(false);
+
+  // Tell the deployment watcher not to reload over any of this. An upload in
+  // flight leaves a row with no media behind it; a conversion is several
+  // seconds of decoding that would have to be done again; recovery is
+  // literally the act of rescuing a recording from a previous crash, and
+  // interrupting it would be the worst-timed reload in the app.
+  useWorkInFlight(isUploading || isConverting || recoveringId !== null);
+
+  // -----------------------------------------------------------------
+  // DO NOT LET THE TAB CLOSE OVER AN UPLOAD.
+  //
+  // The recorder puts up an unload guard while a meeting is running and
+  // takes it down the instant recording stops - which is the instant the
+  // upload starts. So the most dangerous minutes had no guard at all: a
+  // seventy megabyte recording crossing a client site's broadband, with the
+  // device copy still the only complete one, and a reload or a closed tab
+  // costing the meeting outright.
+  //
+  // Covers the conversion and the recovery upload for the same reason. The
+  // browser chooses the wording; all a page can do is insist on the prompt.
+  // -----------------------------------------------------------------
+  const isMovingBytes = isUploading || isConverting || recoveringId !== null;
+
+  useEffect(() => {
+    if (!isMovingBytes) return;
+
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+
+    window.addEventListener("beforeunload", warn);
+
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [isMovingBytes]);
+
+  // -----------------------------------------------------------------
+  // IS A MEETING BEING RECORDED RIGHT NOW?
+  //
+  // Reported up by the recorder, because the two things that can destroy a
+  // recording are BOTH out here and neither could see it: the tab strip
+  // unmounts the recorder (Radix renders content only while selected,
+  // unless forceMount), and unmounting stops the microphone track.
+  // Somebody clicking "Upload a file" mid-meeting lost everything from that
+  // click onward, with nothing said at any point.
+  // -----------------------------------------------------------------
+  const [isRecordingNow, setIsRecordingNow] = useState(false);
+
+  // -----------------------------------------------------------------
+  // WHICH TAB IS OPEN, held here rather than left to Radix.
+  //
+  // The record panel is force-mounted so that switching tabs cannot stop
+  // the microphone mid-meeting - and a force-mounted panel is one Radix
+  // deliberately does NOT hide: `present` is true by definition, so its
+  // `hidden` is false and the caller is expected to control visibility
+  // itself. That is what forceMount is for.
+  //
+  // Which means the composer has to know the selected tab, because
+  // otherwise the recorder is simply drawn on every tab - underneath the
+  // file picker and underneath the Teams list, which is exactly what it
+  // was doing.
+  // -----------------------------------------------------------------
+  const [tab, setTab] = useState(canRecord ? "upload" : "teams");
 
   // The default name for a recording. A function, not a value, because it
   // reads the clock - computing it during render would differ between
   // server and client and break hydration.
   const defaultRecordingTitle = useCallback(() => `Meeting - ${formatDateTime(new Date())}`, []);
 
-  // The newest held recording is the one worth offering. Anything older is
-  // still in the store and still recoverable, but stacking a panel for
-  // every one would bury the thing somebody just lost.
   const refreshPending = useCallback(
     () =>
       listPendingRecordings()
-        .then((held) => setPending(held[0] ?? null))
+        .then(setPendingList)
         .catch((error) => console.warn("[composer] could not read the local recording store", error)),
     [],
   );
@@ -136,7 +213,7 @@ export function TranscriptionComposer({
 
     listPendingRecordings()
       .then((held) => {
-        if (!cancelled) setPending(held[0] ?? null);
+        if (!cancelled) setPendingList(held);
       })
       .catch((error) => console.warn("[composer] could not read the local recording store", error));
 
@@ -228,23 +305,120 @@ export function TranscriptionComposer({
   const submitFile = async () => {
     if (!file) return;
 
-    const transcriptionId = await upload({
+    // Head-only: see inspectRecording. Enough to refuse a video with no
+    // sound in it, or an empty container, before somebody waits out an
+    // upload for a file that was never going to transcribe.
+    const verdict = await inspectRecording(file, { scanForSplice: false });
+
+    if (verdict.kind === "refused") {
+      toast.error(verdict.message);
+      return;
+    }
+
+    // -----------------------------------------------------------------
+    // A JOIN THE HEAD PROBE CAN SEE IS SAID OUT LOUD, even though this
+    // path does not repair. Somebody who downloads a damaged recording and
+    // re-uploads it by hand arrives here, and a splice in the first part of
+    // the file is visible without any scan - it used to be found, judged
+    // non-fatal, and uploaded in silence. Warning costs nothing and is the
+    // difference between a puzzling failure and an explained one.
+    // -----------------------------------------------------------------
+    const splice = verdict.probe.problems.find((problem) => problem.code === "spliced");
+
+    if (splice) toast.warning(`${splice.detail} It may not transcribe in full.`);
+
+    const result = await upload({
       media: file,
       fileName: file.name,
       title: title.trim().length > 0 ? title.trim() : deriveTranscriptionTitle(file.name),
       source: TRANSCRIPTION_SOURCES.UPLOAD,
     });
 
-    if (transcriptionId) {
+    // A ROW is enough to open here, started or not: the person still has the
+    // file they chose, so nothing is at stake in showing them the row and
+    // letting them retry it.
+    if (result) {
       setFile(null);
       setTitle("");
-      onStarted(transcriptionId);
+      onStarted(result.transcriptionId);
     }
   };
 
+  // -------------------------------------------------------------------
+  // A RECORDING IS UPLOADED IN THE FORMAT IT WAS RECORDED IN, and that is a
+  // decision rather than an omission.
+  //
+  // A pipeline audit claimed every iPhone recording must fail: Safari has no
+  // WebM encoder, so MediaRecorder falls through RECORDING_FORMAT_CANDIDATES
+  // to audio/mp4 and produces an .m4a - the same container the PICKER
+  // converts, because Azure refuses an uploaded phone voice memo. Routing
+  // recordings through that converter looked obviously right.
+  //
+  // IT WAS TESTED ON AN IPHONE AND IT WORKS. So whatever is true of an
+  // uploaded .m4a, a recorded one is accepted, and the premise was wrong.
+  //
+  // Converting anyway would have been expensive rather than merely
+  // unnecessary. convertForTranscription emits 16 kHz mono WAV, which is
+  // UNCOMPRESSED - about 115 MB an hour against roughly 14 MB for the Opus
+  // the recorder produces. Every phone recording would have become eight
+  // times larger to upload, after a full decode and re-encode of the meeting
+  // inside a phone browser, to fix a failure that was not happening.
+  //
+  // THE RIGHT PLACE FOR THIS IS A FALLBACK, not a precaution: upload what
+  // was recorded, and re-encode only if the service actually refuses it.
+  // -------------------------------------------------------------------
+
+  // -------------------------------------------------------------------
+  // CHECK THE BYTES BEFORE THEY GO ANYWHERE, AND REPAIR WHAT CAN BE REPAIRED.
+  //
+  // A malformed recording used to be discovered by Azure, minutes later, as
+  // "the audio format is invalid or cannot be detected" - by which point
+  // somebody had waited out an upload and a job for a file that was never
+  // going to work. The bytes are right here, so the answer is right here,
+  // and it is a specific answer rather than that sentence.
+  //
+  // See recording-integrity.ts for what is repaired, what is refused, and
+  // why an unrecognised container is neither.
+  // -------------------------------------------------------------------
+  const soundMediaOrNull = async (
+    media: Blob,
+  ): Promise<{ media: Blob; wasRepaired: boolean } | null> => {
+    const verdict = await inspectRecording(media);
+
+    if (verdict.kind === "refused") {
+      toast.error(verdict.message);
+
+      return null;
+    }
+
+    if (verdict.kind === "repaired") {
+      toast.warning(verdict.message);
+
+      // -------------------------------------------------------------
+      // `wasRepaired` TRAVELS BACK because of what the caller does next.
+      // A repaired upload is PART of a recording, so the copy on this
+      // device is the only complete one left - and the discard below was
+      // deleting it the moment the partial upload succeeded. The message
+      // this very function shows says the full recording is still here;
+      // that has to be true.
+      // -------------------------------------------------------------
+      return { media: verdict.media, wasRepaired: true };
+    }
+
+    return { media, wasRepaired: false };
+  };
+
   const submitRecording = async (recording: FinishedRecording) => {
-    const transcriptionId = await upload({
-      media: recording.media,
+    const sound = await soundMediaOrNull(recording.media);
+
+    if (!sound) {
+      // Kept on the device and surfaced, rather than the screen going quiet.
+      await refreshPending();
+      return;
+    }
+
+    const result = await upload({
+      media: sound.media,
       // The extension is what the server derives the media type from, so it
       // has to be the one the recorder actually produced.
       fileName: `recording${recording.extension}`,
@@ -255,18 +429,35 @@ export function TranscriptionComposer({
       source: TRANSCRIPTION_SOURCES.RECORDING,
     });
 
-    if (transcriptionId) {
-      // The server has it. Only now is the device copy dropped - this is
-      // the single place that happens on a successful path.
-      await discardRecording(recording.recordingId).catch((error) => {
-        console.warn("[composer] could not clear the uploaded recording", error);
-      });
+    // `started`, NOT merely an id. A row with no Speech job behind it is not
+    // the server having the recording in any sense that matters - and the
+    // copy on this device is the only other one there is.
+    if (result?.started) {
+      // -------------------------------------------------------------
+      // ONLY A WHOLE RECORDING IS DISCARDED. A repaired one had part of it
+      // cut away before upload, so this copy is the only complete version
+      // in existence - deleting it here made a truncation irreversible and
+      // made the message that points at it a lie.
+      // -------------------------------------------------------------
+      if (sound.wasRepaired) {
+        await refreshPending();
+      } else {
+        await discardRecording(recording.recordingId).catch((error) => {
+          console.warn("[composer] could not clear the uploaded recording", error);
+        });
+
+        setPendingList((held) => held.filter((row) => row.id !== recording.recordingId));
+      }
 
       setTitle("");
-      setPending(null);
-      onStarted(transcriptionId);
+      onStarted(result.transcriptionId);
       return;
     }
+
+    // A row exists but nothing is transcribing it. Open it so the retry is
+    // in front of them, and KEEP the device copy - refreshPending below puts
+    // the recovery panel back.
+    if (result) onStarted(result.transcriptionId);
 
     // The upload failed and the reason has already been shown. The
     // recording is still on the device, so surface it rather than letting
@@ -277,55 +468,93 @@ export function TranscriptionComposer({
   // -------------------------------------------------------------------
   // Recovering a recording that is still on the device.
   // -------------------------------------------------------------------
-  const retryPending = async () => {
-    if (!pending) return;
-
-    setIsRecovering(true);
+  const retryPending = async (pending: PendingRecording) => {
+    setRecoveringId(pending.id);
 
     try {
-      const media = await assembleRecording(pending);
+      const assembled = await assembleRecording(pending);
 
-      if (!media) {
-        toast.error("That recording could not be read back from this device.");
+      if (!assembled.ok) {
+        // -------------------------------------------------------------
+        // REFUSED HERE RATHER THAN BY AZURE. A recording missing its first
+        // chunk has no EBML header, so nothing can read it - and uploading
+        // it spends somebody's bandwidth to be told "the audio format
+        // cannot be detected" several minutes later, by which time the
+        // failure looks like a fault in the transcription service rather
+        // than in what was recorded.
+        // -------------------------------------------------------------
+        toast.error(
+          assembled.reason === "no-header"
+            ? "The start of that recording was not saved to this device, so the file has no header and cannot be transcribed. Save a copy if you want the audio, but it will not play in most players either."
+            : "That recording could not be read back from this device.",
+        );
         return;
       }
 
-      const transcriptionId = await upload({
-        media,
-        fileName: `recording${pending.extension}`,
+      // Survivable, and said plainly rather than silently: every missing
+      // chunk is a few seconds of the meeting that is not in the file.
+      if (assembled.gaps.length > 0) {
+        toast.warning(
+          `${assembled.gaps.length} part${assembled.gaps.length === 1 ? "" : "s"} of that recording did not save to this device. The rest will still be transcribed, with those seconds missing.`,
+        );
+      }
+
+      const sound = await soundMediaOrNull(assembled.media);
+
+      if (!sound) return;
+
+      const result = await upload({
+        media: sound.media,
+        // FALLING BACK on the extension, because this row came out of
+        // IndexedDB rather than from the recorder running now: a row written
+        // by an earlier version predates the field, and a type cannot reach
+        // backwards into data already on somebody's disk.
+        fileName: `recording${pending.extension || ".webm"}`,
         title: title.trim().length > 0 ? title.trim() : pending.title,
         source: TRANSCRIPTION_SOURCES.RECORDING,
       });
 
-      if (transcriptionId) {
-        await discardRecording(pending.id);
+      // Same rule as a fresh recording, and it matters more here: this IS
+      // the recovery path, so discarding on a row that nothing is
+      // transcribing would throw away the copy somebody came here to save.
+      if (result?.started) {
+        // Same rule as above, and it matters more here: this IS the
+        // recovery path, so discarding a partially uploaded recording
+        // throws away the copy somebody came to this panel to save.
+        if (!sound.wasRepaired) {
+          await discardRecording(pending.id);
+          setPendingList((held) => held.filter((row) => row.id !== pending.id));
+        }
+
         setTitle("");
-        setPending(null);
-        onStarted(transcriptionId);
+        onStarted(result.transcriptionId);
+      } else if (result) {
+        onStarted(result.transcriptionId);
       }
     } finally {
-      setIsRecovering(false);
+      setRecoveringId(null);
     }
   };
 
-  const savePending = async () => {
-    if (!pending) return;
-
+  const savePending = async (pending: PendingRecording) => {
     const media = await assembleRecording(pending);
 
-    if (!media) {
+    if (!media.ok) {
+      // A headerless recording can still be DOWNLOADED. The bytes are
+      // theirs, a specialist tool may yet get something out of them, and
+      // refusing would be this app deciding somebody may not have their own
+      // audio. It is the transcribe path that refuses, because that one
+      // cannot succeed.
       toast.error("That recording could not be read back from this device.");
       return;
     }
 
-    downloadBlob(media, safeDownloadName(pending.title, pending.extension));
+    downloadBlob(media.media, safeDownloadName(pending.title, pending.extension));
   };
 
-  const dropPending = async () => {
-    if (!pending) return;
-
+  const dropPending = async (pending: PendingRecording) => {
     await discardRecording(pending.id);
-    setPending(null);
+    setPendingList((held) => held.filter((row) => row.id !== pending.id));
     toast.success("Recording deleted from this device.");
   };
 
@@ -335,15 +564,21 @@ export function TranscriptionComposer({
     <div className="rounded-xl border border-border p-5">
       {/* Above the tabs, because a recording that has not made it off this
           device is more urgent than anything else on the screen. */}
-      {pending ? (
+      {pendingList.map((held, index) => (
         <PendingRecordingPanel
-          recording={pending}
-          isBusy={isUploading || isRecovering}
-          onRetry={retryPending}
-          onSave={savePending}
-          onDiscard={dropPending}
+          key={held.id}
+          recording={held}
+          // Only the newest is expanded. The rest are real, reachable and
+          // deletable - which they were not before - without burying the
+          // one somebody has just lost.
+          isNewest={index === 0}
+          othersHeld={index === 0 ? pendingList.length - 1 : 0}
+          isBusy={isUploading || recoveringId === held.id}
+          onRetry={() => retryPending(held)}
+          onSave={() => savePending(held)}
+          onDiscard={() => dropPending(held)}
         />
-      ) : null}
+      ))}
 
       {/* Why recording is unavailable, shown ABOVE the tabs when importing
           still works. Without it the two tabs simply would not be there,
@@ -359,13 +594,24 @@ export function TranscriptionComposer({
         </div>
       ) : null}
 
-      {/* Defaults to whichever tab exists. A Tabs with a defaultValue no
+      {/* CONTROLLED, because the record panel is force-mounted and Radix
+          does not hide a force-mounted panel - see the note on it below.
+          Something has to know which tab is open in order to hide the
+          others, and with an uncontrolled Tabs nothing does.
+
+          The initial value is whichever tab exists: a Tabs whose value no
           trigger matches renders with nothing selected and no content. */}
-      <Tabs defaultValue={canRecord ? "upload" : "teams"}>
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           {canRecord ? (
             <>
-              <TabsTrigger value="upload">
+              {/* DISABLED WHILE A MEETING IS RUNNING. forceMount above keeps
+                  the recorder alive if somebody does switch, but leaving
+                  them free to switch means the recorder is running on a tab
+                  nobody can see - with no clock, no stop button and no sign
+                  it is still going. The meeting cannot be recorded twice,
+                  so the answer is not to let it happen. */}
+              <TabsTrigger value="upload" disabled={isRecordingNow}>
                 <Upload size={15} aria-hidden="true" />
                 Upload a file
               </TabsTrigger>
@@ -376,7 +622,7 @@ export function TranscriptionComposer({
             </>
           ) : null}
           {canImport ? (
-            <TabsTrigger value="teams">
+            <TabsTrigger value="teams" disabled={isRecordingNow}>
               <Users size={15} aria-hidden="true" />
               From Teams
             </TabsTrigger>
@@ -495,11 +741,32 @@ export function TranscriptionComposer({
         {/* ----------------------------------------------------------
             Record
             ---------------------------------------------------------- */}
-        <TabsContent value="record" className="space-y-4">
+        {/* forceMount, so switching tab HIDES the recorder rather than
+            unmounting it. Radix renders content only while selected
+            otherwise, and unmounting stops the microphone mid-meeting. The
+            triggers are disabled below as well - this is the half that
+            makes an accident survivable, that is the half that prevents
+            it.
+
+            `hidden` IS PASSED DELIBERATELY, and it has to be. Radix
+            computes its own as `!present`, and with forceMount `present`
+            is true by definition - so a force-mounted panel is never
+            hidden by Radix. That is the point of forceMount: it hands
+            visibility to the caller. It previously carried
+            `hidden={undefined}`, which reads like a no-op and is not - it
+            is the difference between "kept mounted, and hidden" and
+            "drawn on every tab", and the recorder was appearing
+            underneath the file picker and the Teams list.
+
+            Hiding does not stop the recording. A MediaRecorder is not tied
+            to whether its UI is painted, so display:none keeps the
+            microphone open - which is the whole point of mounting it. */}
+        <TabsContent value="record" className="space-y-4" forceMount hidden={tab !== "record"}>
           <TranscriptionRecorder
+            onActiveChange={setIsRecordingNow}
             onRecorded={submitRecording}
             defaultTitle={defaultRecordingTitle}
-            disabled={isUploading || isRecovering}
+            disabled={isUploading || recoveringId !== null}
           />
 
           <div className="grid gap-2">
@@ -576,12 +843,18 @@ function UploadProgress({ progress }: { progress: number | null }) {
 // -------------------------------------------------------------------
 function PendingRecordingPanel({
   recording,
+  isNewest,
+  othersHeld,
   isBusy,
   onRetry,
   onSave,
   onDiscard,
 }: {
   recording: PendingRecording;
+  /** The one somebody most likely just lost, and the only one shown in full. */
+  isNewest: boolean;
+  /** How many more are held behind this one, for the line that says so. */
+  othersHeld: number;
   isBusy: boolean;
   onRetry: () => void;
   onSave: () => void;
@@ -590,20 +863,37 @@ function PendingRecordingPanel({
   return (
     <div
       role="status"
-      className="mb-5 rounded-xl border border-data-caution/40 bg-data-caution-surface p-4"
+      className={
+        isNewest
+          ? "mb-5 rounded-xl border border-data-caution/40 bg-data-caution-surface p-4"
+          : "mb-3 rounded-xl border border-border p-3"
+      }
     >
       <div className="flex items-start gap-2">
         <TriangleAlert size={16} className="mt-0.5 shrink-0 text-data-caution-text" aria-hidden="true" />
         <div className="min-w-0">
-          <p className="text-sm font-medium text-data-caution-text">
-            A recording is still on this device
+          <p className={isNewest ? "text-sm font-medium text-data-caution-text" : "text-sm font-medium text-foreground"}>
+            {isNewest ? "A recording is still on this device" : "An older recording is still on this device"}
           </p>
-          <p className="mt-1 text-sm text-data-caution-text">
+
+          {/* SAID BECAUSE THE QUOTA IS SHARED. Recordings left here do not
+              merely sit out of the way - they consume the device store that
+              the NEXT meeting is being written into, and a store that runs
+              out starts refusing chunk writes mid-recording. */}
+          {othersHeld > 0 ? (
+            <p className="mt-1 text-xs text-data-caution-text">
+              {othersHeld === 1
+                ? "One more recording is also held below."
+                : `${othersHeld} more recordings are also held below.`}{" "}
+              They take up space on this device until they are uploaded or deleted.
+            </p>
+          ) : null}
+          <p className={isNewest ? "mt-1 text-sm text-data-caution-text" : "mt-1 text-sm text-muted-foreground"}>
             <span className="font-medium">{recording.title}</span>
             {recording.durationSeconds > 0 ? ` - ${formatDuration(recording.durationSeconds)}` : ""}
             {recording.byteSize > 0 ? ` - ${formatSize(recording.byteSize)}` : ""}
           </p>
-          <p className="mt-1 text-xs text-data-caution-text">
+          <p className={isNewest ? "mt-1 text-xs text-data-caution-text" : "mt-1 text-xs text-muted-foreground"}>
             {recording.complete
               ? "It has not been uploaded yet. Send it now, or save a copy first if you would rather not rely on this."
               : "It was interrupted before it finished, so the end may be missing. Everything captured up to that point is here."}

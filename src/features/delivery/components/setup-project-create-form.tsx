@@ -8,18 +8,21 @@ import { toast } from "sonner";
 import z from "zod";
 
 import { FormInputField } from "@/components/form/form-input-field";
+import { FormSelectField } from "@/components/form/form-select-field";
 import { FormSwitchField } from "@/components/form/form-switch-field";
 import { FormTextareaField } from "@/components/form/form-textarea-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { MESSAGES } from "@/lib/constants";
+import { PROJECT_KINDS, PROJECT_KIND_HELP } from "@/lib/data/kysely-database-types";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
-import { ROUTES } from "@/lib/routes";
+import { projectHomeForRole, projectSetupForRole } from "@/lib/routes";
 
 import { createProjectAction } from "../delivery-setup.actions";
 import {
   DESCRIPTION_MAX_CHARS,
+  PROJECT_KIND_OPTIONS,
   PROJECT_TITLE_MAX_CHARS,
   type ClientOptionDTO,
   type ProjectClientRequestDTO,
@@ -49,6 +52,7 @@ const ProjectFormSchema = z.object({
   title: z.string().trim().min(1, "A project needs a title").max(PROJECT_TITLE_MAX_CHARS),
   description: z.string().trim().max(DESCRIPTION_MAX_CHARS),
   isBillable: z.boolean(),
+  kind: z.enum(PROJECT_KINDS),
 });
 
 type ProjectFormValues = z.infer<typeof ProjectFormSchema>;
@@ -56,7 +60,27 @@ type ProjectFormValues = z.infer<typeof ProjectFormSchema>;
 const CLIENT_FIELD_ID = "project-client";
 const CLIENT_DESCRIPTION_ID = "project-client-description";
 
-export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[] }) {
+export function SetupProjectCreateForm({
+  clients,
+  // -----------------------------------------------------------------
+  // THE ROLE, NOT TWO FUNCTIONS, and the first version of this crashed.
+  //
+  // It took `setupHref` and `projectsHref` as callbacks so the server page
+  // could hand down routes it had already resolved. A FUNCTION CANNOT CROSS
+  // THE SERVER-CLIENT BOUNDARY: React refuses to serialise one, so every
+  // render of /manage/projects/new answered a server error before any of this
+  // ran. It was invisible to tsc, to eslint and to the build, because all
+  // three see a perfectly ordinary prop.
+  //
+  // A role is a string, which serialises, and routes.ts is pure so the
+  // helpers are callable from here. The page still decides nothing about
+  // where these go - the helper does, in one place, for all three areas.
+  // -----------------------------------------------------------------
+  role,
+}: {
+  clients: ClientOptionDTO[];
+  role: string;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -75,6 +99,9 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
       // Billable is the ordinary case, and the switch says what turning it
       // off means.
       isBillable: true,
+      // An ordinary project is overwhelmingly the common case. The standing
+      // buckets are made once and then live for years.
+      kind: PROJECT_KINDS.DELIVERY,
     },
   });
 
@@ -93,6 +120,7 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
           // optionalText does to it at the boundary anyway.
           description: values.description.length > 0 ? values.description : null,
           isBillable: values.isBillable,
+          kind: values.kind,
         });
 
         if (!response.success) {
@@ -106,9 +134,10 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
 
         toast.success("Project created. Now add its people, budget and phases.");
 
-        // Straight into setup, because a project with no members is
-        // invisible to everybody except an admin until membership is set.
-        router.push(ROUTES.adminProjectSetup(response.data));
+        // Straight into setup: the project exists with exactly one member -
+        // whoever made it, as its lead - and nothing else, so this is where
+        // it becomes workable.
+        router.push(projectSetupForRole(role, response.data));
       } catch (error) {
         handleFrontendErrorWithToast(error);
       }
@@ -172,6 +201,17 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
             disabled={isPending}
           />
 
+          {/* Before the Billable switch, because it is the broader question:
+              whether this is work at all in the sense the rest of the app
+              means, or a set of codes to book hours against. */}
+          <FormSelectField
+            control={form.control}
+            name="kind"
+            label="Kind"
+            options={PROJECT_KIND_OPTIONS}
+            description={PROJECT_KIND_HELP}
+          />
+
           <FormSwitchField
             control={form.control}
             name="isBillable"
@@ -180,7 +220,7 @@ export function SetupProjectCreateForm({ clients }: { clients: ClientOptionDTO[]
           />
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={() => router.push(ROUTES.ADMIN_PROJECTS)}>
+            <Button type="button" variant="outline" onClick={() => router.push(projectHomeForRole(role))}>
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || !form.formState.isValid} loading={isPending}>

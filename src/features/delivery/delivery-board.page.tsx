@@ -2,13 +2,13 @@ import Link from "next/link";
 
 import PortalPage from "@/features/layout/portal-page";
 import { requireUser } from "@/lib/auth/session-auth-server";
-import { USER_ROLES } from "@/lib/data/kysely-database-types";
+import { PROJECT_KINDS, USER_ROLES } from "@/lib/data/kysely-database-types";
 import { ROUTES } from "@/lib/routes";
 import { userDisplayName } from "@/lib/user-display-name";
 
 import { getProjectBoardService } from "./delivery-board.service";
 import { getProjectBudgetGroupsService, getProjectDetailService } from "./delivery-setup.service";
-import { describeTaskEffort } from "./delivery.types";
+import { describeTaskEffort, formatMinutesAsClock } from "./delivery.types";
 import { BoardWorkspace } from "./components/board-workspace";
 import { SetupBudgetNudge } from "./components/setup-budget-nudge";
 
@@ -58,8 +58,14 @@ export default async function DeliveryBoardPage({
   // entirely for everybody else rather than fetched and thrown away.
   const isAdmin = user.role === USER_ROLES.ADMIN;
 
-  const [detail, board, budgetGroups] = await Promise.all([
-    getProjectDetailService(projectId),
+  // Read first, because whether the budget read below is worth making
+  // depends on what kind of project this is - and an ongoing one has no
+  // budget to pool.
+  const detail = await getProjectDetailService(projectId);
+
+  const isOngoing = detail.project.kind === PROJECT_KINDS.ONGOING;
+
+  const [board, budgetGroups] = await Promise.all([
     getProjectBoardService(projectId),
     // -----------------------------------------------------------------
     // FOR THE BUDGET NUDGE, WHICH MOVED HERE FROM PROJECT SETUP.
@@ -75,7 +81,13 @@ export default async function DeliveryBoardPage({
     // (getProjectBudgetGroupsService uses requireProjectAccess), so this is
     // about not fetching what will not be rendered.
     // -----------------------------------------------------------------
-    isAdmin ? getProjectBudgetGroupsService(projectId) : undefined,
+    // NOT FOR AN ONGOING PROJECT, and skipped rather than fetched and
+    // discarded. The nudge it feeds asks somebody to finish allocating a
+    // budget that does not exist, and it never goes away on its own:
+    // markProjectBudgetAssignedService is what clears it, and stamping
+    // budget_assigned_at here would be a false claim in the one place the
+    // app records that planning was finished.
+    isAdmin && !isOngoing ? getProjectBudgetGroupsService(projectId) : undefined,
   ]);
 
   return (
@@ -90,7 +102,11 @@ export default async function DeliveryBoardPage({
       // Project titles and client names are typed by people. React renders
       // them as text, here and everywhere else in this feature.
       title={detail.project.title}
-      description={`${detail.project.clientName}. Each phase has its own board, with the same four columns.`}
+      description={
+        isOngoing
+          ? `${detail.project.clientName}. Standing time codes, grouped by phase. There is no budget and nothing to finish.`
+          : `${detail.project.clientName}. Each phase has its own board, with the same four columns.`
+      }
       // THE SAME LEDGER FORM AS EVERY CARD ON THE BOARD BELOW, out of the
       // same function - logged over estimated, one figure. It used to be a
       // prose line inside the workspace, directly under a header that
@@ -99,11 +115,24 @@ export default async function DeliveryBoardPage({
       // SAFE TO RENDER ON THE SERVER because every write on this screen goes
       // through `run`, which calls router.refresh() - so a logged hour
       // re-renders this page and the figure with it.
-      metric={{
-        value: describeTaskEffort(detail.rollup.budgetMinutes, detail.rollup.loggedMinutes).short,
-        label: "logged / estimated",
-        tone: detail.rollup.isOverBudget ? "caution" : "default",
-      }}
+      // AN ONGOING PROJECT GETS A DIFFERENT METRIC, not a reformatted one.
+      // There is no estimate to measure against and there never will be, so
+      // "logged / estimated" is a label for a ratio nobody is computing. It
+      // shows the total instead, which is the only figure such a project has
+      // and the one somebody actually wants from it.
+      metric={
+        isOngoing
+          ? {
+              value: formatMinutesAsClock(detail.rollup.loggedMinutes),
+              label: "logged",
+              tone: "default" as const,
+            }
+          : {
+              value: describeTaskEffort(detail.rollup.budgetMinutes, detail.rollup.loggedMinutes).short,
+              label: "logged / estimated",
+              tone: detail.rollup.isOverBudget ? ("caution" as const) : ("default" as const),
+            }
+      }
       // NO BUDGET REPORT LINK HERE, and that is a removal rather than an
       // omission. It sat on this header and on the project setup header, so
       // between them it appeared on every project screen an admin opened -

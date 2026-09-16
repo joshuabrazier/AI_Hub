@@ -10,6 +10,7 @@ import {
   type Project,
   type ProjectBudgetGroup,
   type ProjectMember,
+  type ProjectKind,
   type ProjectStatus,
   type RateBand,
   type UpdateProject,
@@ -87,6 +88,7 @@ export type UserProjectMembership = {
   title: string;
   status: ProjectStatus;
   isBillable: boolean;
+  kind: ProjectKind;
   isLead: boolean;
   rateBand: RateBand;
 };
@@ -241,6 +243,7 @@ export async function getProjectsForUserRepo(
         "p.title as title",
         "p.status as status",
         "p.isBillable as isBillable",
+        "p.kind as kind",
         "pm.isLead as isLead",
         "pm.rateBand as rateBand",
       ])

@@ -8,11 +8,13 @@ import { inspectAttachment } from "@/lib/ai/attachment-formats";
 import { requireUser } from "@/lib/auth/session-auth-server";
 import type { SessionUser } from "@/lib/auth/auth.types";
 import {
+  PROJECT_KINDS,
   PROJECT_STATUSES,
+  TASK_COLUMNS,
   TASK_COLUMN_LABELS,
   TASK_COLUMN_ORDER,
-  TASK_COLUMNS,
   USER_ROLES,
+  type ProjectKind,
   type ProjectStatus,
   type Task,
   type TaskColumn,
@@ -188,6 +190,8 @@ type ProjectAccess = {
   projectTitle: string;
   /** Carried so a write can refuse an archived project. */
   status: ProjectStatus;
+  /** Carried because it decides which columns the board draws. */
+  kind: ProjectKind;
   /** True for an admin, or for a member whose `is_lead` is set. */
   canEditTasks: boolean;
 };
@@ -221,6 +225,7 @@ async function resolveProjectAccess(user: SessionUser, projectId: string): Promi
       projectId: project.id,
       projectTitle: project.title,
       status: project.status,
+      kind: project.kind,
       // An admin is not a lead and still edits. The rule is imported so this
       // and the branch below cannot answer differently.
       canEditTasks: canEditProjectTasks(user.role, false),
@@ -236,6 +241,7 @@ async function resolveProjectAccess(user: SessionUser, projectId: string): Promi
     projectId: project.id,
     projectTitle: project.title,
     status: project.status,
+    kind: project.kind,
     // `isLead` comes straight off the membership row the authorising join
     // already read, so the second gate costs no extra query.
     canEditTasks: canEditProjectTasks(user.role, project.isLead),
@@ -511,16 +517,49 @@ export async function getProjectBoardService(projectId: string): Promise<BoardDT
       }
     }
 
+    // -----------------------------------------------------------------
+    // WHICH COLUMNS THIS BOARD DRAWS.
+    //
+    // All four for a delivery project. For an ongoing one, In progress plus
+    // any column that actually holds a card anywhere on the project: the
+    // four states mean nothing to a standing time code, but a card that is
+    // already in one of them must never become invisible - including one
+    // moved to Done, which is how a time code is retired.
+    //
+    // Computed across the WHOLE project rather than per phase, so the phases
+    // line up as columns of the same shape rather than each having its own
+    // width.
+    // -----------------------------------------------------------------
+    const isOngoing = access.kind === PROJECT_KINDS.ONGOING;
+
+    const occupied = new Set(
+      [...cardsByPhaseColumn.entries()]
+        .filter(([, cards]) => cards.length > 0)
+        .map(([key]) => key.split(":")[1] as TaskColumn),
+    );
+
+    const columns: readonly TaskColumn[] = isOngoing
+      ? TASK_COLUMN_ORDER.filter(
+          (column) => column === ONGOING_DEFAULT_COLUMN || occupied.has(column),
+        )
+      : TASK_COLUMN_ORDER;
+
     const boardPhases: BoardPhaseDTO[] = phases.map((phase) => {
-      const columns: BoardColumnDTO[] = TASK_COLUMN_ORDER.map((column) => ({
+      const phaseColumns: BoardColumnDTO[] = columns.map((column) => ({
         column,
         tasks: cardsByPhaseColumn.get(`${phase.id}:${column}`) ?? [],
       }));
 
-      return { phaseId: phase.id, phaseName: phase.name, position: phase.position, columns };
+      return { phaseId: phase.id, phaseName: phase.name, position: phase.position, columns: phaseColumns };
     });
 
-    return { projectId: access.projectId, canEditTasks: access.canEditTasks, phases: boardPhases };
+    return {
+      projectId: access.projectId,
+      canEditTasks: access.canEditTasks,
+      columns,
+      defaultColumn: isOngoing ? ONGOING_DEFAULT_COLUMN : TASK_COLUMNS.TODO,
+      phases: boardPhases,
+    };
   } catch (error) {
     throw handleError("getProjectBoardService", error);
   }
@@ -941,6 +980,32 @@ const MY_WORK_STATUSES = [
 
 const MY_WORK_COLUMNS = [TASK_COLUMNS.TODO, TASK_COLUMNS.IN_PROGRESS, TASK_COLUMNS.BLOCKED] as const;
 
+// -------------------------------------------------------------------
+// AND ONGOING PROJECTS ARE LEFT OUT, which is the third filter and the one
+// with a consequence worth stating.
+//
+// A work list is what REMAINS, and a standing time code never finishes.
+// "Annual Leave" and "Internal Meetings" are not cards anybody is going to
+// clear: assigned once, they would sit on that person's list for ever, and
+// because the landing page sorts blocked first and to-do last they would
+// outrank real work that actually needs doing.
+//
+// Leaving them unassigned by convention is not enough. Nothing enforces a
+// convention, and the moment a lead puts a name on one it is permanent
+// furniture on somebody's dashboard.
+//
+// THEY ARE STILL REACHABLE, and that matters: the timesheet is where hours
+// go onto these, and it is deliberately kind-blind - getMyProjectsService
+// returns every kind, so the Add-a-row picker still offers them. This
+// filter narrows one LIST, not what anybody can do.
+// -------------------------------------------------------------------
+const MY_WORK_KINDS = [PROJECT_KINDS.DELIVERY] as const;
+
+// Where work lands on an ongoing board, and the one column such a board
+// always draws. A standing time code is in use from the moment it exists -
+// there is no backlog of leave waiting to be started.
+const ONGOING_DEFAULT_COLUMN = TASK_COLUMNS.IN_PROGRESS;
+
 export async function getMyWorkService(): Promise<MyWorkItemDTO[]> {
   try {
     const user = await requireUser();
@@ -948,6 +1013,7 @@ export async function getMyWorkService(): Promise<MyWorkItemDTO[]> {
     const tasks = await getTasksAssignedToUserRepo(user.id, {
       projectStatuses: MY_WORK_STATUSES,
       boardColumns: MY_WORK_COLUMNS,
+      projectKinds: MY_WORK_KINDS,
     });
 
     if (tasks.length === 0) return [];

@@ -63,7 +63,29 @@ export async function GET(
   // file is simply not there, and saying which would tell somebody guessing
   // an id that a real transcription is behind it.
   if (!media) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // -----------------------------------------------------------------
+    // PLAIN TEXT, NOT JSON, because of how this URL is reached. It is an
+    // ordinary <a download> on the page rather than a fetch - deliberately,
+    // so the browser's download manager handles a large file - which means
+    // a 404 is RENDERED, and `{"error":"Not found"}` is what somebody sees
+    // after clicking "Recording" on a meeting whose audio has aged out of
+    // the retention window.
+    //
+    // A sentence costs nothing and answers the actual question, which is
+    // not "was there an error" but "where has my recording gone".
+    // -----------------------------------------------------------------
+    return new Response(
+      "This recording is no longer stored. Recordings are kept for a limited time and this one has passed it, or it was never uploaded. The transcript, if there is one, is unaffected.",
+      {
+        status: 404,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          // Served from this origin, so the same rule as every other
+          // upload response: never let a browser guess the type.
+          "X-Content-Type-Options": "nosniff",
+        },
+      },
+    );
   }
 
   const headers = new Headers({

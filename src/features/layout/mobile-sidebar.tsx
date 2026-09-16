@@ -64,25 +64,66 @@ function MobileCollapsible({ entry, pathname }: { entry: NavCollapsible; pathnam
     if (childActive) setOpen(true);
   }
 
+  // The group's own page, when it has one - see NavCollapsible.href. The
+  // sheet splits the row the same way the rail does, because a group that is
+  // also a place has two things to do and one button can only do one of them.
+  const selfActive = entry.href !== undefined && pathname === entry.href;
+
+  const chevron = (
+    <ChevronDown
+      size={16}
+      aria-hidden="true"
+      className={cn("ml-auto shrink-0 transition-transform duration-200", open && "rotate-180")}
+    />
+  );
+
+  const rowClasses = cn(
+    "flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
+    selfActive || childActive ? "text-primary" : "text-foreground hover:bg-muted",
+  );
+
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((previous) => !previous)}
-        aria-expanded={open}
-        className={cn(
-          "flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
-          childActive ? "text-primary" : "text-foreground hover:bg-muted",
-        )}
-      >
-        <Icon size={20} className="shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
-        <ChevronDown
-          size={16}
-          aria-hidden="true"
-          className={cn("ml-auto shrink-0 transition-transform duration-200", open && "rotate-180")}
-        />
-      </button>
+      {entry.href !== undefined ? (
+        <div className="flex items-center gap-1">
+          {/* SheetClose, exactly as MobileLink does it: following a link in
+              the sheet has to shut the sheet, or the page changes behind an
+              overlay that is still covering it. The DISCLOSURE beside it
+              deliberately does not - opening the list is why somebody came. */}
+          <SheetClose asChild>
+            <Link
+              href={entry.href}
+              aria-current={selfActive ? "page" : undefined}
+              className={cn(rowClasses, "min-w-0 flex-1")}
+            >
+              <Icon size={20} className="shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
+              <NavigationPendingReporter />
+            </Link>
+          </SheetClose>
+
+          <button
+            type="button"
+            onClick={() => setOpen((previous) => !previous)}
+            aria-expanded={open}
+            aria-label={`${open ? "Hide" : "Show"} ${entry.label.toLowerCase()}`}
+            className="flex size-10 shrink-0 items-center justify-center rounded-md text-foreground transition-colors hover:bg-muted"
+          >
+            {chevron}
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen((previous) => !previous)}
+          aria-expanded={open}
+          className={cn(rowClasses, "w-full")}
+        >
+          <Icon size={20} className="shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
+          {chevron}
+        </button>
+      )}
 
       {open && (
         <div className="mt-1 space-y-1">
