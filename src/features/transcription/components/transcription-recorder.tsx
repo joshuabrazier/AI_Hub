@@ -18,6 +18,7 @@ import {
   startClock,
   type ElapsedClock,
 } from "./elapsed-clock";
+import { shouldStopStalledRecorder } from "./recorder-watchdog";
 import {
   appendChunk,
   beginRecording,
@@ -352,6 +353,21 @@ export function TranscriptionRecorder({
   const lastChunkAtRef = useRef(0);
   const [hasStalled, setHasStalled] = useState(false);
 
+  // -----------------------------------------------------------------
+  // WHEN THE PAGE WAS LAST VISIBLE, which the watchdog above cannot work
+  // without.
+  //
+  // A backgrounded tab freezes BOTH halves of that comparison: the interval
+  // stops firing and the recorder stops producing chunks. So the first tick
+  // after somebody returns sees a gap of however long they were away and
+  // concludes the recorder is dead - ending a meeting that was about to
+  // carry on perfectly well, which is precisely the harm the watchdog
+  // exists to prevent.
+  //
+  // So silence only counts while the page was there to observe it.
+  // -----------------------------------------------------------------
+  const lastVisibleAtRef = useRef(0);
+
   const releaseStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
@@ -380,7 +396,21 @@ export function TranscriptionRecorder({
 
       // Three intervals, so one late chunk on a busy device is not treated
       // as death. Nothing arriving for that long while the clock runs is.
-      if (lastChunkAtRef.current > 0 && now - lastChunkAtRef.current > CHUNK_INTERVAL_MS * 3) {
+      //
+      // AND ONLY WHILE THE PAGE HAS BEEN WATCHING. A tab that was in the
+      // background froze the recorder and this timer together, so the gap
+      // on return says nothing about whether the recorder is alive - it
+      // says how long somebody was in another app. The grace period gives
+      // a resuming recorder time to produce its next chunk before anything
+      // is concluded from the silence.
+      if (
+        shouldStopStalledRecorder({
+          now,
+          lastChunkAt: lastChunkAtRef.current,
+          lastVisibleAt: lastVisibleAtRef.current,
+          chunkIntervalMs: CHUNK_INTERVAL_MS,
+        })
+      ) {
         // STOPPED THROUGH THE RECORDER, not by tearing the state down, so
         // the flush and the completeRecording path still run and whatever
         // did arrive is a finished recording rather than an abandoned one.
@@ -485,7 +515,14 @@ export function TranscriptionRecorder({
     acquire();
 
     const onVisibility = () => {
-      if (document.visibilityState === "visible") acquire();
+      if (document.visibilityState !== "visible") return;
+
+      // Stamped BEFORE the lock is asked for, so the watchdog's grace
+      // period starts from the moment the page came back rather than from
+      // whenever the request happened to settle.
+      lastVisibleAtRef.current = performance.now();
+
+      acquire();
     };
 
     document.addEventListener("visibilitychange", onVisibility);
@@ -751,6 +788,7 @@ export function TranscriptionRecorder({
       // the watchdog comparing against a timestamp from an hour ago.
       persistFailuresRef.current = 0;
       lastChunkAtRef.current = performance.now();
+      lastVisibleAtRef.current = performance.now();
       setIsDeviceCopyFailing(false);
       setHasStalled(false);
 
