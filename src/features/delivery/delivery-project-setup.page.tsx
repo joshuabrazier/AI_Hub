@@ -275,7 +275,13 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
           />
         </SetupStep>
 
-        <SetupDone isReady={team.isComplete && phases.isComplete} missing={missing}>
+        {/* READY IS ABOUT THE BOARD, NOT ABOUT THE TICKS. `missing` is empty
+            when the project has a lead and somewhere to put a task, which is
+            all the board needs. A People step left unticked because nobody
+            has confirmed who else is on the project does not make the board
+            unusable, and telling somebody working alone that their board is
+            not ready would be a nag they can never clear. */}
+        <SetupDone isReady={missing.length === 0} missing={missing}>
           <Button asChild>
             <Link href={ROUTES.adminProject(detail.project.id)}>Open the board</Link>
           </Button>
