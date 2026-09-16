@@ -11,10 +11,12 @@ import {
   cancelTeamsAutoImportService,
   createTranscriptionService,
   deleteTranscriptionService,
+  finishTranscriptionMediaReplacementService,
   getTranscriptTextService,
   importTeamsMeetingService,
   listTeamsMeetingsService,
   renameTranscriptionService,
+  replaceTranscriptionMediaService,
   retryTranscriptionSummaryService,
   startTranscriptionService,
 } from "./transcription.service";
@@ -33,6 +35,8 @@ import {
   ImportTeamsMeetingSchema,
   RenameTranscriptionRequestDTO,
   RenameTranscriptionSchema,
+  ReplaceTranscriptionMediaRequestDTO,
+  ReplaceTranscriptionMediaSchema,
   TeamsMeetingsDTO,
   TranscriptionDetailDTO,
   TranscriptionIdRequestDTO,
@@ -103,6 +107,52 @@ export async function startTranscriptionAction(
     return { success: true, data: transcription } satisfies ServerApiResponse<TranscriptionDetailDTO>;
   } catch (error) {
     return handleServerApiError("startTranscriptionAction", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The second rung of a retry: convert the recording and try that instead.
+//
+// Two actions because the bytes do not come through here. The browser
+// re-encodes the file and writes it straight to storage on the URL the
+// first action signs, and the second one adopts what landed - the same
+// shape a first upload has, for the same reason.
+//
+// Both take a `fileName`. Neither believes it: the media type is derived
+// from it server-side, and the storage key is computed from the row rather
+// than from anything sent.
+// -------------------------------------------------------------------
+export async function replaceTranscriptionMediaAction(
+  requestDTO: ReplaceTranscriptionMediaRequestDTO,
+): Promise<ServerApiResponse<TranscriptionUploadTicketDTO>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(ReplaceTranscriptionMediaSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const ticket = await replaceTranscriptionMediaService(validatedRequest.data);
+
+    return { success: true, data: ticket } satisfies ServerApiResponse<TranscriptionUploadTicketDTO>;
+  } catch (error) {
+    return handleServerApiError("replaceTranscriptionMediaAction", error);
+  }
+}
+
+export async function finishTranscriptionMediaReplacementAction(
+  requestDTO: ReplaceTranscriptionMediaRequestDTO,
+): Promise<ServerApiResponse<TranscriptionDetailDTO>> {
+  try {
+    await requireUser();
+
+    const validatedRequest = await validateRequest(ReplaceTranscriptionMediaSchema, requestDTO);
+    if (!validatedRequest.success) return validatedRequest.response;
+
+    const transcription = await finishTranscriptionMediaReplacementService(validatedRequest.data);
+
+    return { success: true, data: transcription } satisfies ServerApiResponse<TranscriptionDetailDTO>;
+  } catch (error) {
+    return handleServerApiError("finishTranscriptionMediaReplacementAction", error);
   }
 }
 

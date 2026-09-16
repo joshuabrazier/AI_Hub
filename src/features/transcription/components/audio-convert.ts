@@ -77,6 +77,23 @@ export type ConversionResult =
 export async function convertForTranscription(file: File): Promise<ConversionResult> {
   if (!needsConversion(file.name)) return { converted: false, reason: "not-needed" };
 
+  return convertToWav(file);
+}
+
+// -------------------------------------------------------------------
+// The same conversion, with no opinion about whether it is needed.
+//
+// THE GATE AND THE WORK ARE SEPARATE because the second caller is a
+// RECOVERY, and there the extension has already been proved wrong: the
+// service downloaded that exact file and could not decode it. Asking
+// `needsConversion` at that point would decline to convert a .webm on the
+// grounds that .webm normally works - which is true, and irrelevant to the
+// one in front of it.
+//
+// Before a first upload the gate is still right: converting a file the
+// service reads happily costs quality and time for nothing.
+// -------------------------------------------------------------------
+export async function convertToWav(file: File): Promise<ConversionResult> {
   // Safari before 14.1 and anything without Web Audio. Rare, and the
   // original still gets its chance.
   const AudioContextClass =

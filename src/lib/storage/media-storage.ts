@@ -43,9 +43,12 @@ import { envServer } from "@/lib/env-server";
 // the container legible when something has to be traced by hand, and means
 // a future per-person purge has something to work from - the transcription
 // rows themselves are gone by the time de-identification has finished.
-export function mediaStorageKey(userId: string, transcriptionId: string): string {
-  return `transcription/${userId}/${transcriptionId}`;
-}
+//
+// The rules themselves live in media-keys.ts, which is pure: this module
+// imports the Azure SDK at load, so anything a client component can reach
+// must not import it. Re-exported because every caller of this file
+// reasonably expects to find them here.
+export { mediaStorageKey, isReplacementMediaKey, nextMediaStorageKey } from "./media-keys";
 
 export function isMediaStorageConfigured(): boolean {
   return Boolean(envServer.AZURE_STORAGE_CONNECTION_STRING);

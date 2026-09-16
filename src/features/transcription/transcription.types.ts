@@ -8,6 +8,8 @@ import type {
   TranscriptionStatus,
 } from "@/lib/data/kysely-database-types";
 
+import type { TranscriptionFailureKind } from "./transcription-failure";
+
 const transcriptionIdSchema = z.string().min(TABLE_ID_LENGTH);
 
 // -------------------------------------------------------------------
@@ -361,6 +363,19 @@ export type TranscriptionSummaryDTO = {
   // than an "unknown" that reads like a fault.
   // -----------------------------------------------------------------
   filingStatus: TranscriptionFilingStatus | null;
+  // -----------------------------------------------------------------
+  // What KIND of failure this was, when it failed.
+  //
+  // Null on everything that has not failed, so there is one value to test
+  // rather than a status and a string to read together.
+  //
+  // The screen needs this because the useful next move differs by kind and
+  // the message alone does not separate them - `InvalidUri` and
+  // `InvalidData` differ by three letters and by everything else. Decided
+  // on the SERVER, where the error was written, rather than by the browser
+  // matching on prose it was handed.
+  // -----------------------------------------------------------------
+  failureKind: TranscriptionFailureKind | null;
 };
 
 // -------------------------------------------------------------------
@@ -373,6 +388,19 @@ export type TranscriptionSummaryDTO = {
 // -------------------------------------------------------------------
 export type TranscriptionDetailDTO = TranscriptionSummaryDTO & {
   transcript: string | null;
+  // -----------------------------------------------------------------
+  // Whether this row's media has ALREADY been re-encoded and refused.
+  //
+  // The one fact the screen needs to avoid an expensive loop: a failed row
+  // whose file the service could not read is converted automatically, and
+  // without this it would be converted again every time anybody opened it -
+  // several minutes of a laptop decoding a meeting to reach the same
+  // refusal. Once this is true the answer is that the recording itself is
+  // damaged, and the screen says so instead of trying a third time.
+  //
+  // Derived from the storage key server-side. The key itself never travels.
+  // -----------------------------------------------------------------
+  mediaWasReencoded: boolean;
   segments: TranscriptionSegment[];
   summary: string | null;
   // Null when SharePoint filing is not set up, or when this row predates it.
@@ -603,6 +631,22 @@ export const CreateTranscriptionSchema = z.object({
 });
 
 export type CreateTranscriptionRequestDTO = z.infer<typeof CreateTranscriptionSchema>;
+
+// -------------------------------------------------------------------
+// Replacing the media on a row that failed, with a re-encoded copy.
+//
+// `fileName` is sent on BOTH steps - claiming the URL and handing the
+// result back - and on both the server derives the media type from it
+// rather than believing anything about it. It is never a destination: the
+// storage key is computed from the row the server already looked up, so
+// the browser cannot name where its bytes go.
+// -------------------------------------------------------------------
+export const ReplaceTranscriptionMediaSchema = z.object({
+  transcriptionId: transcriptionIdSchema,
+  fileName: z.string().trim().min(1).max(255),
+});
+
+export type ReplaceTranscriptionMediaRequestDTO = z.infer<typeof ReplaceTranscriptionMediaSchema>;
 
 export const TranscriptionIdSchema = z.object({
   transcriptionId: transcriptionIdSchema,

@@ -87,6 +87,7 @@ import {
   isMediaStorageConfigured,
   mediaBlobUrl,
   mediaStorageKey,
+  nextMediaStorageKey,
   openMediaStream,
 } from "@/lib/storage/media-storage";
 import {
@@ -117,6 +118,7 @@ import {
   formatTimestamp,
   SUPPORTED_MEDIA_EXTENSIONS,
   mediaTypeForFileName,
+  type ReplaceTranscriptionMediaRequestDTO,
   speakerLabel,
   type CreateTranscriptionRequestDTO,
   type ImportTeamsMeetingRequestDTO,
@@ -1652,6 +1654,183 @@ export async function startTranscriptionService(
   } catch (error) {
     throw handleError("startTranscriptionService", error);
   }
+}
+
+// -------------------------------------------------------------------
+// ===================================================================
+// TRYING AGAIN WITH DIFFERENT BYTES
+// ===================================================================
+//
+// The "Try again" button on a failed row hands Azure the same file a second
+// time. For a transient fault that is exactly right. For the commonest
+// failure this feature has - the service downloaded the recording and could
+// not decode it - it can never work, and it was being offered as though it
+// might.
+//
+// So there is a second rung: re-encode the media and try THAT. The browser
+// does the encoding, because ffmpeg is not on the App Service Node runtime
+// and the device already has, or can fetch, the file. These two services
+// are the server half - claim a destination, then accept the result.
+//
+// WHY TWO STEPS RATHER THAN ONE. The bytes never pass through the app; the
+// browser writes them straight to storage on a write-only URL, exactly as a
+// first upload does. Something has to sign that URL before, and something
+// has to verify what landed after, and nothing can happen in between.
+//
+// WHAT THE BROWSER DOES NOT GET TO DECIDE. Not the destination - the key is
+// computed from the row the server looked up - and not the media type,
+// which is derived from the name on both steps. A `fileName` is a label and
+// a source of an extension, and nothing else.
+// -------------------------------------------------------------------
+export async function replaceTranscriptionMediaService(
+  requestDTO: ReplaceTranscriptionMediaRequestDTO,
+): Promise<TranscriptionUploadTicketDTO> {
+  try {
+    const user = await requireUser();
+
+    const transcription = await requireOwnedTranscription(requestDTO.transcriptionId, user.id);
+
+    if (!isMediaStorageConfigured() || !isSpeechConfigured()) {
+      throw new DisplayErrorMessage("Transcription is not configured on this environment.");
+    }
+
+    // Same check as a first upload and for the same reason: there is no
+    // point re-encoding a meeting to put it somewhere Azure cannot read.
+    if (!isMediaReachableByAzureServices()) {
+      throw new DisplayErrorMessage(UNREACHABLE_STORAGE_MESSAGE);
+    }
+
+    const { mediaType, storageKey } = replacementTargetFor(transcription, requestDTO.fileName);
+
+    return {
+      transcriptionId: transcription.id,
+      // Write-only, one blob, an hour - the same credential shape a first
+      // upload gets, on a key this row does not yet claim.
+      uploadUrl: await createUploadUrl(nextMediaStorageKey(storageKey)),
+      mediaType,
+    };
+  } catch (error) {
+    throw handleError("replaceTranscriptionMediaService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The re-encoded file has landed. Adopt it and start the job.
+//
+// THE ROW IS SWITCHED OVER IN ONE UPDATE, and only after the new blob has
+// been proved to exist, to be non-empty and to be within the service's
+// ceiling. Until that update the row still claims the original, so every
+// way this can fail leaves the person exactly where they were - with their
+// recording and a failure they can retry - rather than with neither.
+//
+// THE OLD BLOB IS DELETED AFTER, not before. A Postgres row cannot cascade
+// into storage, so the rule throughout this feature is that a file goes
+// when nothing claims it; doing it in the other order would, on a crash
+// between the two, destroy the only copy of a meeting.
+// -------------------------------------------------------------------
+export async function finishTranscriptionMediaReplacementService(
+  requestDTO: ReplaceTranscriptionMediaRequestDTO,
+): Promise<TranscriptionDetailDTO> {
+  try {
+    const user = await requireUser();
+
+    const transcription = await requireOwnedTranscription(requestDTO.transcriptionId, user.id);
+
+    const { mediaType, storageKey: previousKey } = replacementTargetFor(
+      transcription,
+      requestDTO.fileName,
+    );
+
+    const replacementKey = nextMediaStorageKey(previousKey);
+
+    const media = await getMediaInfo(replacementKey);
+
+    if (!media.exists || media.byteSize === null || media.byteSize === 0) {
+      throw new DisplayErrorMessage("The converted recording did not finish uploading. Try again.");
+    }
+
+    // ---------------------------------------------------------------
+    // CHECKED BEFORE THE ROW MOVES, which is the whole reason this is not
+    // left to startTranscriptionService. That one deletes the media it
+    // refuses - correct for a file nothing will ever read, and catastrophic
+    // here, because by then the media it would delete is the replacement
+    // AND the original has already been let go. 16 kHz mono PCM is
+    // uncompressed, so a long meeting genuinely can come out over the
+    // ceiling: this is a real path rather than a defensive one.
+    // ---------------------------------------------------------------
+    if (media.byteSize > MAX_MEDIA_BYTES) {
+      // The replacement is the thing nothing claims, so the replacement is
+      // the thing that goes.
+      await deleteMedia(replacementKey);
+
+      throw new DisplayErrorMessage(
+        `Converted, that recording comes to ${Math.round(media.byteSize / (1024 * 1024))} MB, which is over the ${Math.round(MAX_MEDIA_BYTES / (1024 * 1024))} MB the transcription service accepts. Your original recording is untouched and can still be downloaded.`,
+      );
+    }
+
+    await updateTranscriptionForUserRepo(transcription.id, user.id, {
+      storageKey: replacementKey,
+      mediaType,
+      byteSize: media.byteSize,
+      // Cleared here as well as by the start below, so a failure between
+      // the two does not leave the previous reason sitting on a row whose
+      // file is no longer the one that produced it.
+      error: null,
+    });
+
+    // Unclaimed as of the update above, so it goes now rather than waiting
+    // for the monthly reconciliation pass to notice.
+    await deleteMedia(previousKey).catch((error) => {
+      console.warn(`[transcription] could not remove the replaced recording ${previousKey}`, error);
+    });
+
+    revalidateTranscriptionViews();
+
+    // Every size, reachability and job-creation check lives there, and this
+    // path must not grow a second copy of any of them.
+    return await startTranscriptionService({ transcriptionId: transcription.id });
+  } catch (error) {
+    throw handleError("finishTranscriptionMediaReplacementService", error);
+  }
+}
+
+// -------------------------------------------------------------------
+// The checks both halves of a replacement share.
+//
+// In one place because they have to agree: the two calls are minutes apart
+// and compute the same storage key from the same row, so a rule applied on
+// one and not the other would sign a URL for a destination the second step
+// would refuse.
+// -------------------------------------------------------------------
+function replacementTargetFor(
+  transcription: Transcription,
+  fileName: string,
+): { mediaType: string; storageKey: string } {
+  // Only a row with nothing to lose. A completed transcription has a
+  // transcript people are reading, and replacing its media would either
+  // orphan that text or throw it away - neither of which anybody asked for.
+  const replaceable: string[] = [
+    TRANSCRIPTION_STATUSES.FAILED,
+    TRANSCRIPTION_STATUSES.AWAITING_MEDIA,
+  ];
+
+  if (!replaceable.includes(transcription.status)) {
+    throw new DisplayErrorMessage("That transcription is not waiting to be transcribed.");
+  }
+
+  // A Teams import was never uploaded here - Teams transcribed the meeting
+  // and only the text was fetched - so there is no file to replace.
+  if (!transcription.storageKey) {
+    throw new DisplayErrorMessage("That transcription has no recording to convert.");
+  }
+
+  const mediaType = mediaTypeForFileName(fileName);
+
+  if (!mediaType) {
+    throw new DisplayErrorMessage("That is not a file type this can transcribe.");
+  }
+
+  return { mediaType, storageKey: transcription.storageKey };
 }
 
 // -------------------------------------------------------------------

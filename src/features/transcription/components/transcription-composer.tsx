@@ -27,6 +27,7 @@ import {
   type TranscriptionPageDTO,
 } from "../transcription.types";
 import { convertForTranscription, needsConversion } from "./audio-convert";
+import { firstStreamOf, inspectRecording } from "./recording-integrity";
 import {
   assembleRecording,
   discardRecording,
@@ -289,9 +290,59 @@ export function TranscriptionComposer({
   // was recorded, and re-encode only if the service actually refuses it.
   // -------------------------------------------------------------------
 
+  // -------------------------------------------------------------------
+  // CHECK THE BYTES BEFORE THEY GO ANYWHERE, AND REPAIR WHAT CAN BE REPAIRED.
+  //
+  // A malformed recording used to be discovered by Azure, minutes later,
+  // as "the audio format is invalid or cannot be detected" - by which point
+  // somebody had waited out an upload and a job for a file that was never
+  // going to work. The bytes are right here, so the answer is right here.
+  //
+  // A SPLICED FILE IS TRUNCATED TO ITS FIRST STREAM rather than refused.
+  // That half is a complete, playable recording; the rest is a second
+  // document no decoder will read past. Half a meeting beats an error
+  // message, and the person is told exactly what was kept.
+  //
+  // A HEADERLESS FILE IS REFUSED, because there is nothing to repair - the
+  // part that says what the file IS is the part that is missing.
+  //
+  // ANYTHING UNRECOGNISED IS LET THROUGH UNTOUCHED. This knows two
+  // containers and the upload accepts many more, so treating "not one of my
+  // two" as broken would reject files that transcribe perfectly.
+  // -------------------------------------------------------------------
+  const soundMediaOrNull = async (media: Blob): Promise<Blob | null> => {
+    const integrity = await inspectRecording(media);
+
+    if (integrity.kind === "headerless") {
+      toast.error(
+        "The start of that recording was not saved to this device, so the file has no header and nothing can read it. Save a copy if you want the audio.",
+      );
+
+      return null;
+    }
+
+    if (integrity.kind === "spliced") {
+      toast.warning(
+        `That recording was saved as ${integrity.streams} separate takes in one file, which the transcription service cannot read. The first take will be transcribed; anything after it is in the saved copy only.`,
+      );
+
+      return firstStreamOf(media, integrity);
+    }
+
+    return media;
+  };
+
   const submitRecording = async (recording: FinishedRecording) => {
+    const media = await soundMediaOrNull(recording.media);
+
+    if (!media) {
+      // Kept on the device and surfaced, rather than the screen going quiet.
+      await refreshPending();
+      return;
+    }
+
     const result = await upload({
-      media: recording.media,
+      media,
       // The extension is what the server derives the media type from, so it
       // has to be the one the recorder actually produced.
       fileName: `recording${recording.extension}`,
@@ -363,8 +414,12 @@ export function TranscriptionComposer({
         );
       }
 
+      const media = await soundMediaOrNull(assembled.media);
+
+      if (!media) return;
+
       const result = await upload({
-        media: assembled.media,
+        media,
         // FALLING BACK on the extension, because this row came out of
         // IndexedDB rather than from the recorder running now: a row written
         // by an earlier version predates the field, and a type cannot reach

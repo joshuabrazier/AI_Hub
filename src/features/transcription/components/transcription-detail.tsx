@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { AudioLines, ExternalLink, FileText, FolderOpen, Loader2, RefreshCw, Sparkles, TriangleAlert } from "lucide-react";
@@ -37,8 +37,10 @@ import {
   type TranscriptionDetailDTO,
   type TranscriptionFilingDTO,
 } from "../transcription.types";
+import { canRetryByReencoding, TRANSCRIPTION_FAILURE_KINDS, type TranscriptionFailureKind } from "../transcription-failure";
 import { FilingApproval } from "./filing-approval";
 import { TranscriptionProgress } from "./transcription-progress";
+import { REENCODE_STAGE_LABELS, useTranscriptionReencode } from "./use-transcription-reencode";
 
 // -------------------------------------------------------------------
 // TranscriptionDetail
@@ -194,6 +196,94 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
   // rather than as one that never existed.
   const isStalled = current.status === TRANSCRIPTION_STATUSES.AWAITING_MEDIA;
 
+  // -------------------------------------------------------------------
+  // ===================================================================
+  // A FAILURE IS NOT ONE THING, AND THE SCREEN USED TO TREAT IT AS ONE
+  // ===================================================================
+  //
+  // Every failed transcription showed Azure's sentence and a button that
+  // re-sent the identical file. For the commonest failure - the service
+  // downloaded the recording and could not decode it - that button could
+  // never work, and offering it was the app pretending to have something to
+  // try when it did not.
+  //
+  // So a decode failure now CONVERTS THE RECORDING AND TRIES AGAIN, by
+  // itself, before anybody is shown a dead end. Everything else keeps the
+  // plain retry, plus a sentence saying what the message actually means.
+  // -------------------------------------------------------------------
+  const { reencode, stage: reencodeStage, progress: reencodeProgress, isReencoding } =
+    useTranscriptionReencode();
+
+  // A Teams import was never uploaded here, so there is no file to convert:
+  // Teams transcribed the meeting and only the text was fetched.
+  const hasConvertibleMedia = isFailed && current.source !== TRANSCRIPTION_SOURCES.TEAMS;
+
+  // ALREADY CONVERTED ONCE IS THE END OF THE LADDER. Two decoders have now
+  // refused it - Azure's and this browser's own, which produced the WAV -
+  // so a third attempt would decode the same audio to the same samples and
+  // be refused for the same reason.
+  const canConvert = hasConvertibleMedia && !current.mediaWasReencoded;
+
+  const shouldConvertAutomatically =
+    canConvert && canRetryByReencoding(current.failureKind ?? TRANSCRIPTION_FAILURE_KINDS.OTHER);
+
+  // Offered as a button for a failure nothing recognised, where converting
+  // is a reasonable guess rather than the known answer - and deliberately
+  // not run automatically, because it is minutes of somebody's laptop.
+  const canConvertByHand = canConvert && current.failureKind === TRANSCRIPTION_FAILURE_KINDS.OTHER;
+
+  const convertAndRetry = async () => {
+    const updated = await reencode(current.id);
+
+    if (!updated) return;
+
+    setCurrent(updated);
+    router.refresh();
+  };
+
+  // -------------------------------------------------------------------
+  // Run it without being asked, once per row.
+  //
+  // The ref is what makes "once" true across the re-renders this causes:
+  // the conversion finishes by replacing `current`, which re-runs this, and
+  // a row that fails AGAIN after converting would otherwise start over. The
+  // server-side guard is `mediaWasReencoded`; this is the one that holds
+  // within a single visit, before that flag has come back.
+  // -------------------------------------------------------------------
+  const convertedAutomatically = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!shouldConvertAutomatically) return;
+    if (convertedAutomatically.current.has(current.id)) return;
+
+    convertedAutomatically.current.add(current.id);
+
+    let cancelled = false;
+
+    void (async () => {
+      const updated = await reencode(current.id);
+
+      // Navigated away mid-conversion. The work still landed on the server -
+      // the row has been switched over and a job started - so there is
+      // nothing to undo, only a component that must not write to state it no
+      // longer owns.
+      if (cancelled || !updated) return;
+
+      setCurrent(updated);
+      router.refresh();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shouldConvertAutomatically, current.id, reencode, router]);
+
+  // -------------------------------------------------------------------
+  // The sentence that says what to do, which the service's own message does
+  // not. Null where there is nothing honest to add.
+  // -------------------------------------------------------------------
+  const failureGuidance = guidanceFor(current.failureKind, current.mediaWasReencoded, shouldConvertAutomatically);
+
   // AWAITING_MEDIA IS INCLUDED, and it is the case that matters most. A row
   // sitting there means the blob was committed but the job never started -
   // and once a job HAS started the device copy is discarded, so on a stalled
@@ -286,17 +376,74 @@ export function TranscriptionDetail({ detail }: { detail: TranscriptionDetailDTO
                 ? "Nothing was handed to the transcription service. Try again, or delete this and upload the file once more."
                 : (current.error ?? "")}
             </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-5"
-              onClick={retryTranscription}
-              disabled={isPending}
-              loading={isPending}
-            >
-              <RefreshCw size={14} aria-hidden="true" />
-              Try again
-            </Button>
+
+            {/* ------------------------------------------------------------
+                WHAT THAT MESSAGE ACTUALLY MEANS, and what is worth doing
+                about it. Azure's own sentence names a URI and a kind, which
+                is accurate and tells nobody whether to click the button, ring
+                an administrator or give up. Only shown when there is
+                something to add - an unclassified failure keeps its message
+                and nothing else.
+                ------------------------------------------------------------ */}
+            {isFailed && failureGuidance ? (
+              <p className="mt-2 max-w-lg text-sm text-muted-foreground">{failureGuidance}</p>
+            ) : null}
+
+            {/* ------------------------------------------------------------
+                The conversion, while it runs. A progress bar for the upload,
+                and a named stage for everything else - fetching a recording
+                back and decoding it are minutes of apparent nothing, and a
+                static spinner through that reads as a hung page.
+                ------------------------------------------------------------ */}
+            {isReencoding ? (
+              <div className="mt-5 w-full max-w-sm">
+                <p className="flex items-center justify-center gap-2 text-sm text-foreground">
+                  <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                  {reencodeStage ? REENCODE_STAGE_LABELS[reencodeStage] : ""}
+                </p>
+
+                {reencodeProgress !== null ? (
+                  <div
+                    className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"
+                    role="progressbar"
+                    aria-valuenow={reencodeProgress}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label="Conversion upload progress"
+                  >
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{ width: `${reencodeProgress}%` }}
+                    />
+                  </div>
+                ) : null}
+
+                <p className="mt-2 text-xs text-muted-foreground">Keep this page open.</p>
+              </div>
+            ) : (
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={retryTranscription}
+                  disabled={isPending}
+                  loading={isPending}
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                  Try again
+                </Button>
+
+                {/* Offered by hand only where converting is a guess worth
+                    making. Where it is the obvious answer it has already run
+                    on its own, and where it cannot help it is not here. */}
+                {canConvertByHand ? (
+                  <Button type="button" variant="outline" onClick={convertAndRetry} disabled={isPending}>
+                    <AudioLines size={14} aria-hidden="true" />
+                    Convert and try again
+                  </Button>
+                ) : null}
+              </div>
+            )}
           </div>
         ) : null}
 
@@ -581,4 +728,49 @@ function FilingNote({
       {fileNowButton("Try again")}
     </div>
   );
+}
+
+// -------------------------------------------------------------------
+// What the failure means, in terms of what to do next.
+//
+// SEPARATED BY WHO CAN FIX IT, because that is the only distinction that
+// changes anybody's afternoon. A recording the service cannot decode is the
+// app's problem and it is already converting it. A recording the service
+// cannot REACH is an Azure role assignment, and no amount of clicking from
+// a browser has ever moved one - telling somebody to try again there wastes
+// their time and hides the real answer from whoever could act on it.
+//
+// Null for an unclassified failure. The service's own message is still
+// shown above, and inventing an explanation for a message nothing here
+// recognises would be worse than saying nothing.
+// -------------------------------------------------------------------
+function guidanceFor(
+  kind: TranscriptionFailureKind | null,
+  wasReencoded: boolean,
+  isConvertingAutomatically: boolean,
+): string | null {
+  if (kind === TRANSCRIPTION_FAILURE_KINDS.UNREACHABLE) {
+    return "The transcription service could not fetch the stored recording, which is a permissions problem on the storage account rather than anything wrong with your file. An administrator needs to give the Speech resource the Storage Blob Data Reader role. Your recording is safe and can be downloaded.";
+  }
+
+  if (kind === TRANSCRIPTION_FAILURE_KINDS.TOO_LARGE) {
+    return "Nothing further can be done with this one here. If it is a screen or video recording, export the audio on its own and upload that instead - it is a fraction of the size.";
+  }
+
+  if (kind === TRANSCRIPTION_FAILURE_KINDS.UNDECODABLE) {
+    if (wasReencoded) {
+      // The end of the ladder, said plainly. Two independent decoders have
+      // refused it, so the finding is about the recording rather than about
+      // the format - and that is worth stating, because it is the answer to
+      // "why does it play on my machine?" (a player reads what it can and
+      // stops; a transcriber cannot).
+      return "This recording was converted to plain uncompressed audio and the service still could not read it. Two different decoders have now refused it, which points at the recording itself being damaged rather than simply being in an awkward format. Download it and see how much of it will play.";
+    }
+
+    return isConvertingAutomatically
+      ? "The service could not read that file, so it is being converted to plain uncompressed audio and sent again. Nothing is lost if this does not work - the original recording is kept."
+      : "The service could not read that file. Converting it to plain uncompressed audio is the thing most likely to help.";
+  }
+
+  return null;
 }
