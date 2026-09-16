@@ -12,7 +12,7 @@ import { MESSAGES } from "@/lib/constants";
 import { MAX_BRIEF_CHARS } from "@/lib/delivery/project-plan.prompt";
 import type { ResolvedProjectPlan } from "@/lib/delivery/project-plan";
 import { handleFrontendErrorWithToast } from "@/lib/handle-errors";
-import { ROUTES } from "@/lib/routes";
+import { projectSetupForRole } from "@/lib/routes";
 
 import { applyProjectPlanAction, draftProjectPlanAction } from "../project-plan.actions";
 
@@ -42,7 +42,15 @@ import { applyProjectPlanAction, draftProjectPlanAction } from "../project-plan.
 // and offering a disabled button with a tooltip is a worse way of saying so
 // than not offering one.
 // ===================================================================
-export function SetupPlanWithAi() {
+export function SetupPlanWithAi({
+  // The caller's area, resolved from the session by the page. A string rather
+  // than a resolved href or a function: a function cannot cross the
+  // server-client boundary at all, and a resolved href would put the routing
+  // rule in two places. routes.ts is pure, so the helper is callable here.
+  role,
+}: {
+  role: string;
+}) {
   const router = useRouter();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -84,7 +92,7 @@ export function SetupPlanWithAi() {
         // Straight to setup rather than the board: a plan leaves rate bands
         // unset and often no lead, and setup is the screen that says which
         // of those is still missing.
-        router.push(ROUTES.adminProjectSetup(response.data.projectId));
+        router.push(projectSetupForRole(role, response.data.projectId));
       } catch (error) {
         handleFrontendErrorWithToast(error);
       }

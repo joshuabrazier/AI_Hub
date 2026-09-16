@@ -103,14 +103,18 @@ export default async function DeliveryProjectSetupPage({ projectId }: { projectI
             Collapsed until asked for, so it is an offer rather than a
             detour.
             ----------------------------------------------------------- */}
-        {/* ADMIN ONLY, and hidden rather than shown-then-refused. Both of
-            its actions guard on [ADMIN] and project-plan.service re-checks
-            the role in three more places, so for a manager every button in
-            this panel is a refusal waiting to happen. Widening it is real
-            work - it drafts and then APPLIES a whole project, its phases and
-            its tasks - and it is not what "managers can create projects"
-            asked for. A manager fills the form in. */}
-        {isAdmin ? <SetupPlanWithAi /> : null}
+        {/* MANAGERS TOO, now that the whole path is theirs to walk. It was
+            admin-only for one commit - its two actions and three re-checks
+            inside project-plan.service all read [ADMIN] - and showing a
+            manager a panel whose every button refuses them is worse than not
+            showing it, so it was hidden rather than left to fail.
+
+            Widening it needed more than five role lists. The apply step
+            REPLACES the member set with the people the brief mentioned, and
+            the person pasting the brief is usually not one of them - so a
+            manager could have described a project, applied it, and lost it on
+            the spot. See the note in applyProjectPlanService. */}
+        <SetupPlanWithAi role={user.role} />
 
         <SetupProjectCreateForm clients={clients} role={user.role} />
       </PortalPage>

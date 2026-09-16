@@ -85,8 +85,8 @@ export async function applyProjectPlanService(
     // act everywhere else in this module, and this is the one path that can
     // be reached without a browser session - so it is the last place the
     // rule can be enforced and the first place it would be missed.
-    if (actor.role !== USER_ROLES.ADMIN) {
-      throw new DisplayErrorMessage("Only an administrator can create a project.");
+    if (actor.role !== USER_ROLES.ADMIN && actor.role !== USER_ROLES.MANAGER) {
+      throw new DisplayErrorMessage("Only an administrator or a manager can create a project.");
     }
 
     // A plan that still carries a blocker was never applicable. The caller
@@ -164,20 +164,48 @@ export async function applyProjectPlanService(
       // project is a silent dead end the board would never show them. The
       // resolver has already put everybody with a task into this list.
       // ---------------------------------------------------------------
-      if (plan.members.length > 0) {
-        await setProjectMembersRepo(
-          project.id,
-          plan.members.map((member) => ({
-            userId: member.userId,
-            isLead: member.isLead,
-            // The band nobody chose. A plan describes work, not pay, and
-            // guessing somebody's band from a sentence is not a thing this
-            // should do - the rates screen is where that belongs.
-            rateBand: RATE_BANDS.STANDARD,
-          })),
-          trx,
-        );
+      // ---------------------------------------------------------------
+      // WHOEVER APPLIED THE PLAN IS ON THE PROJECT, AS LEAD, WHATEVER THE
+      // PLAN SAID - and this is not a nicety, it is what stops the feature
+      // handing somebody a project they cannot reach.
+      //
+      // setProjectMembersRepo REPLACES the member set. The plan's members are
+      // the people the brief mentioned, and the person pasting the brief is
+      // very often not one of them. Without this a manager could describe a
+      // project, apply it, and immediately lose it: absent from their
+      // Projects list, and refused by requireProjectStructureAccess on the
+      // setup screen, because both are membership questions and they had no
+      // membership row. An admin never noticed because an admin's reach comes
+      // from their role.
+      //
+      // It matches createProjectService, which has made the creator the lead
+      // since the day a project stopped starting with nobody on it. Two ways
+      // to create a project that disagree about who ends up running it is the
+      // kind of difference nobody finds until it bites.
+      //
+      // IF THE PLAN NAMED A LEAD, THERE ARE NOW TWO, and that is correct
+      // rather than tolerated: `isLead` is per row, it grants editing rather
+      // than exclusivity, and the person who made the project needs it. The
+      // members panel can demote either of them afterwards.
+      // ---------------------------------------------------------------
+      const members = plan.members.map((member) => ({
+        userId: member.userId,
+        isLead: member.isLead,
+        // The band nobody chose. A plan describes work, not pay, and guessing
+        // somebody's band from a sentence is not a thing this should do - the
+        // rates screen is where that belongs.
+        rateBand: RATE_BANDS.STANDARD,
+      }));
+
+      const creator = members.find((member) => member.userId === actor.id);
+
+      if (creator) {
+        creator.isLead = true;
+      } else {
+        members.push({ userId: actor.id, isLead: true, rateBand: RATE_BANDS.STANDARD });
       }
+
+      await setProjectMembersRepo(project.id, members, trx);
 
       let taskCount = 0;
 
@@ -287,8 +315,8 @@ export async function planProjectService(
   actor: { id: string; role: UserRole },
 ): Promise<ResolvedProjectPlan> {
   try {
-    if (actor.role !== USER_ROLES.ADMIN) {
-      throw new DisplayErrorMessage("Only an administrator can create a project.");
+    if (actor.role !== USER_ROLES.ADMIN && actor.role !== USER_ROLES.MANAGER) {
+      throw new DisplayErrorMessage("Only an administrator or a manager can create a project.");
     }
 
     const [clients, people] = await Promise.all([
@@ -349,8 +377,8 @@ export async function draftProjectPlanService(
   actor: { id: string; role: UserRole },
 ): Promise<ResolvedProjectPlan> {
   try {
-    if (actor.role !== USER_ROLES.ADMIN) {
-      throw new DisplayErrorMessage("Only an administrator can create a project.");
+    if (actor.role !== USER_ROLES.ADMIN && actor.role !== USER_ROLES.MANAGER) {
+      throw new DisplayErrorMessage("Only an administrator or a manager can create a project.");
     }
 
     const trimmed = brief.trim();
