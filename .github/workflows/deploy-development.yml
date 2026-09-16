@@ -153,13 +153,54 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # A throwaway 32-byte key for this run only, exactly as ci.yml does it.
+      # The unit tests round-trip encrypt and decrypt, so any valid key works,
+      # and generating it here means no key-shaped value is ever committed.
+      - name: Generate a per-run field encryption key
+        run: echo "FIELD_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
       # The gate. CI runs this too on the same push, but the two are
       # independent workflows - CI going red does not stop a deploy, so
       # without this the dev server would take every merge regardless. tsc and
       # lint are not repeated: `next build` below does both and fails on
       # either, so running them here would pay for the same work twice.
+      #
+      # -----------------------------------------------------------------
+      # THE DUMMY ENV IS ON THE STEP, NOT THE WORKFLOW, AND THAT IS THE WHOLE
+      # POINT OF WRITING IT OUT TWICE.
+      #
+      # env-client and env-server validate at IMPORT time, so a test that
+      # never touches a URL still fails without one - vitest.config.ts feeds
+      # them through `loadEnv`, which finds a local .env and finds nothing on
+      # a runner. ci.yml solves this with a WORKFLOW-level env block, which is
+      # right for a workflow that only ever verifies.
+      #
+      # It would be wrong here. This workflow also BUILDS, and a workflow-level
+      # value is inherited by every step that does not override it - so one
+      # NEXT_PUBLIC_* missing from the Build step below would silently fall
+      # back to a dummy and get BAKED INTO THE DEPLOYED BUNDLE. The dev site
+      # would come up titled "CI", pointing at ci.example.com, and nothing in
+      # the run would be red. Step scope makes that impossible: these values
+      # exist for the length of one `pnpm test` and are gone.
+      #
+      # They are dummies, not credentials - they only have to satisfy the Zod
+      # shape. Keep them in step with ci.yml's block, which is the copy to
+      # read if the schema gains a required variable.
+      # -----------------------------------------------------------------
       - name: Test
         run: pnpm test
+        env:
+          MODE: test
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          BETTER_AUTH_SECRET: ci-dummy-better-auth-secret-do-not-use-000
+          EMAIL_FROM_ADDRESS: ci@example.com
+          NEXT_PUBLIC_APP_TITLE: CI
+          NEXT_PUBLIC_APP_DESCRIPTION: CI verification build
+          NEXT_PUBLIC_APP_URL: https://ci.example.com
+          NEXT_PUBLIC_APP_TIME_ZONE: Australia/Adelaide
+          NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX: ci
+          NEXT_PUBLIC_PASSWORD_MIN_LENGTH: "8"
+          NEXT_PUBLIC_PASSWORD_MAX_LENGTH: "128"
 
       # Built HERE on the CI runner rather than on the App Service, which was
       # OOM-hanging on `next build`. Because the build runs off-box, the values
