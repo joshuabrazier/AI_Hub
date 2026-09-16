@@ -15,36 +15,51 @@ name: Deploy development to Azure
 #      the only thing standing between a red commit and the shared dev box.
 #
 # -------------------------------------------------------------------
-# WHAT TO SET, AND WHERE. It reads the SAME names deploy.yml reads, and gets
-# different values because of `environment: development` below. GitHub
-# resolves an environment's Variables and Secrets ahead of the repo-level
-# ones, so only what DIFFERS between dev and production has to be set twice.
+# WHAT TO SET, AND WHERE.
 #
-# In the repo: Settings -> Environments -> New environment -> `development`.
+# Settings -> Secrets and variables -> Actions. Four new entries, all at the
+# REPOSITORY level - there is nothing to create first and no environment to
+# configure:
 #
-# Set THESE on the environment (they differ per server):
-#
-#   AZURE_WEBAPP_NAME               Variable  the new App Service's name
-#   NEXT_PUBLIC_APP_URL             Variable  its hostname, NO https://
-#   AZURE_WEBAPP_PUBLISH_PROFILE    Secret    Get publish profile, whole XML
-#   DATABASE_URL                    Secret    the DEV database, not production
-#
-# Leave the rest at repo level. NEXT_PUBLIC_APP_TITLE, the password length
-# pair, the timezone and the VAPID public key are the same app either way, and
-# duplicating them into the environment only creates two places to forget.
-#
-# NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX is the one judgement call in that
-# list. Sharing it is fine - the cookie is scoped to the hostname, so dev and
-# production never see each other's - but giving dev its own prefix means a
-# browser signed into both does not have two identically-named cookies to look
-# at while you are debugging one of them.
+#   AZURE_WEBAPP_NAME_DEV             Variable  the new App Service's name
+#   NEXT_PUBLIC_APP_URL_DEV           Variable  its hostname, NO https://
+#   AZURE_WEBAPP_PUBLISH_PROFILE_DEV  Secret    Get publish profile, whole XML
+#   DATABASE_URL_DEV                  Secret    the DEV database, not production
 #
 # -------------------------------------------------------------------
-# DATABASE_URL MUST BE THE DEV DATABASE, and this is the line to read twice.
+# WHY SUFFIXED NAMES RATHER THAN A GITHUB ENVIRONMENT.
+#
+# An Environment is the tidier mechanism - the same names resolve to different
+# values per target, so only what differs is set twice - and it is not
+# available here: on a PRIVATE repository, Environments need Pro, Team or
+# Enterprise, and on Free the Settings entry is absent rather than disabled.
+#
+# So the two targets are told apart by NAME instead. The cost is that four
+# entries exist twice and a fifth could drift; the benefit is that this works
+# on any plan and needs nothing set up beforehand. If the repo ever moves to a
+# plan with Environments, this becomes `environment: development` and the four
+# `_DEV` suffixes come off - the rest of the file is unchanged.
+#
+# EVERYTHING ELSE FALLS BACK TO THE SHARED VALUE. The `||` below is a real
+# fallback rather than decoration: an unset Variable is an empty string, which
+# is falsy, so `vars.X_DEV || vars.X` uses the dev-specific value when one
+# exists and the shared one when it does not. The title, the password length
+# pair, the timezone and the VAPID public key are the same app either way, and
+# duplicating them would only create two places to forget.
+#
+# THE COOKIE PREFIX IS THE ONE OPTIONAL OVERRIDE. Sharing it is fine - the
+# cookie is scoped to the hostname, so dev and production never see each
+# other's - but setting NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX_DEV means a
+# browser signed into both does not show two identically named cookies while
+# you are debugging one of them.
+#
+# -------------------------------------------------------------------
+# DATABASE_URL_DEV MUST BE THE DEV DATABASE, and this is the line to read
+# twice.
 #
 # It is used at BUILD time here to prerender the public pages that show
 # admin-editable site content, and it is a Secret, so nothing about a wrong
-# value is visible afterwards. Pointing this at production would render
+# value is visible afterwards. Pointing it at production would render
 # production's content into a dev bundle - and the same mistake in the App
 # Service's own settings would have the dev server WRITING to production.
 #
@@ -88,22 +103,37 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Where AZURE_WEBAPP_NAME and the rest resolve from. Also the place to add
-    # a required reviewer later if this server ever stops being disposable.
-    environment: development
 
     steps:
       # Fail fast and loudly rather than half-deploying to a mistyped or unset
-      # target - or, worse, inheriting the repo-level production values
-      # because the environment was never created.
+      # target. The publish profile is checked too: without it the deploy step
+      # fails much later, after a full install, test and build, with an error
+      # about credentials rather than about configuration.
       - name: Check the deploy target is configured
+        env:
+          PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_DEV }}
+          DATABASE_URL_DEV: ${{ secrets.DATABASE_URL_DEV }}
         run: |
-          if [ -z "${{ vars.AZURE_WEBAPP_NAME }}" ]; then
-            echo "::error::AZURE_WEBAPP_NAME is not set for the 'development' environment."
-            echo "See the comment at the top of this file for what to set and where."
+          # `[ -z X ] && missing=...` is safe under the `bash -e` this runs
+          # with, because bash exempts a command that fails as part of a
+          # short-circuited && list. It stops being safe if one of these is
+          # ever the LAST line: the step's exit status would then be the
+          # failing test's, and a fully configured deploy would fail its own
+          # guard. The echo at the bottom is what keeps that from happening,
+          # so leave it there.
+          missing=""
+          [ -z "${{ vars.AZURE_WEBAPP_NAME_DEV }}" ] && missing="$missing AZURE_WEBAPP_NAME_DEV(Variable)"
+          [ -z "${{ vars.NEXT_PUBLIC_APP_URL_DEV }}" ] && missing="$missing NEXT_PUBLIC_APP_URL_DEV(Variable)"
+          [ -z "$PUBLISH_PROFILE" ] && missing="$missing AZURE_WEBAPP_PUBLISH_PROFILE_DEV(Secret)"
+          [ -z "$DATABASE_URL_DEV" ] && missing="$missing DATABASE_URL_DEV(Secret)"
+
+          if [ -n "$missing" ]; then
+            echo "::error::Not configured. Missing:$missing"
+            echo "See the comment at the top of this file for what each one is."
             exit 1
           fi
-          echo "Deploying to: ${{ vars.AZURE_WEBAPP_NAME }}"
+
+          echo "Deploying to: ${{ vars.AZURE_WEBAPP_NAME_DEV }}"
 
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -131,12 +161,11 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # Built HERE on the CI runner rather than on the App Service, which
-      # was OOM-hanging on `next build`. Because the build runs off-box, the
-      # values it needs must be provided now. See deploy.yml for the full
-      # reasoning on each of these - this list is deliberately identical to
-      # it, so the two environments differ in their VALUES and never in what
-      # the build is given.
+      # Built HERE on the CI runner rather than on the App Service, which was
+      # OOM-hanging on `next build`. Because the build runs off-box, the values
+      # it needs must be provided now. See deploy.yml for the full reasoning on
+      # each - this list is deliberately identical to it, so the two servers
+      # differ in their VALUES and never in what the build is given.
       - name: Build
         run: pnpm build
         env:
@@ -149,8 +178,8 @@ jobs:
           # The Variable holds the bare hostname; env-client validates it with
           # z.string().url(), which needs a scheme. Keep the Variable itself
           # scheme-less (no https://).
-          NEXT_PUBLIC_APP_URL: https://${{ vars.NEXT_PUBLIC_APP_URL }}
-          NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX: ${{ vars.NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX }}
+          NEXT_PUBLIC_APP_URL: https://${{ vars.NEXT_PUBLIC_APP_URL_DEV }}
+          NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX: ${{ vars.NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX_DEV || vars.NEXT_PUBLIC_BETTER_AUTH_COOKIE_PREFIX }}
           NEXT_PUBLIC_PASSWORD_MIN_LENGTH: ${{ vars.NEXT_PUBLIC_PASSWORD_MIN_LENGTH }}
           NEXT_PUBLIC_PASSWORD_MAX_LENGTH: ${{ vars.NEXT_PUBLIC_PASSWORD_MAX_LENGTH }}
           NEXT_PUBLIC_APP_TIME_ZONE: ${{ vars.NEXT_PUBLIC_APP_TIME_ZONE }}
@@ -158,7 +187,7 @@ jobs:
           # NOTHING. Its private half belongs in the App Service settings and
           # never in a Variable.
           NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ vars.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}
           EMAIL_FROM_ADDRESS: ${{ vars.EMAIL_FROM_ADDRESS }}
           # Never send email during a build; the host's setting controls the
           # live app.
@@ -203,6 +232,6 @@ jobs:
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3
         with:
-          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          app-name: ${{ vars.AZURE_WEBAPP_NAME_DEV }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_DEV }}
           package: deploy.zip
