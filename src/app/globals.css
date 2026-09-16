@@ -55,6 +55,10 @@
   --color-card: var(--card);
   --color-panel-foreground: var(--panel-foreground);
   --color-panel: var(--panel);
+  --color-spotlight-accent: var(--spotlight-accent);
+  --color-spotlight-muted: var(--spotlight-muted);
+  --color-spotlight-foreground: var(--spotlight-foreground);
+  --color-spotlight: var(--spotlight);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -150,6 +154,28 @@
      ----------------------------------------------------------------- */
   --panel: #dceaed;
   --panel-foreground: #0f1a1c;
+
+  /* -----------------------------------------------------------------
+     THE ONE SURFACE ON A SCREEN THAT CARRIES ITS PAYOFF.
+     Deliberately domain-neutral: it is not "the summary panel", it is the
+     place a screen puts the thing somebody came for. Summaries uses it for
+     the model's answer. Anything with a clear before-and-after can.
+     It exists because every surface in this app was white or a tint of
+     white, so a screen had no focal point - the box you type into and the
+     box you read the answer out of were the same object twice, and the page
+     read as two empty rectangles. A screen is allowed ONE of these. Two
+     would be the same problem with more colour.
+     Deeper than --sidebar rather than equal to it, so a page carrying both
+     does not read as two slabs of the same thing. The accent is for the
+     single figure worth reading across the room; at 7.95:1 on the fill it
+     can be as large and as bright as it likes.
+     ----------------------------------------------------------------- */
+  --spotlight: #0f3d47;
+  /* 11.8:1 on the fill. */
+  --spotlight-foreground: #eaf6f8;
+  /* 5.9:1 - real headroom for a secondary tone, unlike the rail. */
+  --spotlight-muted: #9fc4cd;
+  --spotlight-accent: #7fe3f0;
   /* Deep teal. Carries white text at 6.2:1, so it is safe for filled
      buttons, the sidebar's active state and any teal that must be read. */
   --primary: #1b7789;
@@ -429,6 +455,16 @@
      dropped into this column still reads as a card on top of it. */
   --panel: #16262a;
   --panel-foreground: #e6eff0;
+
+  /* LIGHTER than the rail here, where in light it is darker. Same decision
+     both times: the payoff surface has to be distinguishable from the chrome,
+     and on a dark canvas the way to stand out is to come forward. Matching
+     the rail's #0f3d47 would have put two identical slabs on the chat and
+     summaries screens, which is the mistake --panel exists to have fixed. */
+  --spotlight: #165a68;
+  --spotlight-foreground: #eaf6f8;
+  --spotlight-muted: #a9ccd4;
+  --spotlight-accent: #7fe3f0;
   --primary: #3fbece;
   --primary-foreground: #05171a;
   --signal: #4fd6e6;
