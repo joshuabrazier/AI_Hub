@@ -165,17 +165,35 @@
      box you read the answer out of were the same object twice, and the page
      read as two empty rectangles. A screen is allowed ONE of these. Two
      would be the same problem with more colour.
-     Deeper than --sidebar rather than equal to it, so a page carrying both
-     does not read as two slabs of the same thing. The accent is for the
-     single figure worth reading across the room; at 7.95:1 on the fill it
-     can be as large and as bright as it likes.
+     -----------------------------------------------------------------
+     IT IS A LIGHT TINT IN THIS THEME, AND IT WAS A DEEP TEAL SLAB FIRST.
+
+     #0f3d47 did the job it was designed for - the answer half of the screen
+     was unmistakable - and it was too much on a page somebody reads. A
+     summary is prose, often several paragraphs, and wrapping it in a dark
+     frame made the lightest thing on screen a white sheet floating in a hole.
+     The rail can carry a saturated fill because nobody reads a rail.
+
+     So the surface is a tint and the ACCENT does the marking instead: the
+     figure is brand teal at display size against a pale ground, which draws
+     the eye to the one number without turning a reading screen into a
+     letterbox. Same idea, a quarter of the volume.
+
+     What did not change is the rule above it: one per screen, and it names
+     the payoff rather than the feature.
      ----------------------------------------------------------------- */
-  --spotlight: #0f3d47;
-  /* 11.8:1 on the fill. */
-  --spotlight-foreground: #eaf6f8;
-  /* 5.9:1 - real headroom for a secondary tone, unlike the rail. */
-  --spotlight-muted: #9fc4cd;
-  --spotlight-accent: #7fe3f0;
+  --spotlight: #d6e8ec;
+  /* Near-black on a pale tint. The body copy on this surface is a summary,
+     so it is read rather than glanced at, and it gets the page's own ink. */
+  --spotlight-foreground: #0f1a1c;
+  /* The same value as --muted-foreground, so a caption here and a caption
+     anywhere else on the page are the same kind of text. */
+  --spotlight-muted: #41565a;
+  /* The brand teal, and the one loud thing left. 4.0:1 on the fill, which is
+     under the 4.5 body text needs and over the 3.0 large text needs - so it
+     is for the figure at 4xl and the bar beside it, and NEVER for a sentence.
+     Anything smaller than a heading takes --spotlight-foreground. */
+  --spotlight-accent: #1b7789;
   /* Deep teal. Carries white text at 6.2:1, so it is safe for filled
      buttons, the sidebar's active state and any teal that must be read. */
   --primary: #1b7789;
@@ -460,11 +478,16 @@
   --panel: #16262a;
   --panel-foreground: #e6eff0;
 
-  /* LIGHTER than the rail here, where in light it is darker. Same decision
-     both times: the payoff surface has to be distinguishable from the chrome,
-     and on a dark canvas the way to stand out is to come forward. Matching
-     the rail's #0f3d47 would have put two identical slabs on the chat and
-     summaries screens, which is the mistake --panel exists to have fixed. */
+  /* A STEP AWAY FROM THE CANVAS, which on a dark ground means lighter and on
+     a light ground means darker. Same decision as the light theme, opposite
+     direction, exactly like --panel and --sidebar.
+     It stays a REAL teal here where light mode went to a tint, and that is
+     not an inconsistency: the complaint the light value answers is that a
+     dark frame around several paragraphs of prose is heavy to read against a
+     white page. On a dark canvas the prose is light-on-dark regardless, so
+     the frame is not adding a mode for the reader's eye to cross.
+     It must also not match the rail's #0f3d47 - two identical slabs on the
+     chat and summaries screens is the mistake --panel exists to have fixed. */
   --spotlight: #165a68;
   --spotlight-foreground: #eaf6f8;
   --spotlight-muted: #a9ccd4;
