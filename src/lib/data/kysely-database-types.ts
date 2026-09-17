@@ -658,6 +658,53 @@ export type NewTranscription = Insertable<Transcriptions>;
 export type UpdateTranscription = Updateable<Transcriptions>;
 
 // -------------------------------------------------------------------
+// A summary somebody asked for, and the material they asked about
+//
+// THE MOST SENSITIVE TABLE IN THE APPLICATION, and it is worth the reader
+// knowing that at the point they reach the type rather than the migration.
+// `sourceText` is whatever was pasted - a contract, a client's board paper
+// - and it sits next to a model's reading of it.
+//
+// Three properties keep that defensible and none is optional: `userId` is
+// the boundary and there is no path to a row that does not go through it,
+// the foreign key cascades so a removed person takes their material with
+// them, and the retention sweep ages the table out.
+// -------------------------------------------------------------------
+export const TEXT_SUMMARY_STYLES = {
+  DETAILED: "detailed",
+  SUMMARY: "summary",
+  EXECUTIVE: "executive",
+} as const;
+
+export type TextSummaryStyle = (typeof TEXT_SUMMARY_STYLES)[keyof typeof TEXT_SUMMARY_STYLES];
+
+export interface TextSummaries {
+  id: string;
+  userId: string;
+  /** Derived from the first line of the source, so a list never loads the source. */
+  title: string;
+  /** Which of the three prompts was used. Not presentation - it is what was asked. */
+  style: TextSummaryStyle;
+  sourceText: string;
+  /**
+   * NULL while streaming, and on a call that failed before a token arrived.
+   * A partial summary alongside a non-NULL `error` is the reader having
+   * closed the tab part way, and is kept rather than discarded.
+   */
+  summary: string | null;
+  error: string | null;
+  inputChars: number;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+  /** Set only when the stream ended without error. */
+  completedAt: Date | null;
+}
+
+export type TextSummary = Selectable<TextSummaries>;
+export type NewTextSummary = Insertable<TextSummaries>;
+export type UpdateTextSummary = Updateable<TextSummaries>;
+
+// -------------------------------------------------------------------
 // Where a meeting's notes were filed in SharePoint, and why
 //
 // ONE ROW PER TRANSCRIPTION, and the unique constraint behind it is the
@@ -1920,6 +1967,7 @@ export interface Database {
   aiChatAttachments: AiChatAttachments;
   aiChatRequestLogs: AiChatRequestLogs;
   teamsAutoImport: TeamsAutoImports;
+  textSummaries: TextSummaries;
   transcriptions: Transcriptions;
   transcriptionFiling: TranscriptionFilings;
   pushSubscriptions: PushSubscriptions;

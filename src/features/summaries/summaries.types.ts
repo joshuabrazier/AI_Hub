@@ -1,17 +1,26 @@
 import z from "zod";
 
+import { TABLE_ID_LENGTH } from "@/lib/constants";
+
 // -------------------------------------------------------------------
 // Summarise pasted text, in a chosen style.
 //
-// NOTHING IS STORED. Text goes in, a summary comes back, and the app keeps
-// neither. That is deliberate rather than unfinished: the input is whatever
-// somebody happened to paste - a contract, a medical letter, a board pack -
-// and holding a copy of it, plus a copy of the model's reading of it, would
-// make this the most sensitive table in the app for no benefit anybody
-// asked for. Anyone who wants to keep a summary can copy it.
+// WHAT WAS PASTED IS KEPT, AND SO IS THE ANSWER - which reverses how this
+// feature began. It stored nothing on purpose: the input is whatever
+// somebody happened to paste, a contract or a medical letter or a board
+// pack, and holding a copy of it alongside the model's reading of it makes
+// this the most sensitive table in the application.
 //
-// The cost is that a refresh loses it, which is why the screen says so
-// before you spend a minute waiting for one.
+// That cost has been accepted rather than forgotten, because being able to
+// go back to a summary was asked for. What makes it defensible is in the
+// migration and in the repository, and none of it is optional: the row
+// belongs to ONE person and every query says so, the foreign key cascades
+// so a removed person takes their material with them, and the retention
+// job ages the table out.
+//
+// The screen says all of this, because a promise about somebody's data and
+// the schema behind it must not be able to drift apart. It previously said
+// the opposite.
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
@@ -103,4 +112,88 @@ export type SummariseTextRequestDTO = z.infer<typeof SummariseTextSchema>;
 // so the screen says which piece is missing rather than failing on send.
 export type SummariesPageDTO = {
   isConfigured: boolean;
+  /** This person's own saved summaries, newest first. Never anybody else's. */
+  saved: SavedSummaryDTO[];
 };
+
+// -------------------------------------------------------------------
+// ===================================================================
+// WHAT IS KEPT, NOW THAT ANYTHING IS
+// ===================================================================
+//
+// This feature stored nothing for most of its life, and the reasoning was
+// sound: the input is whatever somebody pasted, so keeping it makes this
+// the most sensitive table in the app. It is kept now because being able to
+// return to a summary was asked for, and the cost is paid deliberately -
+// per person, cascading on delete, and aged out by the retention job.
+//
+// The consequence that matters to anybody reading this file: the page used
+// to say a refresh lost the summary. It must never say that again.
+// -------------------------------------------------------------------
+
+/** How many saved summaries the page offers. A list, not an archive. */
+export const SAVED_SUMMARY_LIMIT = 50;
+
+/** Long enough to tell two board papers apart, short enough to sit in a list. */
+export const SUMMARY_TITLE_MAX_CHARS = 90;
+
+// -------------------------------------------------------------------
+// A name for a summary, derived from the material itself.
+//
+// NOBODY IS ASKED TO NAME ANYTHING. A field between pasting and reading
+// would be one more step in a tool whose whole appeal is paste-and-go, and
+// a list of untitled rows is not a list. So the first line that carries
+// words becomes the title.
+//
+// Pure and exported so it can be tested: this is stored, not computed on
+// read, and a row that got its title wrong keeps it.
+// -------------------------------------------------------------------
+export function deriveSummaryTitle(text: string): string {
+  const line = text
+    .split(/\r?\n/)
+    // A leading blank line, a markdown rule, or a row of hashes is not a
+    // title - skip to something with letters or digits in it.
+    .map((candidate) => candidate.replace(/^[\s#>*_\-=|]+/, "").trim())
+    .find((candidate) => /[\p{L}\p{N}]/u.test(candidate));
+
+  if (!line) return "Untitled";
+
+  if (line.length <= SUMMARY_TITLE_MAX_CHARS) return line;
+
+  // Cut at a word boundary where there is one near the end, so a title does
+  // not stop mid-word for the sake of four characters.
+  const cut = line.slice(0, SUMMARY_TITLE_MAX_CHARS);
+  const lastSpace = cut.lastIndexOf(" ");
+
+  return `${(lastSpace > SUMMARY_TITLE_MAX_CHARS - 20 ? cut.slice(0, lastSpace) : cut).trimEnd()}...`;
+}
+
+// -------------------------------------------------------------------
+// One saved summary as a LIST row.
+//
+// Deliberately without `sourceText` and `summary`. The heavy columns are
+// what make this table expensive to read, and a list of titles has no use
+// for either - see the repository, whose list query does not select them.
+// -------------------------------------------------------------------
+export type SavedSummaryDTO = {
+  id: string;
+  title: string;
+  style: SummaryStyle;
+  inputChars: number;
+  /** Null on a finished row. Present when it failed or was stopped part way. */
+  error: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+};
+
+/** One saved summary, opened: the material and the answer. */
+export type SavedSummaryDetailDTO = SavedSummaryDTO & {
+  sourceText: string;
+  summary: string | null;
+};
+
+export const SummaryIdSchema = z.object({
+  summaryId: z.string().min(TABLE_ID_LENGTH),
+});
+
+export type SummaryIdRequestDTO = z.infer<typeof SummaryIdSchema>;

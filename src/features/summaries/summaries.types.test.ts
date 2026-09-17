@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveSummaryTitle,
   MAX_INPUT_CHARS,
   MIN_INPUT_CHARS,
   SUMMARY_MAX_TOKENS,
+  SUMMARY_TITLE_MAX_CHARS,
   SUMMARY_STYLES,
   SUMMARY_STYLE_DESCRIPTIONS,
   SUMMARY_STYLE_LABELS,
@@ -114,5 +116,65 @@ describe("the styles are completely described", () => {
     expect(SUMMARY_MAX_TOKENS[SUMMARY_STYLES.SUMMARY]).toBeGreaterThan(
       SUMMARY_MAX_TOKENS[SUMMARY_STYLES.EXECUTIVE],
     );
+  });
+});
+
+describe("deriveSummaryTitle", () => {
+  // -----------------------------------------------------------------
+  // The title is STORED, not computed on read - so a row that gets it
+  // wrong keeps it for as long as the row lives, and nobody goes back to
+  // rename a document they can no longer identify.
+  //
+  // Nobody is asked to name anything, deliberately: a naming field between
+  // pasting and reading is one more step in a tool whose whole appeal is
+  // paste-and-go. Which puts the entire burden on this function.
+  // -----------------------------------------------------------------
+  it("takes the first line that has words in it", () => {
+    expect(deriveSummaryTitle("Services Agreement\nBetween the parties...")).toBe("Services Agreement");
+  });
+
+  it("skips the blank lines a paste usually starts with", () => {
+    expect(deriveSummaryTitle("\n\n   \nQuarterly board paper\nrest")).toBe("Quarterly board paper");
+  });
+
+  it("steps over markdown decoration rather than naming a row of hashes", () => {
+    // Pasting from a document or a wiki routinely leads with these, and
+    // "###" is not a name anybody can pick out of a list.
+    expect(deriveSummaryTitle("# Heads of Agreement\ntext")).toBe("Heads of Agreement");
+    expect(deriveSummaryTitle("---\n> Minutes of meeting\ntext")).toBe("Minutes of meeting");
+  });
+
+  it("bounds a long first line and marks that it was cut", () => {
+    const title = deriveSummaryTitle("A".repeat(400));
+
+    expect(title.length).toBeLessThanOrEqual(SUMMARY_TITLE_MAX_CHARS + 3);
+    expect(title.endsWith("...")).toBe(true);
+  });
+
+  it("cuts a long line at a word rather than mid-word", () => {
+    const words =
+      "Commercial terms for the supply of managed analytics services to a client whose name is rather long";
+    const title = deriveSummaryTitle(words);
+    const kept = title.slice(0, -3);
+
+    expect(title.endsWith("...")).toBe(true);
+    // What was kept is a real prefix of the original, and does not end on
+    // a dangling space.
+    expect(words.startsWith(kept)).toBe(true);
+    expect(kept.endsWith(" ")).toBe(false);
+  });
+
+  it("never returns an empty name", () => {
+    // A paste of nothing but punctuation or whitespace would otherwise
+    // produce a row with no visible identity at all.
+    expect(deriveSummaryTitle("")).toBe("Untitled");
+    expect(deriveSummaryTitle("\n\n\n")).toBe("Untitled");
+    expect(deriveSummaryTitle("###\n---\n***")).toBe("Untitled");
+  });
+
+  it("keeps a title that is exactly at the bound whole", () => {
+    const exact = "B".repeat(SUMMARY_TITLE_MAX_CHARS);
+
+    expect(deriveSummaryTitle(exact)).toBe(exact);
   });
 });
