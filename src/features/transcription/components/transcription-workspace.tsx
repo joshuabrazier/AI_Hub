@@ -272,7 +272,25 @@ export function TranscriptionWorkspace({ page }: { page: TranscriptionPageDTO })
           restored by explicit grid placement rather than by `order`, so the
           markup does not have to lie about its own sequence to get it.
           =================================================================== */}
-      <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:gap-y-3">
+      {/* -----------------------------------------------------------------
+          THE ROW SIZES ARE STATED, AND WITHOUT THEM THE LIST FLOATS.
+
+          The section on the right carries `row-span-2` and is by far the
+          tallest thing here - the composer with the whole Teams list in it.
+          With both rows left implicit (`auto`), a spanning item's height is
+          distributed ACROSS the rows it spans, so row 1 grew to half the
+          composer and the recordings list, which starts in row 2, appeared
+          stranded a few hundred pixels down the page under a button sitting
+          alone at the top of an enormous row.
+
+          `auto` then `minmax(0,1fr)` puts the spanner's excess in row 2,
+          where it has somewhere to go: row 1 becomes exactly as tall as the
+          button, and the list sits directly under it. minmax(0,1fr) rather
+          than 1fr for the usual reason - an fr track has an automatic
+          minimum of min-content, which a long transcription title would
+          otherwise floor the column at.
+          ----------------------------------------------------------------- */}
+      <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-y-3">
         {/* Start a new one. Column one, top, on a wide screen. */}
         <div className="lg:col-start-1 lg:row-start-1">
           <Button
