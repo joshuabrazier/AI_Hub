@@ -177,6 +177,7 @@ import { getUsersByIdsRepo } from "@/lib/data/repositories/users.repository";
 import {
   addProjectMemberService,
   archiveProjectService,
+  getAllProjectsForAdminService,
   attachmentsUnderPhase,
   createBudgetGroupService,
   createClientService,
@@ -787,6 +788,53 @@ const ADMIN_OR_MANAGER_SURFACES = [
     },
   },
 ];
+
+// ===================================================================
+// EVERY PROJECT, FOR THE TWO SCREENS THAT ASK DIFFERENT QUESTIONS OF IT
+//
+// The projects page shows an admin everything - an admin who could not find a
+// project a colleague made had no way to tell whether it existed - and the
+// budget report shows everything INCLUDING archived, because a finished
+// project is exactly what somebody asks that report about.
+//
+// The default is the half worth pinning. The report was here first and reads
+// this service with no argument, so a default that flipped would quietly stop
+// reporting on finished work: the screen would still render, still be full of
+// projects, and simply be missing the ones the reader came for.
+// ===================================================================
+describe("getAllProjectsForAdminService", () => {
+  it("includes archived projects by default, which is what the budget report reads", async () => {
+    signedInAsAdmin();
+
+    await getAllProjectsForAdminService();
+
+    expect(mockGetAllProjects).toHaveBeenCalledWith(
+      expect.objectContaining({ includeArchived: true }),
+    );
+  });
+
+  it("leaves archived out when the caller says so, which is what the projects list reads", async () => {
+    signedInAsAdmin();
+
+    await getAllProjectsForAdminService({ includeArchived: false });
+
+    expect(mockGetAllProjects).toHaveBeenCalledWith(
+      expect.objectContaining({ includeArchived: false }),
+    );
+  });
+
+  it("refuses a manager and a member, option or not", async () => {
+    // It is every project in the organisation. A manager sees the ones they
+    // are on, and widening this is how they would see the rest without
+    // anything about the screen looking different.
+    for (const role of NON_ADMIN_ROLES) {
+      signedInAs(role);
+
+      await expect(getAllProjectsForAdminService({ includeArchived: false })).rejects.toThrow(FORBIDDEN);
+      expect(mockGetAllProjects).not.toHaveBeenCalled();
+    }
+  });
+});
 
 describe("the surfaces a manager gained", () => {
   for (const surface of ADMIN_OR_MANAGER_SURFACES) {

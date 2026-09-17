@@ -2,7 +2,8 @@ import "server-only";
 
 import { cache } from "react";
 
-import { getJiraIssuesRepo, getStaffTargetsRepo } from "@/lib/data/repositories/timesheet.repository";
+import { getStaffTargetsRepo } from "@/lib/data/repositories/timesheet.repository";
+import { getReportingTasksRepo } from "@/lib/data/repositories/delivery-reporting.repository";
 import { listStaffRatesRepo } from "@/lib/data/repositories/staff-rate.repository";
 
 // -------------------------------------------------------------------
@@ -33,6 +34,8 @@ export const loadStaffTargets = cache(async function loadStaffTargets() {
   return getStaffTargetsRepo();
 });
 
-export const loadJiraIssues = cache(async function loadJiraIssues() {
-  return getJiraIssuesRepo();
+// Every task in the book of work. Replaces loadJiraIssues, which read the
+// cached Jira issue table - same job, same memoisation, the app's own data.
+export const loadReportingTasks = cache(async function loadReportingTasks() {
+  return getReportingTasksRepo();
 });

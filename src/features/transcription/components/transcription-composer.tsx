@@ -315,6 +315,18 @@ export function TranscriptionComposer({
       return;
     }
 
+    // -----------------------------------------------------------------
+    // A JOIN THE HEAD PROBE CAN SEE IS SAID OUT LOUD, even though this
+    // path does not repair. Somebody who downloads a damaged recording and
+    // re-uploads it by hand arrives here, and a splice in the first part of
+    // the file is visible without any scan - it used to be found, judged
+    // non-fatal, and uploaded in silence. Warning costs nothing and is the
+    // difference between a puzzling failure and an explained one.
+    // -----------------------------------------------------------------
+    const splice = verdict.probe.problems.find((problem) => problem.code === "spliced");
+
+    if (splice) toast.warning(`${splice.detail} It may not transcribe in full.`);
+
     const result = await upload({
       media: file,
       fileName: file.name,
@@ -368,7 +380,9 @@ export function TranscriptionComposer({
   // See recording-integrity.ts for what is repaired, what is refused, and
   // why an unrecognised container is neither.
   // -------------------------------------------------------------------
-  const soundMediaOrNull = async (media: Blob): Promise<Blob | null> => {
+  const soundMediaOrNull = async (
+    media: Blob,
+  ): Promise<{ media: Blob; wasRepaired: boolean } | null> => {
     const verdict = await inspectRecording(media);
 
     if (verdict.kind === "refused") {
@@ -380,23 +394,31 @@ export function TranscriptionComposer({
     if (verdict.kind === "repaired") {
       toast.warning(verdict.message);
 
-      return verdict.media;
+      // -------------------------------------------------------------
+      // `wasRepaired` TRAVELS BACK because of what the caller does next.
+      // A repaired upload is PART of a recording, so the copy on this
+      // device is the only complete one left - and the discard below was
+      // deleting it the moment the partial upload succeeded. The message
+      // this very function shows says the full recording is still here;
+      // that has to be true.
+      // -------------------------------------------------------------
+      return { media: verdict.media, wasRepaired: true };
     }
 
-    return media;
+    return { media, wasRepaired: false };
   };
 
   const submitRecording = async (recording: FinishedRecording) => {
-    const media = await soundMediaOrNull(recording.media);
+    const sound = await soundMediaOrNull(recording.media);
 
-    if (!media) {
+    if (!sound) {
       // Kept on the device and surfaced, rather than the screen going quiet.
       await refreshPending();
       return;
     }
 
     const result = await upload({
-      media,
+      media: sound.media,
       // The extension is what the server derives the media type from, so it
       // has to be the one the recorder actually produced.
       fileName: `recording${recording.extension}`,
@@ -411,12 +433,23 @@ export function TranscriptionComposer({
     // the server having the recording in any sense that matters - and the
     // copy on this device is the only other one there is.
     if (result?.started) {
-      await discardRecording(recording.recordingId).catch((error) => {
-        console.warn("[composer] could not clear the uploaded recording", error);
-      });
+      // -------------------------------------------------------------
+      // ONLY A WHOLE RECORDING IS DISCARDED. A repaired one had part of it
+      // cut away before upload, so this copy is the only complete version
+      // in existence - deleting it here made a truncation irreversible and
+      // made the message that points at it a lie.
+      // -------------------------------------------------------------
+      if (sound.wasRepaired) {
+        await refreshPending();
+      } else {
+        await discardRecording(recording.recordingId).catch((error) => {
+          console.warn("[composer] could not clear the uploaded recording", error);
+        });
+
+        setPendingList((held) => held.filter((row) => row.id !== recording.recordingId));
+      }
 
       setTitle("");
-      setPendingList((held) => held.filter((row) => row.id !== recording.recordingId));
       onStarted(result.transcriptionId);
       return;
     }
@@ -466,12 +499,12 @@ export function TranscriptionComposer({
         );
       }
 
-      const media = await soundMediaOrNull(assembled.media);
+      const sound = await soundMediaOrNull(assembled.media);
 
-      if (!media) return;
+      if (!sound) return;
 
       const result = await upload({
-        media,
+        media: sound.media,
         // FALLING BACK on the extension, because this row came out of
         // IndexedDB rather than from the recorder running now: a row written
         // by an earlier version predates the field, and a type cannot reach
@@ -485,9 +518,15 @@ export function TranscriptionComposer({
       // the recovery path, so discarding on a row that nothing is
       // transcribing would throw away the copy somebody came here to save.
       if (result?.started) {
-        await discardRecording(pending.id);
+        // Same rule as above, and it matters more here: this IS the
+        // recovery path, so discarding a partially uploaded recording
+        // throws away the copy somebody came to this panel to save.
+        if (!sound.wasRepaired) {
+          await discardRecording(pending.id);
+          setPendingList((held) => held.filter((row) => row.id !== pending.id));
+        }
+
         setTitle("");
-        setPendingList((held) => held.filter((row) => row.id !== pending.id));
         onStarted(result.transcriptionId);
       } else if (result) {
         onStarted(result.transcriptionId);

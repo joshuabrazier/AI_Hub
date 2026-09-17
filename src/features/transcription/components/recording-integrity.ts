@@ -34,10 +34,16 @@ import {
 // It is read in windows with an overlap, because a four byte marker split
 // across two windows is invisible to both.
 //
-// IT REPAIRS RATHER THAN REFUSING WHERE IT CAN. A spliced file contains a
-// perfectly good first recording; truncating at the second header recovers
-// it. Half a meeting is worth a great deal more than an error message, and
-// the person is told exactly what was kept and what was not.
+// IT REPAIRS RATHER THAN REFUSING WHERE IT CAN, and it keeps the LARGEST
+// recording rather than the first. Which one is the meeting is a question
+// of evidence, not of position: when two recorders ran at once, only the
+// first chunk each emitted carried a header, so the file came out as one
+// ten-second timeslice followed by the entire meeting. Keeping the first
+// document kept the ten seconds and reported success.
+//
+// AND THE DEVICE COPY SURVIVES A REPAIR. What gets uploaded is by
+// definition not the whole recording, so the copy on the device is the only
+// complete thing left - see `wasRepaired` handling in the composer.
 //
 // IT REFUSES ONLY WHAT CANNOT WORK. A container it does not recognise is
 // passed straight through - the probe knows six formats and the upload
@@ -58,11 +64,28 @@ const SCAN_OVERLAP_BYTES = 8;
 // Enough to hold an EBML header through its DocType, or an ftyp box whole.
 const VALIDATION_BYTES = 1024;
 
+/** One self-contained recording inside a file that holds more than one. */
+export type RecordingSegment = { start: number; end: number; bytes: number };
+
 export type RecordingVerdict =
   /** Send it as it is. */
   | { kind: "ok"; probe: AudioProbe }
-  /** Send `media` instead - the original had a second recording stuck on the end. */
-  | { kind: "repaired"; probe: AudioProbe; media: Blob; message: string }
+  /**
+   * Send `media` instead - the file held more than one recording and this is
+   * the largest of them.
+   *
+   * `wasRepaired` is not decoration: the caller MUST NOT discard the device
+   * copy after uploading this, because what is being uploaded is by
+   * definition not the whole recording.
+   */
+  | {
+      kind: "repaired";
+      probe: AudioProbe;
+      media: Blob;
+      message: string;
+      keptBytes: number;
+      droppedBytes: number;
+    }
   /** Do not send it. `message` says exactly why, in terms somebody can act on. */
   | { kind: "refused"; probe: AudioProbe; message: string };
 
@@ -78,16 +101,14 @@ export async function inspectRecording(
     // -------------------------------------------------------------
     // WHOLE-FILE SCAN, OR JUST THE HEAD.
     //
-    // On for a recording this app made, because the double-start bug is
-    // ours and the join lands wherever the first take happened to end.
+    // On for a recording this app made, because the double-start bug was
+    // ours and the joins land wherever the recorders happened to write.
     //
     // Off for a file somebody CHOSE, where it would mean reading a
-    // gigabyte through JavaScript before the upload can even begin, to
-    // look for a fault that arrives with our own recorder. Such a file is
-    // not left unprotected: the head probe still refuses what cannot
-    // work, and a join that slips through is caught by the re-encode after
-    // Azure refuses it - the browser's decoder reads the first stream and
-    // produces exactly the repair this would have made.
+    // gigabyte through JavaScript before the upload can even begin. Such
+    // a file is not left unprotected: the head probe still refuses what
+    // cannot work, still REPORTS a join it can see, and the re-encode
+    // after a refusal salvages what it can.
     // -------------------------------------------------------------
     scanForSplice?: boolean;
   } = {},
@@ -107,31 +128,12 @@ export async function inspectRecording(
     // ---------------------------------------------------------------
     const signature = probe.container ? CONTAINER_SIGNATURES[probe.container] : undefined;
 
-    const secondAt =
+    const segments =
       scanForSplice && signature && probe.container
-        ? await findSecondContainer(media, probe.container, signature.bytes, signature.at)
-        : -1;
+        ? await findSegments(media, probe.container, signature.bytes, signature.at)
+        : [{ start: 0, end: media.size, bytes: media.size }];
 
-    if (secondAt > 0) {
-      const cutAt = secondAt - signature!.at;
-
-      const spliced: AudioProblem = {
-        code: "spliced",
-        detail: `This was saved as more than one take in a single file, which no transcription service can read.`,
-        atByte: cutAt,
-      };
-
-      return {
-        kind: "repaired",
-        probe: { ...probe, problems: [...probe.problems, spliced] },
-        // A Blob slice, so nothing is copied and the cut costs nothing
-        // whatever the size. The result is a genuine, complete container -
-        // not a truncated one - because the second header marks exactly
-        // where the first document ended.
-        media: media.slice(0, cutAt, media.type),
-        message: `That recording was saved as separate takes in one file, which the transcription service cannot read. The first ${formatBytes(cutAt)} of it will be transcribed; the rest is in the saved copy only.`,
-      };
-    }
+    if (segments.length > 1) return repairSpliced(media, probe, segments);
 
     // The list itself lives in audio-probe.ts, so the browser and the
     // server refuse exactly the same things.
@@ -159,25 +161,90 @@ export async function inspectRecording(
   }
 }
 
+// -------------------------------------------------------------------
+// ===================================================================
+// WHICH OF THE RECORDINGS IS THE MEETING?
+// ===================================================================
+//
+// THE ANSWER IS NOT "THE FIRST ONE", and believing it was cost a real
+// meeting. This repair used to truncate at the first join on the reasoning
+// that a spliced file contains a perfectly good FIRST recording - true when
+// somebody records two takes end to end, and exactly inverted for the shape
+// our own recorder produced.
+//
+// When two MediaRecorders ran at once, only the first chunk each one
+// emitted carried a container header. So the file came out as one
+// TIMESLICE, then a header, then everything else: a ten second stub
+// followed by the whole meeting. Keeping the first document kept the ten
+// seconds, uploaded it, transcribed it successfully, and reported success -
+// which is worse than the error it replaced, because nothing anywhere said
+// that 99.85% of the meeting had been thrown away.
+//
+// So the largest is kept, by evidence rather than by position. At a
+// constant bitrate, bytes are a sound proxy for minutes.
+//
+// AND THE DEVICE COPY IS NEVER DISCARDED AFTER THIS. What is uploaded is
+// not the whole recording, so the copy on the device is the only complete
+// thing left - see `wasRepaired` on the verdict and its use in the
+// composer. The old message promised exactly that and the next line of code
+// deleted it.
+// -------------------------------------------------------------------
+function repairSpliced(media: Blob, probe: AudioProbe, segments: RecordingSegment[]): RecordingVerdict {
+  const largest = segments.reduce((best, segment) => (segment.bytes > best.bytes ? segment : best));
+
+  const droppedBytes = media.size - largest.bytes;
+  const position = segments.indexOf(largest);
+
+  const spliced: AudioProblem = {
+    code: "spliced",
+    detail: `This file holds ${segments.length} separate recordings (${segments.map((segment) => formatBytes(segment.bytes)).join(", ")}).`,
+    atByte: largest.start,
+  };
+
+  return {
+    kind: "repaired",
+    probe: { ...probe, problems: [...probe.problems, spliced] },
+    // A Blob slice, so nothing is copied and the cut costs nothing whatever
+    // the size. Each segment is a genuine complete container, because a
+    // container header is exactly where one document ends and the next
+    // begins.
+    media: media.slice(largest.start, largest.end, media.type),
+    keptBytes: largest.bytes,
+    droppedBytes,
+    // -----------------------------------------------------------------
+    // SAYS WHICH PART, HOW MUCH, AND WHAT IS STILL SAFE. The old wording
+    // reported bytes and then pointed at a saved copy that the next line
+    // of code deleted, which is the worst combination available: a
+    // reassurance that is also false.
+    // -----------------------------------------------------------------
+    message: [
+      `That recording was saved as ${segments.length} separate takes in one file, which the transcription service cannot read.`,
+      `The longest take (${formatBytes(largest.bytes)} of ${formatBytes(media.size)}${position > 0 ? ", which is not the first one" : ""}) has been sent for transcription; ${formatBytes(droppedBytes)} has not, so part of the meeting will be missing from the transcript.`,
+      `Your complete recording is still on this device - save a copy before you leave this page.`,
+    ].join(" "),
+  };
+}
+
 /**
- * Where a second container actually starts, or -1.
+ * Every self-contained recording in the file, in order.
  *
- * TWO SEPARATE JOBS, and conflating them is how this cuts a meeting in
- * half. The scan finds four matching bytes; the VALIDATION decides whether
- * they are a file beginning. A 500 MB recording contains a chance match
- * roughly one time in eight, and the caller truncates on a yes - so the
- * signature alone is nowhere near enough evidence.
+ * SCANS PAST THE FIRST JOIN. It used to stop at one, which was enough to
+ * know a file was spliced and not enough to know which part was the
+ * meeting - and a file can hold more than two, because somebody who clicks
+ * a dead-looking button twice will click it three times.
  *
  * Read in overlapping windows, because a four byte marker split across two
  * reads is invisible to both - which would report a spliced file as clean,
  * the exact failure this exists to catch.
  */
-async function findSecondContainer(
+async function findSegments(
   media: Blob,
   container: string,
   signature: number[],
   signatureOffset: number,
-): Promise<number> {
+): Promise<RecordingSegment[]> {
+  const starts: number[] = [0];
+
   // Anything at or before the file's own header is the file's own header.
   const from = signatureOffset + signature.length;
 
@@ -191,21 +258,29 @@ async function findSecondContainer(
       if (absolute < from) continue;
       if (!matchesAt(window, signature, offset)) continue;
 
+      const containerAt = absolute - signatureOffset;
+
+      // The overlap means a hit inside it is seen twice.
+      if (starts.includes(containerAt)) continue;
+
       // A fresh, small read around the candidate. The window may end a byte
       // after the match, and validation needs the header that follows it -
       // so this asks the blob rather than hoping the window reaches.
-      const containerAt = absolute - signatureOffset;
       const context = new Uint8Array(
         await media.slice(containerAt, containerAt + VALIDATION_BYTES).arrayBuffer(),
       );
 
-      if (looksLikeContainerStart(context, 0, container)) return absolute;
+      if (looksLikeContainerStart(context, 0, container)) starts.push(containerAt);
     }
 
     if (end >= media.size) break;
   }
 
-  return -1;
+  return starts.map((start, index) => {
+    const end = starts[index + 1] ?? media.size;
+
+    return { start, end, bytes: end - start };
+  });
 }
 
 function matchesAt(bytes: Uint8Array, signature: number[], at: number): boolean {

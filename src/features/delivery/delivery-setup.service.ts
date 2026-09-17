@@ -1053,11 +1053,22 @@ export async function getMyProjectsService(): Promise<ProjectSummaryDTO[]> {
 // here - there may be no membership row - and the DTO carries it because
 // every consumer of ProjectSummaryDTO expects it.
 // -------------------------------------------------------------------
-export async function getAllProjectsForAdminService(): Promise<ProjectSummaryDTO[]> {
+export async function getAllProjectsForAdminService(
+  // ARCHIVED IS THE CALLER'S QUESTION, and it now has two callers that answer
+  // it differently. The budget report wants them - somebody asking what a
+  // finished project cost is asking about exactly those - and the projects
+  // LIST does not, because a directory that keeps every project anybody has
+  // ever finished buries the live ones. Defaulted to true so the report, which
+  // was here first, reads the same as it always did.
+  options: { includeArchived?: boolean } = {},
+): Promise<ProjectSummaryDTO[]> {
   try {
     const user = await requireUserRole([USER_ROLES.ADMIN]);
 
-    const projects = await getAllProjectsRepo({ sort: "alphabetical", includeArchived: true });
+    const projects = await getAllProjectsRepo({
+      sort: "alphabetical",
+      includeArchived: options.includeArchived ?? true,
+    });
 
     return projects.map((project) => mapProjectSummary(project, canEditProjectTasks(user.role, false)));
   } catch (error) {

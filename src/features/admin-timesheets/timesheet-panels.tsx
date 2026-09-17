@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, CircleSlash, ShieldAlert, type LucideIcon 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/format";
+import { formatIsoDate } from "@/lib/format";
 import {
   BillableSplit,
   BudgetRow,
@@ -14,7 +14,7 @@ import {
 } from "@/lib/timesheet/timesheet.types";
 import { cn } from "@/lib/utils";
 
-import { SyncStatusDTO } from "./admin-timesheets.types";
+import { DataStatusDTO } from "./admin-timesheets.types";
 import { JobsDataTable } from "./table/timesheet-data-tables";
 import { AnimatedNumber, LiftOnHover, ProportionBar, Reveal } from "./timesheet-motion";
 
@@ -79,7 +79,7 @@ export function BillableStateBanner({ report }: { report: TimesheetReport }) {
         <p className={cn("mt-1 text-sm", blocked ? "text-destructive/90" : "text-data-ok-text")}>
           {blocked
             ? `${report.blockingCount} ${report.blockingCount === 1 ? "finding blocks" : "findings block"} it. ` +
-              `Fix them in Jira and re-sync - nothing is edited here.`
+              `Fix them on the board or the timesheet and they clear on the next read.`
             : report.warningCount > 0
               ? `No blocking findings. ${report.warningCount} ${report.warningCount === 1 ? "warning" : "warnings"} worth a look.`
               : "No findings at all."}
@@ -457,38 +457,46 @@ export function AuditCard({ findings, index }: { findings: Finding[]; index: num
 // genuinely quiet" and "synced but failing" look identical otherwise, and mean
 // completely different things.
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// WHY THIS PERIOD IS EMPTY, WHICH IS THREE DIFFERENT ANSWERS.
+//
+// The branches used to be about the Jira sync - not configured, never run,
+// last run failed, ran and wrote nothing. Every one of those is gone now the
+// hours are typed into this app. What replaces them are the states the app
+// itself can be in: a filter that matches nothing, a timesheet nobody has
+// ever used, and a period that was simply quiet.
+//
+// ONLY THE LAST NEEDS NO ACTION. A blank page that does not say which of the
+// three it is, is the thing people file a bug about.
+//
+// "Time exists but has not been logged lately" is a fourth state and it is
+// deliberately NOT decided here: this component is handed a period LABEL, not
+// the period's bounds, and comparing a date against "August 2026" is not
+// something that can be done honestly. DataStatusLine below says it instead,
+// where it needs no bounds to be true.
+// -------------------------------------------------------------------
 export function EmptyState({
-  syncStatus,
+  dataStatus,
   periodLabel,
   filtered,
 }: {
-  syncStatus: SyncStatusDTO;
+  dataStatus: DataStatusDTO;
   periodLabel: string;
   filtered: boolean;
 }) {
   let icon: LucideIcon = CircleSlash;
   let title = `No time logged in ${periodLabel}`;
-  let detail = "The sync has run, so this period is genuinely empty.";
+  let detail = "Nothing was booked in this period. The timesheet is being used, so this one is genuinely empty.";
 
   if (filtered) {
     title = "Nothing matches these filters";
     detail = `There is time logged in ${periodLabel}, but none of it is in this category or project. Widen the filter to see the period.`;
-  } else if (!syncStatus.configured) {
+  } else if (dataStatus.totalEntries === 0) {
     icon = AlertTriangle;
-    title = "Jira is not configured";
+    title = "No time has ever been logged";
     detail =
-      "Set JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN, then trigger the sync. Nothing can appear here until it runs.";
-  } else if (syncStatus.lastError) {
-    icon = AlertTriangle;
-    title = "The last sync failed";
-    detail = syncStatus.lastError;
-  } else if (syncStatus.lastSuccessAt === null) {
-    icon = AlertTriangle;
-    title = "The sync has never run";
-    detail = "Jira is configured, but no sync has completed yet, so the read model is empty.";
-  } else if (syncStatus.totalWorklogs === 0) {
-    title = "The read model is empty";
-    detail = `The sync last succeeded ${formatDateTime(syncStatus.lastSuccessAt)} but has never written a worklog.`;
+      "Nobody has entered hours on a timesheet yet, so there is nothing for any of these reports to describe. " +
+      "Hours logged against a task appear here as soon as they are saved.";
   }
 
   const Icon = icon;
@@ -512,27 +520,40 @@ export function EmptyState({
 // A dashboard that silently shows stale numbers is worse than one that shows
 // none, so when the read model was last refreshed is on the page, not in a log.
 // -------------------------------------------------------------------
-export function SyncStatusLine({ syncStatus }: { syncStatus: SyncStatusDTO }) {
-  if (!syncStatus.configured) {
-    return <p className="text-sm text-muted-foreground">Jira is not configured, so nothing is being synced.</p>;
-  }
-
-  if (syncStatus.lastError) {
+// -------------------------------------------------------------------
+// IT SAYS NOTHING WHEN THERE IS NOTHING TO SAY, which is the change.
+//
+// This was a permanent line reading "Synced from Jira <date>. Jira remains
+// the source of truth." It earned that place: a dashboard quietly showing
+// stale numbers is worse than one showing none, and the sync could fail
+// silently for days.
+//
+// There is no sync now. The hours are typed into this app's own timesheet, so
+// they are as current as the last person to enter one, and a permanent line
+// restating that on every report screen is furniture. It speaks in the two
+// cases that are actually worth interrupting for.
+// -------------------------------------------------------------------
+export function DataStatusLine({ dataStatus }: { dataStatus: DataStatusDTO }) {
+  if (dataStatus.totalEntries === 0) {
     return (
-      <p className="text-sm text-destructive">
-        Last sync failed: {syncStatus.lastError}
-        {syncStatus.lastSuccessAt && <> Last success {formatDateTime(syncStatus.lastSuccessAt)}.</>}
+      <p className="text-sm text-muted-foreground">
+        No time has been logged in the app yet, so these figures describe nothing.
       </p>
     );
   }
 
-  if (!syncStatus.lastSuccessAt) {
-    return <p className="text-sm text-muted-foreground">The sync has not completed a run yet.</p>;
+  // The state EmptyState cannot decide, because it is handed a label rather
+  // than the period's bounds. This one needs neither: "the newest entry in
+  // the whole system is from <date>" is true regardless of which period is
+  // on screen, and a date weeks old is the signal that the timesheet has
+  // stopped being kept up.
+  if (dataStatus.latestWorkDate) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Most recent time logged {formatIsoDate(dataStatus.latestWorkDate)}.
+      </p>
+    );
   }
 
-  return (
-    <p className="text-sm text-muted-foreground">
-      Synced from Jira {formatDateTime(syncStatus.lastSuccessAt)}. Jira remains the source of truth.
-    </p>
-  );
+  return null;
 }

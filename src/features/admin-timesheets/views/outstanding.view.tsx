@@ -15,7 +15,6 @@ import { cn } from "@/lib/utils";
 
 import { getOutstandingBoardService } from "../admin-timesheets-outstanding.service";
 import { OutstandingFilters } from "../outstanding-filters";
-import { RefreshButton } from "../refresh-button";
 import { StatTile } from "../timesheet-panels";
 
 // -------------------------------------------------------------------
@@ -488,7 +487,6 @@ export default async function OutstandingView({ client, project }: OutstandingSe
       eyebrow={USER_ROLE_LABELS[USER_ROLES.ADMIN]}
       title="Outstanding work"
       description="Effort still to come, as things stand today. Not a period view - an estimate set in July and worked in September counts here either way."
-      actions={<RefreshButton />}
     >
       <div className="space-y-6">
         <OutstandingFilters

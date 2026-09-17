@@ -11,7 +11,7 @@ import { TimesheetAskBox } from "../timesheet-ask-box";
 import { getOverviewService, TimesheetRequest } from "../admin-timesheets.service";
 import { CategorySplitCard, ReadinessCard } from "../overview-panels";
 import { ProductivityChart } from "../productivity-chart";
-import { EmptyState, StatTile, SyncStatusLine } from "../timesheet-panels";
+import { EmptyState, StatTile, DataStatusLine } from "../timesheet-panels";
 import TimesheetShell, { periodHref } from "../timesheet-shell";
 
 // -------------------------------------------------------------------
@@ -31,7 +31,7 @@ import TimesheetShell, { periodHref } from "../timesheet-shell";
 // -------------------------------------------------------------------
 export default async function OverviewView(request: TimesheetRequest) {
   const { data, overview } = await getOverviewService(request);
-  const { period, filters, report, syncStatus, periodTotalHours, periodSeries } = data;
+  const { period, filters, report, dataStatus, periodTotalHours, periodSeries } = data;
 
   // Values the facts the report already fetched - one extra query, for the
   // rate table, which is one row per person per rate change.
@@ -86,7 +86,7 @@ export default async function OverviewView(request: TimesheetRequest) {
     >
       {!hasData ? (
         <>
-          <EmptyState syncStatus={syncStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
+          <EmptyState dataStatus={dataStatus} periodLabel={period.label} filtered={periodTotalHours > 0} />
 
           {/* Shown here TOO, and this is the case it matters most in: no time
               logged against this client in the period, but work still open on
@@ -101,7 +101,7 @@ export default async function OverviewView(request: TimesheetRequest) {
               projectKey={filters.project}
             />}
 
-          <SyncStatusLine syncStatus={syncStatus} />
+          <DataStatusLine dataStatus={dataStatus} />
         </>
       ) : (
         <>
@@ -186,7 +186,7 @@ export default async function OverviewView(request: TimesheetRequest) {
           />
 
           <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
-            <SyncStatusLine syncStatus={syncStatus} />
+            <DataStatusLine dataStatus={dataStatus} />
           </div>
 
           {/* -------------------------------------------------------------
