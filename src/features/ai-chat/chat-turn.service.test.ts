@@ -63,9 +63,10 @@ vi.mock("@/lib/storage/attachment-storage", () => ({
 vi.mock("./ai-chat-app-knowledge", () => ({ appKnowledgePrompt: () => "app knowledge" }));
 
 vi.mock("./ai-chat-tools", () => ({
-  CHAT_TOOL_CONFIG: { tools: [] },
+  buildChatToolConfig: vi.fn(() => ({ tools: [] })),
   MAX_TOOL_ROUNDS: 4,
   runChatTool: vi.fn(),
+  toolStatusFor: () => "Looking up timesheet figures",
 }));
 
 vi.mock("@/lib/data/repositories/ai-chat-attachments.repository", () => ({

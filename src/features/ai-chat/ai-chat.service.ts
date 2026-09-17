@@ -44,7 +44,13 @@ import { BRAND } from "@/lib/brand";
 
 import { ASSISTANT_NAME, chatNotConfiguredMessage } from "@/lib/ai/assistant-identity";
 import { appKnowledgePrompt } from "./ai-chat-app-knowledge";
-import { CHAT_TOOL_CONFIG, MAX_TOOL_ROUNDS, runChatTool } from "./ai-chat-tools";
+import {
+  buildChatToolConfig,
+  isWebSearchAvailable,
+  MAX_TOOL_ROUNDS,
+  runChatTool,
+  toolStatusFor,
+} from "./ai-chat-tools";
 import {
   AI_CHAT_ATTACHMENT_KINDS,
   AI_CHAT_REQUEST_KINDS,
@@ -288,6 +294,7 @@ export async function getAiChatPageService(subjectId?: string): Promise<AiChatPa
       return {
         isConfigured: isBedrockConfigured(),
         canAttachFiles: isAttachmentStorageConfigured(),
+        canSearchWeb: isWebSearchAvailable(),
         subjects,
         active: null,
       };
@@ -336,6 +343,7 @@ export async function getAiChatPageService(subjectId?: string): Promise<AiChatPa
     return {
       isConfigured: isBedrockConfigured(),
       canAttachFiles: isAttachmentStorageConfigured(),
+      canSearchWeb: isWebSearchAvailable(),
       subjects,
       active,
     };
@@ -1352,10 +1360,14 @@ export async function* streamAiChatReplyService(
 ): AsyncGenerator<StreamEvent, void, undefined> {
   // Both halves of entering a phase, together: the budget for the guard and
   // the label for the reader. Kept as one call so the two cannot drift.
-  const enter = (phase: ChatPhase): StreamEvent => {
+  // `status` is overridable because one phase can cover more than one kind of
+  // work: the tool phase runs whichever tool the model asked for, and a fixed
+  // label would tell somebody watching a web search that timesheet figures
+  // were being read. The BUDGET is the phase's either way.
+  const enter = (phase: ChatPhase, status?: string): StreamEvent => {
     guard?.phase(phase.name, phase.budgetMs, phase.kind);
 
-    return { t: "status", v: phase.status };
+    return { t: "status", v: status ?? phase.status };
   };
 
   const turnStartedAt = Date.now();
@@ -1513,6 +1525,13 @@ export async function* streamAiChatReplyService(
     // would under-report the spend of exactly the questions that cost most,
     // which is the opposite of what the request log is for.
     // -----------------------------------------------------------------
+    // Decided ONCE for the whole turn rather than per round. The tool list
+    // sits in front of the cached prefix, so rebuilding it between rounds of
+    // the same turn would rewrite the cache on every pass - and a tool the
+    // model could see on round one and not on round two is a change it has no
+    // way to understand.
+    const toolConfig = buildChatToolConfig({ webSearch: requestDTO.webSearch === true });
+
     for (let round = 0; ; round++) {
       const isFinalRound = round >= MAX_TOOL_ROUNDS;
 
@@ -1558,7 +1577,7 @@ export async function* streamAiChatReplyService(
                 system,
                 messages,
                 inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
-                ...(isFinalRound ? {} : { toolConfig: CHAT_TOOL_CONFIG }),
+                ...(isFinalRound ? {} : { toolConfig }),
               }),
               { abortSignal: attemptSignal },
             )
@@ -1661,7 +1680,10 @@ export async function* streamAiChatReplyService(
 
       guard?.note("toolRounds", round + 1);
 
-      yield enter(CHAT_PHASES.tool);
+      // Named after whichever tool was asked for. Where the model asked for
+      // both at once, the first one is close enough - they run back to back
+      // and the label is company for a wait, not a manifest.
+      yield enter(CHAT_PHASES.tool, toolStatusFor([...toolCalls.values()][0]?.name ?? ""));
 
       // The model's turn goes back verbatim - any text it said before asking,
       // then the tool requests themselves. Converse rejects a tool result

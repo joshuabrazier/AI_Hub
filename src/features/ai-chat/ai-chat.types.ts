@@ -171,6 +171,12 @@ export type AiChatPageDTO = {
   // composer simply does not offer the paperclip - rather than accepting a
   // file it has nowhere to put.
   canAttachFiles: boolean;
+
+  // Whether this deployment holds a search key. Same shape and the same
+  // reason as canAttachFiles: with no key the composer simply does not offer
+  // the switch, rather than offering one that turns on a tool the server
+  // will not include.
+  canSearchWeb: boolean;
   subjects: AiChatSubjectDTO[];
   // Null when the user has no conversations yet, or asked for one that is
   // not theirs (which is answered as "no such conversation").
@@ -222,6 +228,20 @@ export const SendAiChatMessageSchema = z.object({
     .trim()
     .min(1, "Please enter a message")
     .max(MAX_MESSAGE_CHARS, `Please keep a message under ${MAX_MESSAGE_CHARS} characters`),
+
+  // -----------------------------------------------------------------
+  // Whether the model may search the web for THIS message.
+  //
+  // Per message rather than per conversation, and defaulting to false, so
+  // the quiet case stays quiet: no third-party text in the context, no
+  // query leaving the organisation, and no extra paid round trip unless
+  // somebody asked for one. It is a request rather than a permission -
+  // the server still decides whether the tool exists at all, from whether
+  // a search key is configured.
+  // -----------------------------------------------------------------
+  // Optional rather than defaulted, so absent and false stay the same thing
+  // to every caller - the service reads it as `=== true`.
+  webSearch: z.boolean().optional(),
 });
 
 export type SendAiChatMessageRequestDTO = z.infer<typeof SendAiChatMessageSchema>;

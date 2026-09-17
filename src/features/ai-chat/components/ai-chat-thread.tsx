@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -9,6 +9,7 @@ import {
   Check,
   CircleStop,
   Copy,
+  Globe,
   Loader2,
   Paperclip,
   SendHorizontal,
@@ -69,12 +70,62 @@ import { AiChatAttachmentList } from "./ai-chat-attachment-list";
  */
 const PINNED_THRESHOLD_PX = 64;
 
+// -------------------------------------------------------------------
+// WHERE THE COMPOSER REMEMBERS WHETHER WEB SEARCH WAS LEFT ON.
+//
+// An external store rather than a `useState` seeded in an effect, for two
+// reasons. The first is that localStorage IS an external store and reading
+// it into state on mount is the cascading render the lint rule names. The
+// second is free and worth having: `storage` fires in the OTHER tabs, so
+// somebody with chat open twice does not have one of them quietly searching
+// the web after they turned it off in the other.
+//
+// Every access is guarded. A private window, cleared site data or a browser
+// set to block storage throws on the property itself, and the composer must
+// still render - off, which is the default anyway.
+// -------------------------------------------------------------------
+const WEB_SEARCH_PREFERENCE_KEY = "ai-chat.web-search";
+
+/** Same-tab listeners. `storage` deliberately does not fire in the tab that wrote. */
+const webSearchListeners = new Set<() => void>();
+
+function subscribeToWebSearchPreference(onChange: () => void): () => void {
+  webSearchListeners.add(onChange);
+  window.addEventListener("storage", onChange);
+
+  return () => {
+    webSearchListeners.delete(onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+function readWebSearchPreference(): boolean {
+  try {
+    return window.localStorage.getItem(WEB_SEARCH_PREFERENCE_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
+
+function writeWebSearchPreference(next: boolean): void {
+  try {
+    window.localStorage.setItem(WEB_SEARCH_PREFERENCE_KEY, next ? "on" : "off");
+  } catch {
+    // The preference does not persist. The toggle still works for this
+    // visit, which is the part that matters for the message in hand.
+  }
+
+  for (const listener of webSearchListeners) listener();
+}
+
 export function AiChatThread({
   detail,
   canAttachFiles,
+  canSearchWeb,
 }: {
   detail: AiChatSubjectDetailDTO;
   canAttachFiles: boolean;
+  canSearchWeb: boolean;
 }) {
   const router = useRouter();
 
@@ -88,6 +139,32 @@ export function AiChatThread({
   // reload does not lose an attachment somebody already waited for, and
   // advanced locally as uploads land.
   const [staged, setStaged] = useState<AiChatAttachmentDTO[]>(detail.staged);
+  // -------------------------------------------------------------------
+  // WHETHER THIS MESSAGE MAY SEARCH THE WEB.
+  //
+  // OFF is the default and it is not a shy one. With it off nothing about the
+  // question leaves the organisation, no text written by a stranger enters
+  // the model's context, and the turn costs one request rather than three.
+  // Those are the reasons, and they are why this is a switch the person
+  // throws rather than something the model decides for itself.
+  //
+  // It is a preference about how somebody works rather than anything about a
+  // thread, so it lives in the browser - a column on ai_chat_subjects would
+  // be a migration against a shared database for a checkbox.
+  //
+  // `canSearchWeb` is ANDed in rather than gating the read, so the stored
+  // preference survives an environment that briefly has no key: the switch
+  // disappears and comes back as it was, instead of coming back off.
+  //
+  // The third argument is the SERVER snapshot, and it must be false - the
+  // server cannot know what this browser stored, and a first render that
+  // guessed would hydrate into a toggle disagreeing with itself.
+  // -------------------------------------------------------------------
+  const stored = useSyncExternalStore(subscribeToWebSearchPreference, readWebSearchPreference, () => false);
+  const webSearch = canSearchWeb && stored;
+
+  const toggleWebSearch = () => writeWebSearchPreference(!webSearch);
+
   const [uploadingCount, setUploadingCount] = useState(0);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [isDropTarget, setIsDropTarget] = useState(false);
@@ -337,7 +414,7 @@ export function AiChatThread({
       const response = await fetch("/api/ai-chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subjectId: detail.subject.id, content }),
+        body: JSON.stringify({ subjectId: detail.subject.id, content, webSearch }),
         signal: controller.signal,
       });
 
@@ -711,6 +788,41 @@ export function AiChatThread({
               <Paperclip size={18} aria-hidden="true" />
             </Button>
           </>
+        )}
+
+        {/* -------------------------------------------------------------
+            The web search switch.
+
+            A LABELLED PILL RATHER THAN A BARE ICON when it is on. Whether
+            the question is about to leave the organisation is not something
+            to infer from the tint of a globe - so on says so in a word, and
+            off is quiet. `aria-pressed` carries the same state to a screen
+            reader, which an icon-only toggle would not.
+            ------------------------------------------------------------- */}
+        {canSearchWeb && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-pressed={webSearch}
+            aria-label={webSearch ? "Web search on" : "Web search off"}
+            title={
+              webSearch
+                ? "Web search is on. Your question may be sent to Google to find results."
+                : "Search the web for this message"
+            }
+            disabled={isStreaming}
+            onClick={toggleWebSearch}
+            className={cn(
+              "h-9 shrink-0 gap-1.5 rounded-full px-2.5",
+              webSearch
+                ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
+                : "px-2 text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Globe size={18} aria-hidden="true" />
+            {webSearch && <span className="text-xs font-medium">Search</span>}
+          </Button>
         )}
 
           <Textarea

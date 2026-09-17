@@ -330,7 +330,12 @@ export function AiChatWorkspace({ page }: { page: AiChatPageDTO }) {
             // resets the composer and the in-flight reply. Without the key
             // React keeps the previous thread's local state and the new
             // conversation would open showing the old one's draft.
-            <AiChatThread key={page.active.subject.id} detail={page.active} canAttachFiles={page.canAttachFiles} />
+            <AiChatThread
+              key={page.active.subject.id}
+              detail={page.active}
+              canAttachFiles={page.canAttachFiles}
+              canSearchWeb={page.canSearchWeb}
+            />
           )}
         </section>
       </div>
