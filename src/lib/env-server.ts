@@ -280,6 +280,22 @@ const serverEnvSchema = z.object({
   AZURE_SPEECH_KEY: z.string().min(1).optional(),
   AZURE_SPEECH_REGION: z.string().min(1).optional(),
 
+  // -----------------------------------------------------------------
+  // Web search for AI chat, via Google Programmable Search.
+  //
+  // BOTH OR NEITHER. The chat offers its search tool only when both are
+  // set, so an environment with no keys never advertises a capability it
+  // cannot deliver - the toggle in the composer is simply absent. Google's
+  // free tier is 100 queries a day and refuses the 101st rather than
+  // charging for it, so an unattended deployment cannot run up a bill.
+  //
+  // The engine must be configured to search the whole web; a Programmable
+  // Search engine restricted to a site list answers every question about
+  // the world with nothing at all.
+  // -----------------------------------------------------------------
+  GOOGLE_SEARCH_API_KEY: z.string().min(1).optional(),
+  GOOGLE_SEARCH_ENGINE_ID: z.string().min(1).optional(),
+
   // The language spoken in recordings. Azure needs a specific locale, not
   // a language - "en-AU" transcribes Australian English noticeably better
   // than "en-US" on local place names and accents.
@@ -511,6 +527,8 @@ export const envServer = serverEnvSchema.parse({
   TRANSCRIPTION_SWEEP_SECRET: process.env.TRANSCRIPTION_SWEEP_SECRET,
   AZURE_SPEECH_KEY: process.env.AZURE_SPEECH_KEY,
   AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION,
+  GOOGLE_SEARCH_API_KEY: process.env.GOOGLE_SEARCH_API_KEY,
+  GOOGLE_SEARCH_ENGINE_ID: process.env.GOOGLE_SEARCH_ENGINE_ID,
   AZURE_SPEECH_LOCALE: process.env.AZURE_SPEECH_LOCALE,
   TRANSCRIPTION_RETENTION_DAYS: process.env.TRANSCRIPTION_RETENTION_DAYS,
   TEXT_SUMMARY_RETENTION_DAYS: process.env.TEXT_SUMMARY_RETENTION_DAYS,

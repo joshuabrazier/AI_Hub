@@ -358,6 +358,20 @@ export async function graphRequest(
     method?: "GET" | "POST" | "PUT" | "PATCH";
     body?: BodyInit;
     contentType?: string;
+    // -----------------------------------------------------------------
+    // HOW A SUCCESSFUL RESPONSE IS READ, and it exists so that a download
+    // of BYTES goes through this function rather than around it.
+    //
+    // Same reasoning as the writes note above, and it applies harder: the
+    // throttle gate is the one thing that must cover every caller, because
+    // SharePoint throttles per application per tenant. A second client that
+    // fetched file content directly would be the one caller not
+    // participating in the gate - and a download is exactly the call heavy
+    // enough to trigger a throttle in the first place.
+    //
+    // Defaults to JSON, which is what every existing caller wants.
+    // -----------------------------------------------------------------
+    read?: (response: Response) => Promise<unknown>;
   } = {},
 ): Promise<unknown> {
   const doFetch = options.fetchImpl ?? fetch;
@@ -394,7 +408,7 @@ export async function graphRequest(
       });
 
       if (response.ok) {
-        return await response.json();
+        return options.read ? await options.read(response) : await response.json();
       }
 
       // A token that no longer works, OR a tenant setting that forbids this

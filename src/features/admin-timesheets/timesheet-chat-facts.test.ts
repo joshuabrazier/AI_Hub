@@ -1,4 +1,4 @@
-import { CHAT_TOOL_CONFIG } from "@/features/ai-chat/ai-chat-tools";
+import { buildChatToolConfig } from "@/features/ai-chat/ai-chat-tools";
 import { describe, expect, it } from "vitest";
 
 import { resolveNamed, resolvePerson } from "./timesheet-chat-facts.service";
@@ -155,7 +155,7 @@ describe("resolveNamed for clients", () => {
 // on every call and nothing else stops the same mistake.
 // -------------------------------------------------------------------
 describe("the timesheet tool contract", () => {
-  const description = CHAT_TOOL_CONFIG.tools?.[0] ?? {};
+  const description = buildChatToolConfig().tools?.[0] ?? {};
   const text = JSON.stringify(description);
 
   it("names both figures and says they must not be confused", () => {
@@ -180,7 +180,7 @@ describe("the timesheet tool contract", () => {
   });
 
   it("offers a project argument, so a job can be asked about by name", () => {
-    const schema = CHAT_TOOL_CONFIG.tools?.[0] as {
+    const schema = buildChatToolConfig().tools?.[0] as {
       toolSpec?: { inputSchema?: { json?: { properties?: Record<string, unknown> } } };
     };
 
