@@ -317,6 +317,18 @@ const serverEnvSchema = z.object({
   // Set to 0 to keep them indefinitely.
   TRANSCRIPTION_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(90),
 
+  // -----------------------------------------------------------------
+  // How long a saved summary and the material it was made from are kept.
+  //
+  // A YEAR, matching AI chat rather than transcription: both are a
+  // person's own private working material kept for their own use, where
+  // transcription's shorter window is about the size of the recordings.
+  //
+  // Zero means keep indefinitely - a legitimate and deliberate setting,
+  // and not the default, because this table holds pasted contracts.
+  // -----------------------------------------------------------------
+  TEXT_SUMMARY_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(365),
+
   // -------------------------------------------------------------------
   // SharePoint inventory
   // -------------------------------------------------------------------
@@ -519,6 +531,7 @@ export const envServer = serverEnvSchema.parse({
   GOOGLE_SEARCH_ENGINE_ID: process.env.GOOGLE_SEARCH_ENGINE_ID,
   AZURE_SPEECH_LOCALE: process.env.AZURE_SPEECH_LOCALE,
   TRANSCRIPTION_RETENTION_DAYS: process.env.TRANSCRIPTION_RETENTION_DAYS,
+  TEXT_SUMMARY_RETENTION_DAYS: process.env.TEXT_SUMMARY_RETENTION_DAYS,
   SHAREPOINT_SWEEP_SECRET: process.env.SHAREPOINT_SWEEP_SECRET,
   SHAREPOINT_INVENTORY_RETENTION_DAYS: process.env.SHAREPOINT_INVENTORY_RETENTION_DAYS,
   DEV_FAKE_SHAREPOINT_URL: process.env.DEV_FAKE_SHAREPOINT_URL,
