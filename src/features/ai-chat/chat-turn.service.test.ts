@@ -64,8 +64,9 @@ vi.mock("./ai-chat-app-knowledge", () => ({ appKnowledgePrompt: () => "app knowl
 
 vi.mock("./ai-chat-tools", () => ({
   buildChatToolConfig: vi.fn(() => ({ tools: [] })),
+  createChatToolContext: vi.fn(() => ({ sharepoint: { filesRead: 0, bytesRead: 0 } })),
   MAX_TOOL_ROUNDS: 4,
-  runChatTool: vi.fn(),
+  runChatTool: vi.fn(async () => [{ text: "{}" }]),
   toolStatusFor: () => "Looking up timesheet figures",
 }));
 

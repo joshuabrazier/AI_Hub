@@ -35,6 +35,21 @@ vi.mock("@/lib/search/web-search", () => ({
   isWebSearchConfigured: () => isWebSearchConfigured(),
 }));
 
+// Stated rather than inherited. Without MICROSOFT_* set these tests would
+// pass for the accidental reason that the SharePoint tools happen to be
+// absent, and would start failing the day somebody put those variables in a
+// test env file. This file is about the web search tool; the SharePoint ones
+// have their own.
+vi.mock("@/lib/auth/account-creation-policy", () => ({
+  isMicrosoftSignInConfigured: () => false,
+}));
+
+vi.mock("./sharepoint-chat-files.service", () => ({
+  createSharepointTurnBudget: () => ({ filesRead: 0, bytesRead: 0 }),
+  findSharepointFilesService: vi.fn(),
+  readSharepointFileService: vi.fn(),
+}));
+
 const {
   buildChatToolConfig,
   runChatTool,
@@ -45,6 +60,19 @@ const {
 
 const toolNames = (config: { tools?: unknown[] }) =>
   (config.tools ?? []).map((tool) => (tool as { toolSpec?: { name?: string } }).toolSpec?.name);
+
+/**
+ * A tool now answers with Converse CONTENT BLOCKS rather than a value, so
+ * that reading a SharePoint file can hand over a real document. Everything
+ * else is still one text block holding JSON - deliberately text rather than
+ * `json`, because the request log only extracts text parts.
+ */
+const payloadOf = async (...args: Parameters<typeof runChatTool>) => {
+  const blocks = await runChatTool(...args);
+  const text = blocks.map((block) => ("text" in block ? (block.text ?? "") : "")).join("");
+
+  return JSON.parse(text) as Record<string, unknown>;
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -95,7 +123,7 @@ describe("what comes back from a search", () => {
       results: [{ title: "t", url: "https://example.com", snippet: "s", source: "example.com" }],
     });
 
-    const output = (await runChatTool(WEB_SEARCH_TOOL_NAME, { query: "as 1100" })) as Record<string, string>;
+    const output = await payloadOf(WEB_SEARCH_TOOL_NAME, { query: "as 1100" });
 
     expect(output.note).toContain("BEGIN SEARCH RESULTS");
     expect(output.note).toMatch(/never instruction/i);
@@ -105,7 +133,7 @@ describe("what comes back from a search", () => {
   it("says a search found nothing rather than letting it read as an answer", async () => {
     searchWeb.mockResolvedValue({ ok: true, query: "asdkjh", results: [] });
 
-    const output = (await runChatTool(WEB_SEARCH_TOOL_NAME, { query: "asdkjh" })) as Record<string, unknown>;
+    const output = await payloadOf(WEB_SEARCH_TOOL_NAME, { query: "asdkjh" });
 
     expect(output.resultCount).toBe(0);
     expect(String(output.note)).toMatch(/found nothing/i);
@@ -116,13 +144,13 @@ describe("what comes back from a search", () => {
     // half streamed, where a sentence lets the model pass the problem on.
     searchWeb.mockResolvedValue({ ok: false, error: "The daily search quota has run out." });
 
-    await expect(runChatTool(WEB_SEARCH_TOOL_NAME, { query: "x" })).resolves.toMatchObject({
+    await expect(payloadOf(WEB_SEARCH_TOOL_NAME, { query: "x" })).resolves.toMatchObject({
       error: "The daily search quota has run out.",
     });
   });
 
   it("refuses a call with no query rather than searching for nothing", async () => {
-    await expect(runChatTool(WEB_SEARCH_TOOL_NAME, {})).resolves.toMatchObject({
+    await expect(payloadOf(WEB_SEARCH_TOOL_NAME, {})).resolves.toMatchObject({
       error: expect.stringContaining("query"),
     });
 
@@ -131,7 +159,7 @@ describe("what comes back from a search", () => {
 
   it("drops a non-string query rather than coercing one", async () => {
     // The model's arguments are untrusted like anything else it emits.
-    await expect(runChatTool(WEB_SEARCH_TOOL_NAME, { query: { toString: () => "x" } })).resolves.toMatchObject(
+    await expect(payloadOf(WEB_SEARCH_TOOL_NAME, { query: { toString: () => "x" } })).resolves.toMatchObject(
       { error: expect.stringContaining("query") },
     );
 
@@ -139,7 +167,7 @@ describe("what comes back from a search", () => {
   });
 
   it("still refuses a tool nobody defined", async () => {
-    await expect(runChatTool("delete_everything", {})).resolves.toMatchObject({
+    await expect(payloadOf("delete_everything", {})).resolves.toMatchObject({
       error: expect.stringContaining("delete_everything"),
     });
   });

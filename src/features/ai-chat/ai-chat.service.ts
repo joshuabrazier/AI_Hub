@@ -46,6 +46,7 @@ import { ASSISTANT_NAME, chatNotConfiguredMessage } from "@/lib/ai/assistant-ide
 import { appKnowledgePrompt } from "./ai-chat-app-knowledge";
 import {
   buildChatToolConfig,
+  createChatToolContext,
   isWebSearchAvailable,
   MAX_TOOL_ROUNDS,
   runChatTool,
@@ -1532,6 +1533,18 @@ export async function* streamAiChatReplyService(
     // way to understand.
     const toolConfig = buildChatToolConfig({ webSearch: requestDTO.webSearch === true });
 
+    // -----------------------------------------------------------------
+    // ONE BUDGET FOR THE WHOLE TURN, not one per call.
+    //
+    // A SharePoint read sends a whole document, and Bedrock's document and
+    // payload caps are per REQUEST - so the thing that has to be counted is
+    // every file opened across every round of this turn together. Created
+    // here because that is the only scope which is neither per call (where
+    // it would never reach two) nor per process (where it would be shared
+    // between everybody using the app).
+    // -----------------------------------------------------------------
+    const toolContext = createChatToolContext();
+
     for (let round = 0; ; round++) {
       const isFinalRound = round >= MAX_TOOL_ROUNDS;
 
@@ -1709,13 +1722,14 @@ export async function* streamAiChatReplyService(
 
         assistantContent.push({ toolUse: { toolUseId: call.toolUseId, name: call.name, input: parsed } });
 
-        const output = await runChatTool(call.name, parsed);
+        // A tool returns CONTENT BLOCKS rather than a value to stringify,
+        // because reading a SharePoint file hands the model the actual
+        // document. Everything else still comes back as a single text block
+        // holding JSON - see runChatTool for why it is text and not `json`.
+        const output = await runChatTool(call.name, parsed, toolContext);
 
         results.push({
-          toolResult: {
-            toolUseId: call.toolUseId,
-            content: [{ text: JSON.stringify(output) }],
-          },
+          toolResult: { toolUseId: call.toolUseId, content: output },
         });
       }
 
