@@ -4,7 +4,9 @@ import { requireUser } from "@/lib/auth/session-auth-server";
 import {
   inspectAttachment,
   MAX_DOCUMENT_BYTES,
+  MAX_DOCUMENTS_PER_REQUEST,
   MAX_IMAGE_BYTES,
+  MAX_REQUEST_ATTACHMENT_BYTES,
   formatBytes,
   type AttachmentInspection,
 } from "@/lib/ai/attachment-formats";
@@ -49,30 +51,53 @@ import { getDelegatedGraphToken } from "@/lib/sharepoint/graph-token";
 // where it is handed over.
 // ===================================================================
 
-/**
- * How many files may be pulled into ONE TURN, and how many bytes.
- *
- * Bedrock's caps are per REQUEST - 5 documents, and a payload ceiling that
- * every attachment on the conversation already counts against. A turn may
- * run up to MAX_TOOL_ROUNDS passes, so without a budget a model asked to
- * "read everything in that folder" would keep adding files until the send
- * was refused, and the refusal would arrive as a failed reply rather than
- * as an answer.
- *
- * Two, because the useful questions are "what does this say" and "how do
- * these two differ". Asking for a third is the model summarising a folder,
- * which it should do from the search results instead.
- */
-export const MAX_FILES_PER_TURN = 2;
-export const MAX_FILE_BYTES_PER_TURN = 8 * 1024 * 1024;
+// ===================================================================
+// HOW MANY FILES ONE MESSAGE MAY OPEN
+//
+// DERIVED, NOT CHOSEN. This was a flat 2, and 2 was a guess - lower than
+// the API allows for no reason anybody could point at, and wrong in the
+// other direction too, because a fixed number cannot know what the
+// conversation has already spent.
+//
+// The real constraint is Bedrock's, it is per REQUEST, and every send
+// replays the whole thread: 5 documents and MAX_REQUEST_ATTACHMENT_BYTES
+// across everything in the call. A file read by the tool is a document
+// block in that same request, sitting alongside whatever the person has
+// attached to the conversation - so four attached PDFs plus two read from
+// SharePoint is six, which Bedrock refuses. It refuses the WHOLE TURN,
+// after the model has been asked and paid for, and the reader sees a
+// failed reply rather than an answer.
+//
+// So the allowance is whatever selectAttachments did NOT use. An ordinary
+// conversation with nothing attached gets all five; one carrying four
+// documents gets one and is told so; one already at the cap gets none and
+// is told THAT, which is a sentence the model can pass on rather than a
+// send that dies.
+// ===================================================================
 
 export type SharepointTurnBudget = {
   filesRead: number;
   bytesRead: number;
+  /** Files this turn may still open. Zero is a legitimate answer. */
+  maxFiles: number;
+  maxBytes: number;
 };
 
-export function createSharepointTurnBudget(): SharepointTurnBudget {
-  return { filesRead: 0, bytesRead: 0 };
+/**
+ * @param spent What the conversation's own attachments already used in this
+ *   request. Defaults to nothing spent, which is right for a caller that has
+ *   no attachments to account for and safe because the ceilings below are
+ *   the API's own.
+ */
+export function createSharepointTurnBudget(
+  spent: { documents?: number; bytes?: number } = {},
+): SharepointTurnBudget {
+  return {
+    filesRead: 0,
+    bytesRead: 0,
+    maxFiles: Math.max(0, MAX_DOCUMENTS_PER_REQUEST - (spent.documents ?? 0)),
+    maxBytes: Math.max(0, MAX_REQUEST_ATTACHMENT_BYTES - (spent.bytes ?? 0)),
+  };
 }
 
 export type SharepointFileContent = {
@@ -213,10 +238,17 @@ export async function readSharepointFileService(
     return { ok: false, error: "Reading a file needs both its driveId and its itemId, from a search result." };
   }
 
-  if (budget.filesRead >= MAX_FILES_PER_TURN) {
+  if (budget.filesRead >= budget.maxFiles) {
+    // Two different situations, and telling them apart is the difference
+    // between a model that asks a sensible follow-up and one that keeps
+    // trying. None available means the conversation's own attachments have
+    // taken every slot, and reading anything at all needs a new chat.
     return {
       ok: false,
-      error: `Only ${MAX_FILES_PER_TURN} files can be opened per message. Answer from what you have already read, or ask the user which one they want next.`,
+      error:
+        budget.maxFiles === 0
+          ? "No files can be opened in this message - the files already attached to this conversation have used the whole limit for one request. Starting a new chat, or removing an attachment, would free it up."
+          : `Only ${budget.maxFiles} file${budget.maxFiles === 1 ? "" : "s"} can be opened per message, and that is used up. Answer from what you have already read, or ask the user which one they want next.`,
     };
   }
 
@@ -236,7 +268,7 @@ export async function readSharepointFileService(
     return { ok: false, error: "That file is empty." };
   }
 
-  if (budget.bytesRead + bytes.byteLength > MAX_FILE_BYTES_PER_TURN) {
+  if (budget.bytesRead + bytes.byteLength > budget.maxBytes) {
     return {
       ok: false,
       error: "That file is too large to open alongside what has already been read in this message.",

@@ -45,7 +45,7 @@ vi.mock("@/lib/auth/account-creation-policy", () => ({
 }));
 
 vi.mock("./sharepoint-chat-files.service", () => ({
-  createSharepointTurnBudget: () => ({ filesRead: 0, bytesRead: 0 }),
+  createSharepointTurnBudget: () => ({ filesRead: 0, bytesRead: 0, maxFiles: 5, maxBytes: 16 * 1024 * 1024 }),
   findSharepointFilesService: vi.fn(),
   readSharepointFileService: vi.fn(),
 }));

@@ -51,7 +51,6 @@ const {
   createSharepointTurnBudget,
   findSharepointFilesService,
   readSharepointFileService,
-  MAX_FILES_PER_TURN,
 } = await import("./sharepoint-chat-files.service");
 
 // A real PDF header, because inspectAttachment reads the BYTES and would
@@ -129,7 +128,7 @@ describe("the per-turn budget", () => {
   it("allows the files it promises and refuses the next", async () => {
     const budget = createSharepointTurnBudget();
 
-    for (let opened = 0; opened < MAX_FILES_PER_TURN; opened++) {
+    for (let opened = 0; opened < budget.maxFiles; opened++) {
       await expect(
         readSharepointFileService("d", `i${opened}`, "a.pdf", budget),
       ).resolves.toMatchObject({ ok: true });
@@ -141,13 +140,13 @@ describe("the per-turn budget", () => {
     });
   });
 
-  it("refuses the third WITHOUT downloading it", async () => {
+  it("refuses the next one WITHOUT downloading it", async () => {
     // Checked before the call, not after. Spending a Graph round trip on a
     // file that cannot be handed over is the difference between a budget and
     // a filter.
     const budget = createSharepointTurnBudget();
 
-    for (let opened = 0; opened < MAX_FILES_PER_TURN; opened++) {
+    for (let opened = 0; opened < budget.maxFiles; opened++) {
       await readSharepointFileService("d", `i${opened}`, "a.pdf", budget);
     }
 
@@ -290,5 +289,56 @@ describe("what a failure says", () => {
       ok: false,
       error: expect.stringMatching(/sign/i),
     });
+  });
+});
+
+// ===================================================================
+// THE ALLOWANCE IS DERIVED FROM THE REQUEST, NOT PICKED
+//
+// A SharePoint file becomes a document block in the SAME Converse request
+// as the conversation's own attachments, against the same per-request caps.
+// A fixed allowance is wrong in both directions: lower than the API permits
+// when nothing is attached, and still able to overshoot when something is.
+// Overshooting costs the whole turn, after the model has been asked.
+// ===================================================================
+describe("how many files the allowance is", () => {
+  it("is the API's full document cap when nothing is attached", async () => {
+    // The old flat 2 was a guess. Five is Bedrock's own number.
+    expect(createSharepointTurnBudget().maxFiles).toBe(5);
+  });
+
+  it("shrinks by whatever the conversation's own attachments took", async () => {
+    expect(createSharepointTurnBudget({ documents: 3 }).maxFiles).toBe(2);
+    expect(createSharepointTurnBudget({ documents: 4 }).maxFiles).toBe(1);
+  });
+
+  it("reaches zero rather than going negative", async () => {
+    // A conversation already at the cap. Negative would compare as "under
+    // budget" against filesRead 0 and let a read through, which is the
+    // failure this whole thing exists to prevent.
+    expect(createSharepointTurnBudget({ documents: 5 }).maxFiles).toBe(0);
+    expect(createSharepointTurnBudget({ documents: 9 }).maxFiles).toBe(0);
+  });
+
+  it("refuses at zero with a reason somebody can act on", async () => {
+    // "No files can be opened" with no explanation invites a retry. This
+    // one says what took the space and what would free it.
+    const outcome = await readSharepointFileService(
+      "d",
+      "i",
+      "a.pdf",
+      createSharepointTurnBudget({ documents: 5 }),
+    );
+
+    expect(outcome).toMatchObject({ ok: false });
+    expect((outcome as { error: string }).error).toMatch(/already attached/i);
+    expect(downloadSharepointFile).not.toHaveBeenCalled();
+  });
+
+  it("leaves byte headroom for what the attachments already weigh", async () => {
+    const spent = 10 * 1024 * 1024;
+    const budget = createSharepointTurnBudget({ bytes: spent });
+
+    expect(budget.maxBytes).toBe(16 * 1024 * 1024 - spent);
   });
 });

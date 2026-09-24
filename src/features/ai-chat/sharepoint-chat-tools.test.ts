@@ -38,7 +38,7 @@ const findSharepointFilesService = vi.fn();
 const readSharepointFileService = vi.fn();
 
 vi.mock("./sharepoint-chat-files.service", () => ({
-  createSharepointTurnBudget: () => ({ filesRead: 0, bytesRead: 0 }),
+  createSharepointTurnBudget: () => ({ filesRead: 0, bytesRead: 0, maxFiles: 5, maxBytes: 16 * 1024 * 1024 }),
   findSharepointFilesService: (...args: unknown[]) => findSharepointFilesService(...args),
   readSharepointFileService: (...args: unknown[]) => readSharepointFileService(...args),
 }));

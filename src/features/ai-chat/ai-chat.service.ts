@@ -650,6 +650,17 @@ type ConverseRequest = {
   // How many attached files were left out because the request budget was
   // already spent. Logged, not shown - the reply is still correct.
   droppedAttachments: number;
+  // -----------------------------------------------------------------
+  // WHAT THE CONVERSATION'S OWN FILES HAVE ALREADY SPENT.
+  //
+  // Surfaced because the SharePoint tool adds documents to the SAME
+  // request, against the same per-request caps, and a tool with a fixed
+  // allowance cannot know what is left. Four attached PDFs and two read
+  // from SharePoint is six documents in one call, which Bedrock refuses -
+  // and it refuses the whole turn, after the model has been asked.
+  // -----------------------------------------------------------------
+  admittedDocuments: number;
+  admittedAttachmentBytes: number;
 };
 
 // -------------------------------------------------------------------
@@ -682,6 +693,9 @@ type AttachmentSelection = {
   admitted: Map<string, LoadedAttachment[]>;
   droppedByMessage: Map<string, number>;
   droppedTotal: number;
+  /** What was actually admitted, so a tool adding to this request knows what is left. */
+  documents: number;
+  bytes: number;
 };
 
 function selectAttachments(
@@ -725,7 +739,7 @@ function selectAttachments(
     }
   }
 
-  return { admitted, droppedByMessage, droppedTotal };
+  return { admitted, droppedByMessage, droppedTotal, documents, bytes };
 }
 
 // -------------------------------------------------------------------
@@ -807,7 +821,10 @@ function buildConverseRequest(
     firstKept += 1;
   }
 
-  const { admitted, droppedByMessage, droppedTotal } = selectAttachments(kept, attachmentsByMessage);
+  const { admitted, droppedByMessage, droppedTotal, documents, bytes } = selectAttachments(
+    kept,
+    attachmentsByMessage,
+  );
 
   // Shared across the whole request so document names stay unique and their
   // numbering matches the order the model reads them in.
@@ -879,7 +896,14 @@ function buildConverseRequest(
     });
   }
 
-  return { system, messages, trimmed: firstKept, droppedAttachments: droppedTotal };
+  return {
+    system,
+    messages,
+    trimmed: firstKept,
+    droppedAttachments: droppedTotal,
+    admittedDocuments: documents,
+    admittedAttachmentBytes: bytes,
+  };
 }
 
 // -------------------------------------------------------------------
@@ -1534,16 +1558,24 @@ export async function* streamAiChatReplyService(
     const toolConfig = buildChatToolConfig({ webSearch: requestDTO.webSearch === true });
 
     // -----------------------------------------------------------------
-    // ONE BUDGET FOR THE WHOLE TURN, not one per call.
+    // ONE BUDGET FOR THE WHOLE TURN, not one per call, and SIZED FROM WHAT
+    // THIS REQUEST HAS ALREADY SPENT.
     //
-    // A SharePoint read sends a whole document, and Bedrock's document and
-    // payload caps are per REQUEST - so the thing that has to be counted is
-    // every file opened across every round of this turn together. Created
-    // here because that is the only scope which is neither per call (where
-    // it would never reach two) nor per process (where it would be shared
-    // between everybody using the app).
+    // A SharePoint read puts a document block in this same request, and
+    // Bedrock's document and payload caps are per REQUEST - so what may be
+    // opened is whatever the conversation's own attachments left over.
+    // Passing those in is what stops four attached PDFs plus two read files
+    // being six documents in one call, which Bedrock refuses after the model
+    // has already been asked.
+    //
+    // Per turn because that is the only scope which is neither per call
+    // (where a limit would never count past one) nor per process (where it
+    // would be shared between everybody using the app).
     // -----------------------------------------------------------------
-    const toolContext = createChatToolContext();
+    const toolContext = createChatToolContext({
+      documents: built.admittedDocuments,
+      bytes: built.admittedAttachmentBytes,
+    });
 
     for (let round = 0; ; round++) {
       const isFinalRound = round >= MAX_TOOL_ROUNDS;

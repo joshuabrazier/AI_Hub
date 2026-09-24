@@ -255,8 +255,10 @@ const SHAREPOINT_READ_TOOL: Tool = {
       `The driveId, itemId and name all come from a ${SHAREPOINT_FIND_TOOL_NAME} result. Do not guess or`,
       "assemble them: an id you did not get from a search will simply be refused by SharePoint.",
       "",
-      "TWO FILES PER MESSAGE, at most. Each one is downloaded and sent in full, so a third is refused and",
-      "you should answer from what you have or ask which the user wants next. PDFs, Word, Excel, PowerPoint,",
+      "THERE IS A LIMIT PER MESSAGE and it depends on what is already attached to the conversation - each",
+      "file is downloaded and sent in full, and files the user attached take the same room. When you reach",
+      "it the refusal says so; answer from what you have, or ask which the user wants next. PDFs, Word,",
+      "Excel, PowerPoint,",
       "text, CSV, HTML and images can be opened. Anything else is refused by name - say what it was rather",
       "than trying a different file and hoping.",
       "",
@@ -375,8 +377,13 @@ export function toolStatusFor(name: string): string {
 // -------------------------------------------------------------------
 export type ChatToolContext = { sharepoint: SharepointTurnBudget };
 
-export function createChatToolContext(): ChatToolContext {
-  return { sharepoint: createSharepointTurnBudget() };
+/**
+ * @param spent What the conversation's own attachments already take up in
+ *   this request. A SharePoint file becomes a document block in the SAME
+ *   call, so what it may use is whatever those left over.
+ */
+export function createChatToolContext(spent: { documents?: number; bytes?: number } = {}): ChatToolContext {
+  return { sharepoint: createSharepointTurnBudget(spent) };
 }
 
 // -------------------------------------------------------------------
