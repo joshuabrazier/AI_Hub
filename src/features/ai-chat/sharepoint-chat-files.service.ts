@@ -13,7 +13,12 @@ import {
   searchSharepointFiles,
   type SharepointFileHit,
 } from "@/lib/sharepoint/file-search";
-import { GRAPH_OUTCOMES, graphOutcomeOf } from "@/lib/sharepoint/graph-client";
+import {
+  GRAPH_OUTCOMES,
+  graphInnerErrorOf,
+  graphOutcomeOf,
+  graphStatusOf,
+} from "@/lib/sharepoint/graph-client";
 import { getDelegatedGraphToken } from "@/lib/sharepoint/graph-token";
 
 // ===================================================================
@@ -92,10 +97,12 @@ export type SharepointReadOutcome =
 // Turn a Graph failure into a sentence the person reading the chat can act
 // on, and never into an exception.
 //
-// The three cases have three different remedies, and the sharepoint admin
-// service makes the same split for the same reason: a re-auth needs a
-// person to sign in, a throttle needs waiting, and anything else needs a
-// developer. Collapsing them sends somebody after the wrong problem.
+// FOUR CASES WITH FOUR DIFFERENT REMEDIES, and the sharepoint admin service
+// makes the same split for the same reason: a re-auth needs a person to sign
+// in, a throttle needs waiting, a refusal needs somebody to look at the
+// status, and no answer at all is the only one worth retrying. Collapsing
+// them sends people after the wrong problem - which is not hypothetical
+// here, see the note on the refusal branch.
 //
 // NEEDS_REAUTH is the one that will actually happen. The Graph scopes were
 // added after some people had already signed in, and a refresh token keeps
@@ -103,8 +110,24 @@ export type SharepointReadOutcome =
 // refuses, and the honest answer names the remedy rather than saying
 // something went wrong.
 // -------------------------------------------------------------------
-function describeGraphFailure(error: unknown): string {
+function describeGraphFailure(operation: string, error: unknown, detail: Record<string, string> = {}): string {
   const outcome = graphOutcomeOf(error);
+  const status = graphStatusOf(error);
+  const innerError = graphInnerErrorOf(error);
+
+  // ONE GREPPABLE LINE, on the transcription-logging pattern: the operation,
+  // the status and the ids, and never the FILENAME. A document title is typed
+  // by a person and routinely carries a client's name; an id identifies the
+  // row without describing anybody's business, so this line is safe to paste
+  // into a ticket - which is the only kind of log anybody actually uses.
+  console.error("sharepoint-chat-files: graph call failed", {
+    operation,
+    status,
+    innerError,
+    outcome,
+    ...detail,
+    message: error instanceof Error ? error.message : String(error),
+  });
 
   if (outcome === GRAPH_OUTCOMES.NEEDS_REAUTH) {
     return "Microsoft would not grant access to SharePoint. Signing out and back in with Microsoft usually fixes it, because access to files was added after some people last signed in.";
@@ -114,9 +137,30 @@ function describeGraphFailure(error: unknown): string {
     return "SharePoint is rate-limiting this app at the moment. Try again in a minute.";
   }
 
-  console.error("sharepoint-chat-files: graph call failed", error);
+  // -----------------------------------------------------------------
+  // A STATUS MEANS MICROSOFT ANSWERED, SO DO NOT SAY IT DID NOT.
+  //
+  // This branch used to return "SharePoint could not be reached just now."
+  // for everything it had not classified, and that sentence cost somebody
+  // four exchanges: the model read it, quite reasonably concluded there was
+  // an outage, and told them so with increasing confidence while offering to
+  // keep retrying something that was never going to start working. The
+  // search in the same conversation had just succeeded, on the same token
+  // through the same client - so "cannot reach SharePoint" was not merely
+  // unproven, it was contradicted by the previous tool call.
+  //
+  // A guess dressed as a diagnosis is worse than no diagnosis. The status
+  // goes in the sentence so the model reports a fact instead of inventing a
+  // cause, and so the person reading the chat can say a number out loud to
+  // whoever can fix it.
+  // -----------------------------------------------------------------
+  if (status !== null) {
+    const because = innerError ? ` (${innerError})` : "";
 
-  return "SharePoint could not be reached just now.";
+    return `SharePoint refused that with HTTP ${status}${because}. This is not a connection problem - Microsoft answered, it just would not do it. Report the status rather than retrying, because the same request will be refused the same way.`;
+  }
+
+  return "SharePoint did not answer in time. This one is worth retrying once.";
 }
 
 // -------------------------------------------------------------------
@@ -138,7 +182,7 @@ export async function findSharepointFilesService(
 
     return { ok: true, query: trimmed, files };
   } catch (error) {
-    return { ok: false, error: describeGraphFailure(error) };
+    return { ok: false, error: describeGraphFailure("search", error) };
   }
 }
 
@@ -182,7 +226,10 @@ export async function readSharepointFileService(
     const token = await getDelegatedGraphToken(user.id);
     bytes = await downloadSharepointFile(token, driveId, itemId);
   } catch (error) {
-    return { ok: false, error: describeGraphFailure(error) };
+    // The ids go in the log line because this is the failure that needs them:
+    // a download refused for one item while search works is a question about
+    // WHICH item, and the answer is not in the message.
+    return { ok: false, error: describeGraphFailure("download", error, { driveId, itemId }) };
   }
 
   if (bytes.byteLength === 0) {

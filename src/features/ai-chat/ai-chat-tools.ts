@@ -268,6 +268,12 @@ const SHAREPOINT_READ_TOOL: Tool = {
       "",
       "Quote and cite what you read: name the file, and say which part you took something from, so the user",
       "can check you. If the document does not answer the question, say so rather than filling the gap.",
+      "",
+      "IF IT FAILS, REPORT WHAT THE ERROR SAID AND DO NOT EXPLAIN IT. The error names its own cause when it",
+      "knows one; where it gives an HTTP status, say the number. Do not tell the user SharePoint is down,",
+      "that there is an outage, or that it is a temporary connectivity problem unless the error said so -",
+      "those are guesses, and a confident wrong one sends somebody off retrying something that will never",
+      "start working. Only offer to retry if the error actually says it is worth retrying.",
     ].join(" "),
     inputSchema: {
       json: {
