@@ -1,3 +1,4 @@
+import type { ToolResultContentBlock } from "@aws-sdk/client-bedrock-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ===================================================================
@@ -54,7 +55,7 @@ const {
 const toolNames = (config: { tools?: unknown[] }) =>
   (config.tools ?? []).map((tool) => (tool as { toolSpec?: { name?: string } }).toolSpec?.name);
 
-const textOf = (blocks: Array<Record<string, unknown>>) =>
+const textOf = (blocks: ToolResultContentBlock[]) =>
   blocks.map((block) => ("text" in block ? String(block.text ?? "") : "")).join(" ");
 
 const FILE = {
@@ -100,7 +101,7 @@ describe("handing over a file", () => {
       driveId: "d",
       itemId: "i",
       name: FILE.name,
-    })) as Array<Record<string, never>>;
+    }));
 
     const document = blocks.find((block) => "document" in block);
 
@@ -115,7 +116,7 @@ describe("handing over a file", () => {
       driveId: "d",
       itemId: "i",
       name: FILE.name,
-    })) as Array<Record<string, unknown>>;
+    }));
 
     const text = textOf(blocks);
 
@@ -128,7 +129,7 @@ describe("handing over a file", () => {
       driveId: "d",
       itemId: "i",
       name: FILE.name,
-    })) as Array<Record<string, unknown>>;
+    }));
 
     const text = textOf(blocks);
 
@@ -150,7 +151,7 @@ describe("handing over a file", () => {
       driveId: "d",
       itemId: "i",
       name: "Q3 report_final(v2)@2026.pdf",
-    })) as Array<{ document?: { name?: string } }>;
+    }));
 
     const name = blocks.find((block) => block.document)?.document?.name ?? "";
 
@@ -165,16 +166,14 @@ describe("handing over a file", () => {
       driveId: "d",
       itemId: "i",
       name: "a.pdf",
-    })) as Array<Record<string, unknown>>;
+    }));
 
     expect(blocks.some((block) => "document" in block)).toBe(false);
     expect(textOf(blocks)).toContain("That file is empty.");
   });
 
   it("refuses to call the service without all three arguments", async () => {
-    const blocks = (await runChatTool(SHAREPOINT_READ_TOOL_NAME, { driveId: "d" })) as Array<
-      Record<string, unknown>
-    >;
+    const blocks = (await runChatTool(SHAREPOINT_READ_TOOL_NAME, { driveId: "d" }));
 
     expect(textOf(blocks)).toContain(SHAREPOINT_FIND_TOOL_NAME);
     expect(readSharepointFileService).not.toHaveBeenCalled();
@@ -183,9 +182,7 @@ describe("handing over a file", () => {
 
 describe("finding files", () => {
   it("says nothing matched rather than letting an empty list read as an answer", async () => {
-    const blocks = (await runChatTool(SHAREPOINT_FIND_TOOL_NAME, { query: "redundancy" })) as Array<
-      Record<string, unknown>
-    >;
+    const blocks = (await runChatTool(SHAREPOINT_FIND_TOOL_NAME, { query: "redundancy" }));
 
     expect(textOf(blocks)).toMatch(/nothing matched/i);
   });
@@ -199,9 +196,7 @@ describe("finding files", () => {
       files: [{ driveId: "d", itemId: "i", name: "Proposal.pdf" }],
     });
 
-    const blocks = (await runChatTool(SHAREPOINT_FIND_TOOL_NAME, { query: "proposal" })) as Array<
-      Record<string, unknown>
-    >;
+    const blocks = (await runChatTool(SHAREPOINT_FIND_TOOL_NAME, { query: "proposal" }));
 
     expect(textOf(blocks)).toContain("nothing here has been read");
     expect(blocks.some((block) => "document" in block)).toBe(false);

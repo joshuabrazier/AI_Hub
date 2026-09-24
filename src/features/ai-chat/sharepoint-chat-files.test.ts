@@ -29,7 +29,10 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/navigation", () => ({ redirect: vi.fn(), unstable_rethrow: vi.fn() }));
 
 const requireUser = vi.fn(async () => ({ id: "session-user", role: "member" }));
-const getDelegatedGraphToken = vi.fn(async () => "token-for-session-user");
+// The token is DERIVED from the id rather than constant, so a token minted
+// for the wrong person shows up as the wrong token further down instead of
+// being indistinguishable from the right one.
+const getDelegatedGraphToken = vi.fn(async (userId: string) => `token-for-${userId}`);
 const searchSharepointFiles = vi.fn();
 const downloadSharepointFile = vi.fn();
 
@@ -58,7 +61,6 @@ const PDF = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(64, 0x20)]);
 beforeEach(() => {
   vi.clearAllMocks();
   requireUser.mockResolvedValue({ id: "session-user", role: "member" });
-  getDelegatedGraphToken.mockResolvedValue("token-for-session-user");
   searchSharepointFiles.mockResolvedValue([]);
   downloadSharepointFile.mockResolvedValue(PDF);
 });
