@@ -220,3 +220,75 @@ describe("what may be opened", () => {
     expect(outcome).toMatchObject({ ok: true, file: { format: "pdf", kind: "document" } });
   });
 });
+
+// ===================================================================
+// WHAT A FAILURE IS ALLOWED TO CLAIM
+//
+// The generic branch used to answer every unclassified failure with
+// "SharePoint could not be reached just now." It cost somebody four
+// exchanges: the model read it, concluded there was an outage, and said so
+// with growing confidence while offering to keep retrying. The search in
+// the same conversation had just SUCCEEDED on the same token through the
+// same client, so the claim was not merely unproven - the previous tool
+// call contradicted it.
+//
+// A guess dressed as a diagnosis is worse than no diagnosis, so these
+// assert the one thing that matters: an answer from Microsoft is never
+// reported as a failure to reach Microsoft.
+// ===================================================================
+describe("what a failure says", () => {
+  const graphError = (fields: Record<string, unknown>) =>
+    Object.assign(new Error("graph said no"), fields);
+
+  it("reports the status rather than claiming a connection problem", async () => {
+    downloadSharepointFile.mockRejectedValue(graphError({ status: 404 }));
+
+    const outcome = await readSharepointFileService("d", "i", "a.pdf", createSharepointTurnBudget());
+
+    expect(outcome).toMatchObject({ ok: false, error: expect.stringContaining("404") });
+    expect((outcome as { error: string }).error).not.toMatch(/could not be reached|down|outage/i);
+  });
+
+  it("carries the innerError code when Graph sent one", async () => {
+    // The code is the difference between two failures that look identical.
+    downloadSharepointFile.mockRejectedValue(
+      graphError({ status: 400, innerErrorCode: "invalidRequest" }),
+    );
+
+    await expect(
+      readSharepointFileService("d", "i", "a.pdf", createSharepointTurnBudget()),
+    ).resolves.toMatchObject({ ok: false, error: expect.stringContaining("invalidRequest") });
+  });
+
+  it("tells the model not to retry a refusal", async () => {
+    // Retrying a 403 is how four exchanges get spent on a request that was
+    // never going to start working.
+    downloadSharepointFile.mockRejectedValue(graphError({ status: 404 }));
+
+    const outcome = await readSharepointFileService("d", "i", "a.pdf", createSharepointTurnBudget());
+
+    expect((outcome as { error: string }).error).toMatch(/report the status rather than retrying/i);
+  });
+
+  it("only invites a retry when nothing answered at all", async () => {
+    // No status means no response - the one case where trying again can
+    // genuinely produce a different outcome.
+    downloadSharepointFile.mockRejectedValue(new Error("socket hang up"));
+
+    const outcome = await readSharepointFileService("d", "i", "a.pdf", createSharepointTurnBudget());
+
+    expect((outcome as { error: string }).error).toMatch(/retrying/i);
+    expect((outcome as { error: string }).error).not.toMatch(/HTTP/);
+  });
+
+  it("still names re-consent for a 403, rather than reading it as a refusal to explain", async () => {
+    // The classified cases must survive the new branch: this one has a
+    // remedy the person can act on, and a bare "HTTP 403" does not.
+    searchSharepointFiles.mockRejectedValue(graphError({ outcome: "needs_reauth", status: 403 }));
+
+    await expect(findSharepointFilesService("x")).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/sign/i),
+    });
+  });
+});
